@@ -1,3 +1,7 @@
 spring:
   application:
     name: nomat
+
+server:
+  servlet:
+    context-path: /api
