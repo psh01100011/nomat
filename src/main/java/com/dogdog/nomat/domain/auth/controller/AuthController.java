@@ -1,5 +1,7 @@
 package com.dogdog.nomat.domain.auth.controller;
 
+import com.dogdog.nomat.domain.auth.dto.LoginRequest;
+import com.dogdog.nomat.domain.auth.dto.LoginResponse;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
 import com.dogdog.nomat.domain.auth.service.AuthService;
 import com.dogdog.nomat.global.dto.ApiResponse;
@@ -24,6 +26,12 @@ public class AuthController {
     public ApiResponse<Void> signup(@Valid @RequestBody SignupRequest request) {
         authService.signup(request);
         return ApiResponse.success("success_register");
+    }
+
+    @PostMapping("/login")
+    @ResponseStatus(HttpStatus.OK)
+    public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+        return ApiResponse.of("success_login", authService.login(request));
     }
 
 }

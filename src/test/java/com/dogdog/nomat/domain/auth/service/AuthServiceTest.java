@@ -7,10 +7,15 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.dogdog.nomat.domain.auth.dto.LoginRequest;
+import com.dogdog.nomat.domain.auth.dto.LoginResponse;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
+import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
+import com.dogdog.nomat.domain.auth.token.TokenPair;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -18,6 +23,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceTest {
@@ -27,6 +33,9 @@ class AuthServiceTest {
 
     @Mock
     private PasswordEncoder passwordEncoder;
+
+    @Mock
+    private AuthTokenProvider authTokenProvider;
 
     @InjectMocks
     private AuthService authService;
@@ -70,5 +79,45 @@ class AuthServiceTest {
                 .hasMessageContaining("duplicate_nickname");
 
         verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void loginReturnsTokens() {
+        LoginRequest request = new LoginRequest("testuser", "password123!");
+        User user = User.create("testuser", "encoded-password", "tester");
+        ReflectionTestUtils.setField(user, "id", 1L);
+
+        given(userRepository.findByLoginId("testuser")).willReturn(Optional.of(user));
+        given(passwordEncoder.matches("password123!", "encoded-password")).willReturn(true);
+        given(authTokenProvider.issue(user)).willReturn(new TokenPair("access-token", "refresh-token"));
+
+        LoginResponse response = authService.login(request);
+
+        assertThat(response.userId()).isEqualTo(1L);
+        assertThat(response.accessToken()).isEqualTo("access-token");
+        assertThat(response.refreshToken()).isEqualTo("refresh-token");
+    }
+
+    @Test
+    void loginRejectsUnknownLoginId() {
+        LoginRequest request = new LoginRequest("testuser", "password123!");
+        given(userRepository.findByLoginId("testuser")).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.login(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_id_or_password");
+    }
+
+    @Test
+    void loginRejectsWrongPassword() {
+        LoginRequest request = new LoginRequest("testuser", "password123!");
+        User user = User.create("testuser", "encoded-password", "tester");
+
+        given(userRepository.findByLoginId("testuser")).willReturn(Optional.of(user));
+        given(passwordEncoder.matches("password123!", "encoded-password")).willReturn(false);
+
+        assertThatThrownBy(() -> authService.login(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_id_or_password");
     }
 }
