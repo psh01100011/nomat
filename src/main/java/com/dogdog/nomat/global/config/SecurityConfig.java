@@ -4,10 +4,12 @@ import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import java.nio.charset.StandardCharsets;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.Customizer;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -18,28 +20,48 @@ import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
 public class SecurityConfig {
 
+    private static final String ACCESS_TOKEN_TYPE = "access";
+    private static final String REFRESH_TOKEN_TYPE = "refresh";
+
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            BearerTokenResolver bearerTokenResolver,
+            @Qualifier("jwtDecoder") JwtDecoder jwtDecoder
+    ) throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/signup").permitAll()
                         .requestMatchers("/auth/login").permitAll()
+                        .requestMatchers("/auth/refresh").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         .anyRequest().authenticated()
                 )
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .bearerTokenResolver(bearerTokenResolver)
+                        .jwt(jwt -> jwt.decoder(jwtDecoder))
+                )
+                .exceptionHandling(exception -> exception.authenticationEntryPoint((request, response, authException) -> {
+                    response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                    response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                    response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+                    response.getWriter().write("{\"message\":\"invalid_token\",\"data\":null}");
+                }))
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .build();
@@ -60,32 +82,56 @@ public class SecurityConfig {
             @Value("${app.auth.jwt.secret}") String secret,
             @Value("${app.auth.jwt.issuer}") String issuer
     ) {
-        NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder
-                .withSecretKey(jwtSecretKey(secret))
-                .macAlgorithm(MacAlgorithm.HS256)
-                .build();
+        return jwtDecoder(secret, issuer, ACCESS_TOKEN_TYPE);
+    }
 
-        OAuth2TokenValidator<org.springframework.security.oauth2.jwt.Jwt> validator =
-                new DelegatingOAuth2TokenValidator<>(
-                        JwtValidators.createDefaultWithIssuer(issuer),
-                        accessTokenValidator()
-                );
-        jwtDecoder.setJwtValidator(validator);
+    @Bean
+    public JwtDecoder refreshJwtDecoder(
+            @Value("${app.auth.jwt.secret}") String secret,
+            @Value("${app.auth.jwt.issuer}") String issuer
+    ) {
+        return jwtDecoder(secret, issuer, REFRESH_TOKEN_TYPE);
+    }
 
-        return jwtDecoder;
+    @Bean
+    public BearerTokenResolver bearerTokenResolver() {
+        DefaultBearerTokenResolver delegate = new DefaultBearerTokenResolver();
+        return request -> {
+            if ("/auth/refresh".equals(request.getServletPath())) {
+                return null;
+            }
+
+            return delegate.resolve(request);
+        };
     }
 
     private SecretKey jwtSecretKey(String secret) {
         return new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
     }
 
-    private OAuth2TokenValidator<org.springframework.security.oauth2.jwt.Jwt> accessTokenValidator() {
+    private JwtDecoder jwtDecoder(String secret, String issuer, String tokenType) {
+        NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder
+                .withSecretKey(jwtSecretKey(secret))
+                .macAlgorithm(MacAlgorithm.HS256)
+                .build();
+
+        OAuth2TokenValidator<Jwt> validator =
+                new DelegatingOAuth2TokenValidator<>(
+                        JwtValidators.createDefaultWithIssuer(issuer),
+                        tokenTypeValidator(tokenType)
+                );
+        jwtDecoder.setJwtValidator(validator);
+
+        return jwtDecoder;
+    }
+
+    private OAuth2TokenValidator<Jwt> tokenTypeValidator(String tokenType) {
         return jwt -> {
-            if ("access".equals(jwt.getClaimAsString("tokenType"))) {
+            if (tokenType.equals(jwt.getClaimAsString("tokenType"))) {
                 return OAuth2TokenValidatorResult.success();
             }
 
-            OAuth2Error error = new OAuth2Error("invalid_token", "Access token is required.", null);
+            OAuth2Error error = new OAuth2Error("invalid_token", "Invalid token type.", null);
             return OAuth2TokenValidatorResult.failure(error);
         };
     }

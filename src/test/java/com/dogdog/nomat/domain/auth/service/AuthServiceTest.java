@@ -9,12 +9,14 @@ import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.auth.dto.LoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginResponse;
+import com.dogdog.nomat.domain.auth.dto.RefreshResponse;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.auth.token.TokenPair;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.time.Instant;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,6 +25,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -119,5 +123,61 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.login(request))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_id_or_password");
+    }
+
+    @Test
+    void refreshReturnsNewAccessToken() {
+        User user = User.create("testuser", "encoded-password", "tester");
+        ReflectionTestUtils.setField(user, "id", 1L);
+        Jwt refreshJwt = refreshJwt(1L);
+
+        given(authTokenProvider.decodeRefreshToken("refresh-token")).willReturn(refreshJwt);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(authTokenProvider.issueAccessToken(user)).willReturn("new-access-token");
+
+        RefreshResponse response = authService.refresh("Bearer refresh-token");
+
+        assertThat(response.accessToken()).isEqualTo("new-access-token");
+    }
+
+    @Test
+    void refreshRejectsMissingBearerToken() {
+        assertThatThrownBy(() -> authService.refresh(null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+    }
+
+    @Test
+    void refreshRejectsInvalidRefreshToken() {
+        given(authTokenProvider.decodeRefreshToken("invalid-refresh-token"))
+                .willThrow(new BadJwtException("invalid"));
+
+        assertThatThrownBy(() -> authService.refresh("Bearer invalid-refresh-token"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+    }
+
+    @Test
+    void refreshRejectsUnknownUserId() {
+        Jwt refreshJwt = refreshJwt(1L);
+        given(authTokenProvider.decodeRefreshToken("refresh-token")).willReturn(refreshJwt);
+        given(userRepository.findById(1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.refresh("Bearer refresh-token"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+    }
+
+    private Jwt refreshJwt(Long userId) {
+        Instant now = Instant.now();
+        return Jwt.withTokenValue("refresh-token")
+                .header("alg", "HS256")
+                .issuer("nomat")
+                .subject("testuser")
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(60))
+                .claim("userId", userId)
+                .claim("tokenType", "refresh")
+                .build();
     }
 }
