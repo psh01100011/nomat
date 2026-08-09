@@ -44,4 +44,11 @@ public class AuthController {
     ) {
         return ApiResponse.of("success_refresh", authService.refresh(authorizationHeader));
     }
+
+    // TODO: refreshToken 저장소 도입 시 로그아웃에서 refreshToken 폐기 처리 구현
+    @PostMapping("/logout")
+    @ResponseStatus(HttpStatus.OK)
+    public ApiResponse<Void> logout() {
+        return ApiResponse.success("success_logout");
+    }
 }
