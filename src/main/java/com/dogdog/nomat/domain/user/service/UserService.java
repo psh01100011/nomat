@@ -1,5 +1,6 @@
 package com.dogdog.nomat.domain.user.service;
 
+import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
@@ -23,5 +24,10 @@ public class UserService {
                 .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
 
         return MyInfoResponse.from(user);
+    }
+
+    @Transactional(readOnly = true)
+    public AvailabilityResponse checkLoginId(String loginId) {
+        return new AvailabilityResponse(!userRepository.existsByLoginId(loginId));
     }
 }

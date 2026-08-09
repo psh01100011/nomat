@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
 
+import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
@@ -45,5 +46,23 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.getMyInfo(1L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_token");
+    }
+
+    @Test
+    void checkLoginIdReturnsAvailableTrueWhenLoginIdDoesNotExist() {
+        given(userRepository.existsByLoginId("testuser")).willReturn(false);
+
+        AvailabilityResponse response = userService.checkLoginId("testuser");
+
+        assertThat(response.available()).isTrue();
+    }
+
+    @Test
+    void checkLoginIdReturnsAvailableFalseWhenLoginIdExists() {
+        given(userRepository.existsByLoginId("testuser")).willReturn(true);
+
+        AvailabilityResponse response = userService.checkLoginId("testuser");
+
+        assertThat(response.available()).isFalse();
     }
 }
