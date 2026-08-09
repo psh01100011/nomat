@@ -30,6 +30,11 @@ public class UserController {
         return ApiResponse.of("success_check_login_id", userService.checkLoginId(loginId));
     }
 
+    @GetMapping("/nickname/availability")
+    public ApiResponse<AvailabilityResponse> checkNickname(@RequestParam String nickname) {
+        return ApiResponse.of("success_check_nickname", userService.checkNickname(nickname));
+    }
+
     private Long getUserId(Jwt jwt) {
         Number userId = jwt.getClaim("userId");
         return userId.longValue();

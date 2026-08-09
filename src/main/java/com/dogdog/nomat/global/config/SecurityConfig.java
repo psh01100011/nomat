@@ -50,6 +50,7 @@ public class SecurityConfig {
                         .requestMatchers("/auth/login").permitAll()
                         .requestMatchers("/auth/refresh").permitAll()
                         .requestMatchers("/users/login-id/availability").permitAll()
+                        .requestMatchers("/users/nickname/availability").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         .anyRequest().authenticated()
                 )

@@ -65,4 +65,22 @@ class UserServiceTest {
 
         assertThat(response.available()).isFalse();
     }
+
+    @Test
+    void checkNicknameReturnsAvailableTrueWhenNicknameDoesNotExist() {
+        given(userRepository.existsByNickname("tester")).willReturn(false);
+
+        AvailabilityResponse response = userService.checkNickname("tester");
+
+        assertThat(response.available()).isTrue();
+    }
+
+    @Test
+    void checkNicknameReturnsAvailableFalseWhenNicknameExists() {
+        given(userRepository.existsByNickname("tester")).willReturn(true);
+
+        AvailabilityResponse response = userService.checkNickname("tester");
+
+        assertThat(response.available()).isFalse();
+    }
 }

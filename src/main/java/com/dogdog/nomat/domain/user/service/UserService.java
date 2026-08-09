@@ -30,4 +30,9 @@ public class UserService {
     public AvailabilityResponse checkLoginId(String loginId) {
         return new AvailabilityResponse(!userRepository.existsByLoginId(loginId));
     }
+
+    @Transactional(readOnly = true)
+    public AvailabilityResponse checkNickname(String nickname) {
+        return new AvailabilityResponse(!userRepository.existsByNickname(nickname));
+    }
 }
