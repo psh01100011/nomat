@@ -32,9 +32,7 @@ public class UserService {
 
     @Transactional(readOnly = true)
     public MyInfoResponse getMyInfo(Long userId) {
-        User user = userRepository.findById(userId)
-                .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
-                .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
+        User user = getAuthenticatedUser(userId);
 
         return MyInfoResponse.from(user);
     }
@@ -60,9 +58,7 @@ public class UserService {
 
     @Transactional(readOnly = true)
     public void verifyPassword(Long userId, VerifyPasswordRequest request) {
-        User user = userRepository.findById(userId)
-                .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
-                .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
+        User user = getAuthenticatedUser(userId);
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_id_or_password");
@@ -71,14 +67,18 @@ public class UserService {
 
     @Transactional
     public void modifyMyInfo(Long userId, ModifyMyInfoRequest request) {
-        User user = userRepository.findById(userId)
-                .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
-                .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
+        User user = getAuthenticatedUser(userId);
 
         String nickname = getNicknameToUpdate(user, request.nickname());
         Asset profileImageAsset = getProfileImageToUpdate(user, request.profileImageAssetId());
 
         user.changeProfile(nickname, profileImageAsset);
+    }
+
+    private User getAuthenticatedUser(Long userId) {
+        return userRepository.findById(userId)
+                .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
+                .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
     }
 
     private String getNicknameToUpdate(User user, String nickname) {
