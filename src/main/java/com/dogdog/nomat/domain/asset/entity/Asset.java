@@ -109,6 +109,27 @@ public class Asset {
         );
     }
 
+    public void attach() {
+        if (status == AssetStatus.DELETED) {
+            throw new IllegalStateException("Deleted asset cannot be attached.");
+        }
+
+        if (processingStatus != AssetProcessingStatus.READY) {
+            throw new IllegalStateException("Asset is not ready to be attached.");
+        }
+
+        this.status = AssetStatus.ATTACHED;
+    }
+
+    public void delete() {
+        if (status == AssetStatus.DELETED) {
+            return;
+        }
+
+        this.status = AssetStatus.DELETED;
+        this.deletedAt = LocalDateTime.now();
+    }
+
     @PrePersist
     void prePersist() {
         LocalDateTime now = LocalDateTime.now();

@@ -13,6 +13,7 @@ import java.time.LocalDate;
 import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,9 +22,11 @@ import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class AssetService {
 
@@ -64,7 +67,12 @@ public class AssetService {
                 file.getSize()
         );
 
-        return UploadImageResponse.from(assetRepository.save(asset));
+        try {
+            return UploadImageResponse.from(assetRepository.saveAndFlush(asset));
+        } catch (RuntimeException exception) {
+            deleteFromS3Quietly(storageKey);
+            throw exception;
+        }
     }
 
     private void validateImage(MultipartFile file) {
@@ -79,6 +87,10 @@ public class AssetService {
         String extension = getExtension(getOriginalFilename(file));
         String expectedContentType = IMAGE_CONTENT_TYPES.get(extension);
         if (expectedContentType == null || !expectedContentType.equals(file.getContentType())) {
+            throw invalidRequest();
+        }
+
+        if (!matchesImageMagicBytes(file, extension)) {
             throw invalidRequest();
         }
     }
@@ -144,6 +156,74 @@ public class AssetService {
             s3Client.putObject(request, RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
         } catch (IOException | SdkException exception) {
             throw internalServerError();
+        }
+    }
+
+    private boolean matchesImageMagicBytes(MultipartFile file, String extension) {
+        byte[] header;
+        try {
+            header = file.getInputStream().readNBytes(12);
+        } catch (IOException exception) {
+            throw invalidRequest();
+        }
+
+        return switch (extension) {
+            case "jpg", "jpeg" -> isJpeg(header);
+            case "png" -> isPng(header);
+            case "webp" -> isWebp(header);
+            default -> false;
+        };
+    }
+
+    private boolean isJpeg(byte[] header) {
+        return header.length >= 3
+                && unsigned(header[0]) == 0xFF
+                && unsigned(header[1]) == 0xD8
+                && unsigned(header[2]) == 0xFF;
+    }
+
+    private boolean isPng(byte[] header) {
+        return header.length >= 8
+                && unsigned(header[0]) == 0x89
+                && header[1] == 0x50
+                && header[2] == 0x4E
+                && header[3] == 0x47
+                && header[4] == 0x0D
+                && header[5] == 0x0A
+                && header[6] == 0x1A
+                && header[7] == 0x0A;
+    }
+
+    private boolean isWebp(byte[] header) {
+        return header.length >= 12
+                && header[0] == 0x52
+                && header[1] == 0x49
+                && header[2] == 0x46
+                && header[3] == 0x46
+                && header[8] == 0x57
+                && header[9] == 0x45
+                && header[10] == 0x42
+                && header[11] == 0x50;
+    }
+
+    private int unsigned(byte value) {
+        return value & 0xFF;
+    }
+
+    private void deleteFromS3Quietly(String storageKey) {
+        DeleteObjectRequest request = DeleteObjectRequest.builder()
+                .bucket(properties.getBucket())
+                .key(storageKey)
+                .build();
+
+        try {
+            s3Client.deleteObject(request);
+        } catch (SdkException exception) {
+            log.warn("Failed to delete S3 object after asset save failure. bucket={}, key={}",
+                    properties.getBucket(),
+                    storageKey,
+                    exception
+            );
         }
     }
 

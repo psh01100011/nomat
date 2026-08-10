@@ -28,8 +28,10 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectResponse;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 @ExtendWith(MockitoExtension.class)
 class AssetServiceTest {
@@ -67,13 +69,13 @@ class AssetServiceTest {
                 "file",
                 "profile.png",
                 "image/png",
-                "image".getBytes()
+                pngBytes()
         );
 
         given(userRepository.findById(1L)).willReturn(Optional.of(uploader));
         given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
                 .willReturn(PutObjectResponse.builder().build());
-        given(assetRepository.save(any(Asset.class))).willAnswer(invocation -> {
+        given(assetRepository.saveAndFlush(any(Asset.class))).willAnswer(invocation -> {
             Asset asset = invocation.getArgument(0);
             ReflectionTestUtils.setField(asset, "id", 10L);
             return asset;
@@ -96,7 +98,7 @@ class AssetServiceTest {
         assertThat(request.contentLength()).isEqualTo(file.getSize());
 
         ArgumentCaptor<Asset> assetCaptor = ArgumentCaptor.forClass(Asset.class);
-        verify(assetRepository).save(assetCaptor.capture());
+        verify(assetRepository).saveAndFlush(assetCaptor.capture());
 
         Asset savedAsset = assetCaptor.getValue();
         assertThat(savedAsset.getUploader()).isEqualTo(uploader);
@@ -111,6 +113,57 @@ class AssetServiceTest {
     }
 
     @Test
+    void uploadImageAcceptsWebpMagicBytes() {
+        User uploader = User.create("testuser", "encoded-password", "tester");
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "profile.webp",
+                "image/webp",
+                webpBytes()
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(uploader));
+        given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .willReturn(PutObjectResponse.builder().build());
+        given(assetRepository.saveAndFlush(any(Asset.class))).willAnswer(invocation -> {
+            Asset asset = invocation.getArgument(0);
+            ReflectionTestUtils.setField(asset, "id", 10L);
+            return asset;
+        });
+
+        UploadImageResponse response = assetService.uploadImage(1L, file);
+
+        assertThat(response.assetId()).isEqualTo(10L);
+        assertThat(response.url()).endsWith(".webp");
+    }
+
+    @Test
+    void uploadImageAcceptsJpegMagicBytes() {
+        User uploader = User.create("testuser", "encoded-password", "tester");
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "profile.jpg",
+                "image/jpeg",
+                jpegBytes()
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(uploader));
+        given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .willReturn(PutObjectResponse.builder().build());
+        given(assetRepository.saveAndFlush(any(Asset.class))).willAnswer(invocation -> {
+            Asset asset = invocation.getArgument(0);
+            ReflectionTestUtils.setField(asset, "id", 10L);
+            return asset;
+        });
+
+        UploadImageResponse response = assetService.uploadImage(1L, file);
+
+        assertThat(response.assetId()).isEqualTo(10L);
+        assertThat(response.url()).endsWith(".jpg");
+    }
+
+
+    @Test
     void uploadImageRejectsUnknownUserId() {
         MockMultipartFile file = imageFile("profile.png", "image/png");
         given(userRepository.findById(1L)).willReturn(Optional.empty());
@@ -120,7 +173,7 @@ class AssetServiceTest {
                 .hasMessageContaining("invalid_token");
 
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
-        verify(assetRepository, never()).save(any(Asset.class));
+        verify(assetRepository, never()).saveAndFlush(any(Asset.class));
     }
 
     @Test
@@ -134,7 +187,7 @@ class AssetServiceTest {
                 .hasMessageContaining("invalid_request");
 
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
-        verify(assetRepository, never()).save(any(Asset.class));
+        verify(assetRepository, never()).saveAndFlush(any(Asset.class));
     }
 
     @Test
@@ -148,7 +201,26 @@ class AssetServiceTest {
                 .hasMessageContaining("invalid_request");
 
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
-        verify(assetRepository, never()).save(any(Asset.class));
+        verify(assetRepository, never()).saveAndFlush(any(Asset.class));
+    }
+
+    @Test
+    void uploadImageRejectsMismatchedMagicBytes() {
+        User uploader = User.create("testuser", "encoded-password", "tester");
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "profile.png",
+                "image/png",
+                "not-png".getBytes()
+        );
+        given(userRepository.findById(1L)).willReturn(Optional.of(uploader));
+
+        assertThatThrownBy(() -> assetService.uploadImage(1L, file))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+        verify(assetRepository, never()).saveAndFlush(any(Asset.class));
     }
 
     @Test
@@ -163,10 +235,73 @@ class AssetServiceTest {
                 .hasMessageContaining("invalid_request");
 
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
-        verify(assetRepository, never()).save(any(Asset.class));
+        verify(assetRepository, never()).saveAndFlush(any(Asset.class));
+    }
+
+    @Test
+    void uploadImageDeletesS3ObjectWhenAssetSaveFails() {
+        User uploader = User.create("testuser", "encoded-password", "tester");
+        MockMultipartFile file = imageFile("profile.png", "image/png");
+        RuntimeException saveFailure = new RuntimeException("save failed");
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(uploader));
+        given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .willReturn(PutObjectResponse.builder().build());
+        given(assetRepository.saveAndFlush(any(Asset.class))).willThrow(saveFailure);
+
+        assertThatThrownBy(() -> assetService.uploadImage(1L, file))
+                .isSameAs(saveFailure);
+
+        ArgumentCaptor<DeleteObjectRequest> deleteRequestCaptor = ArgumentCaptor.forClass(DeleteObjectRequest.class);
+        verify(s3Client).deleteObject(deleteRequestCaptor.capture());
+
+        DeleteObjectRequest deleteRequest = deleteRequestCaptor.getValue();
+        assertThat(deleteRequest.bucket()).isEqualTo("nomat-assets");
+        assertThat(deleteRequest.key()).startsWith("uploads/images/");
+        assertThat(deleteRequest.key()).endsWith(".png");
+    }
+
+    @Test
+    void uploadImageKeepsOriginalExceptionWhenCompensationDeleteFails() {
+        User uploader = User.create("testuser", "encoded-password", "tester");
+        MockMultipartFile file = imageFile("profile.png", "image/png");
+        RuntimeException saveFailure = new RuntimeException("save failed");
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(uploader));
+        given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .willReturn(PutObjectResponse.builder().build());
+        given(assetRepository.saveAndFlush(any(Asset.class))).willThrow(saveFailure);
+        given(s3Client.deleteObject(any(DeleteObjectRequest.class)))
+                .willThrow(S3Exception.builder().message("delete failed").build());
+
+        assertThatThrownBy(() -> assetService.uploadImage(1L, file))
+                .isSameAs(saveFailure);
     }
 
     private MockMultipartFile imageFile(String filename, String contentType) {
-        return new MockMultipartFile("file", filename, contentType, "image".getBytes());
+        return new MockMultipartFile("file", filename, contentType, pngBytes());
+    }
+
+    private byte[] pngBytes() {
+        return new byte[] {
+                (byte) 0x89, 0x50, 0x4E, 0x47,
+                0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x00
+        };
+    }
+
+    private byte[] jpegBytes() {
+        return new byte[] {
+                (byte) 0xFF, (byte) 0xD8, (byte) 0xFF,
+                0x00, 0x00, 0x00
+        };
+    }
+
+    private byte[] webpBytes() {
+        return new byte[] {
+                0x52, 0x49, 0x46, 0x46,
+                0x00, 0x00, 0x00, 0x00,
+                0x57, 0x45, 0x42, 0x50
+        };
     }
 }
