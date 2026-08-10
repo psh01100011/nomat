@@ -18,9 +18,11 @@ public class AuthTokenProvider {
 
     private static final String ACCESS_TOKEN_TYPE = "access";
     private static final String REFRESH_TOKEN_TYPE = "refresh";
+    private static final String PASSWORD_VERIFICATION_TOKEN_TYPE = "password_verification";
 
     private final JwtEncoder jwtEncoder;
     private final JwtDecoder refreshJwtDecoder;
+    private final JwtDecoder passwordVerificationJwtDecoder;
 
     @Value("${app.auth.jwt.issuer}")
     private String issuer;
@@ -31,12 +33,17 @@ public class AuthTokenProvider {
     @Value("${app.auth.jwt.refresh-token-validity-seconds}")
     private long refreshTokenValiditySeconds;
 
+    @Value("${app.auth.jwt.password-verification-token-validity-seconds}")
+    private long passwordVerificationTokenValiditySeconds;
+
     public AuthTokenProvider(
             JwtEncoder jwtEncoder,
-            @Qualifier("refreshJwtDecoder") JwtDecoder refreshJwtDecoder
+            @Qualifier("refreshJwtDecoder") JwtDecoder refreshJwtDecoder,
+            @Qualifier("passwordVerificationJwtDecoder") JwtDecoder passwordVerificationJwtDecoder
     ) {
         this.jwtEncoder = jwtEncoder;
         this.refreshJwtDecoder = refreshJwtDecoder;
+        this.passwordVerificationJwtDecoder = passwordVerificationJwtDecoder;
     }
 
     public TokenPair issue(User user) {
@@ -50,8 +57,16 @@ public class AuthTokenProvider {
         return createToken(user, ACCESS_TOKEN_TYPE, accessTokenValiditySeconds);
     }
 
+    public String issuePasswordVerificationToken(User user) {
+        return createToken(user, PASSWORD_VERIFICATION_TOKEN_TYPE, passwordVerificationTokenValiditySeconds);
+    }
+
     public Jwt decodeRefreshToken(String refreshToken) {
         return refreshJwtDecoder.decode(refreshToken);
+    }
+
+    public Jwt decodePasswordVerificationToken(String passwordVerificationToken) {
+        return passwordVerificationJwtDecoder.decode(passwordVerificationToken);
     }
 
     private String createToken(User user, String tokenType, long validitySeconds) {

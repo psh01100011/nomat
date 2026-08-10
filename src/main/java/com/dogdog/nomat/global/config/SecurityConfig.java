@@ -37,6 +37,7 @@ public class SecurityConfig {
 
     private static final String ACCESS_TOKEN_TYPE = "access";
     private static final String REFRESH_TOKEN_TYPE = "refresh";
+    private static final String PASSWORD_VERIFICATION_TOKEN_TYPE = "password_verification";
 
     @Bean
     public SecurityFilterChain securityFilterChain(
@@ -96,6 +97,14 @@ public class SecurityConfig {
             @Value("${app.auth.jwt.issuer}") String issuer
     ) {
         return jwtDecoder(secret, issuer, REFRESH_TOKEN_TYPE);
+    }
+
+    @Bean
+    public JwtDecoder passwordVerificationJwtDecoder(
+            @Value("${app.auth.jwt.secret}") String secret,
+            @Value("${app.auth.jwt.issuer}") String issuer
+    ) {
+        return jwtDecoder(secret, issuer, PASSWORD_VERIFICATION_TOKEN_TYPE);
     }
 
     @Bean

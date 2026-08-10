@@ -70,6 +70,10 @@ public class User {
         this.profileImageAsset = profileImageAsset;
     }
 
+    public void changePassword(String passwordHash) {
+        this.passwordHash = passwordHash;
+    }
+
     @PrePersist
     void prePersist() {
         LocalDateTime now = LocalDateTime.now();

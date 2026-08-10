@@ -7,14 +7,18 @@ import static org.mockito.BDDMockito.given;
 import com.dogdog.nomat.domain.asset.entity.Asset;
 import com.dogdog.nomat.domain.asset.entity.AssetProcessingStatus;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
+import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
+import com.dogdog.nomat.domain.user.dto.ModifyPasswordRequest;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
+import com.dogdog.nomat.domain.user.dto.PasswordVerificationResponse;
 import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
 import com.dogdog.nomat.domain.user.dto.VerifyPasswordRequest;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.time.Instant;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,6 +26,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -35,6 +41,9 @@ class UserServiceTest {
 
     @Mock
     private PasswordEncoder passwordEncoder;
+
+    @Mock
+    private AuthTokenProvider authTokenProvider;
 
     @InjectMocks
     private UserService userService;
@@ -124,8 +133,11 @@ class UserServiceTest {
         User user = User.create("testuser", "encoded-password", "tester");
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(passwordEncoder.matches("password123!", "encoded-password")).willReturn(true);
+        given(authTokenProvider.issuePasswordVerificationToken(user)).willReturn("password-verification-token");
 
-        userService.verifyPassword(1L, new VerifyPasswordRequest("password123!"));
+        PasswordVerificationResponse response = userService.verifyPassword(1L, new VerifyPasswordRequest("password123!"));
+
+        assertThat(response.passwordVerificationToken()).isEqualTo("password-verification-token");
     }
 
     @Test
@@ -230,6 +242,61 @@ class UserServiceTest {
                 .hasMessageContaining("invalid_token");
     }
 
+    @Test
+    void modifyPasswordChangesPasswordHash() {
+        User user = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(authTokenProvider.decodePasswordVerificationToken("password-verification-token"))
+                .willReturn(passwordVerificationJwt(1L));
+        given(passwordEncoder.encode("newPassword123!")).willReturn("new-encoded-password");
+
+        userService.modifyPassword(1L, new ModifyPasswordRequest("password-verification-token", "newPassword123!"));
+
+        assertThat(user.getPasswordHash()).isEqualTo("new-encoded-password");
+    }
+
+    @Test
+    void modifyPasswordRejectsInvalidPasswordVerificationToken() {
+        User user = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(authTokenProvider.decodePasswordVerificationToken("invalid-token"))
+                .willThrow(new BadJwtException("invalid"));
+
+        assertThatThrownBy(() -> userService.modifyPassword(
+                1L,
+                new ModifyPasswordRequest("invalid-token", "newPassword123!")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+    }
+
+    @Test
+    void modifyPasswordRejectsOtherUsersPasswordVerificationToken() {
+        User user = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(authTokenProvider.decodePasswordVerificationToken("password-verification-token"))
+                .willReturn(passwordVerificationJwt(2L));
+
+        assertThatThrownBy(() -> userService.modifyPassword(
+                1L,
+                new ModifyPasswordRequest("password-verification-token", "newPassword123!")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+    }
+
+    @Test
+    void modifyPasswordRejectsUnknownUserId() {
+        given(userRepository.findById(1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.modifyPassword(
+                1L,
+                new ModifyPasswordRequest("password-verification-token", "newPassword123!")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+    }
+
     private User activeUser(Long userId) {
         User user = User.create("testuser" + userId, "encoded-password", "tester" + userId);
         ReflectionTestUtils.setField(user, "id", userId);
@@ -247,5 +314,18 @@ class UserServiceTest {
         );
         ReflectionTestUtils.setField(asset, "id", assetId);
         return asset;
+    }
+
+    private Jwt passwordVerificationJwt(Long userId) {
+        Instant now = Instant.now();
+        return Jwt.withTokenValue("password-verification-token")
+                .header("alg", "HS256")
+                .issuer("nomat")
+                .subject("testuser")
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(60))
+                .claim("userId", userId)
+                .claim("tokenType", "password_verification")
+                .build();
     }
 }

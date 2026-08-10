@@ -2,7 +2,9 @@ package com.dogdog.nomat.domain.user.controller;
 
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
+import com.dogdog.nomat.domain.user.dto.ModifyPasswordRequest;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
+import com.dogdog.nomat.domain.user.dto.PasswordVerificationResponse;
 import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
 import com.dogdog.nomat.domain.user.dto.VerifyPasswordRequest;
 import com.dogdog.nomat.domain.user.service.UserService;
@@ -49,13 +51,12 @@ public class UserController {
     }
 
     @PostMapping("/me/password/verification")
-    public ApiResponse<Void> verifyPassword(
+    public ApiResponse<PasswordVerificationResponse> verifyPassword(
             @AuthenticationPrincipal Jwt jwt,
             @Valid @RequestBody VerifyPasswordRequest request
     ) {
         Long userId = getUserId(jwt);
-        userService.verifyPassword(userId, request);
-        return ApiResponse.success("success_verify_password");
+        return ApiResponse.of("success_verify_password", userService.verifyPassword(userId, request));
     }
 
     @PatchMapping("/me")
@@ -65,6 +66,16 @@ public class UserController {
     ) {
         Long userId = getUserId(jwt);
         userService.modifyMyInfo(userId, request);
+        return ApiResponse.success("success_modify_info");
+    }
+
+    @PatchMapping("/me/password")
+    public ApiResponse<Void> modifyPassword(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody ModifyPasswordRequest request
+    ) {
+        Long userId = getUserId(jwt);
+        userService.modifyPassword(userId, request);
         return ApiResponse.success("success_modify_info");
     }
 

@@ -5,9 +5,12 @@ import com.dogdog.nomat.domain.asset.entity.AssetProcessingStatus;
 import com.dogdog.nomat.domain.asset.entity.AssetStatus;
 import com.dogdog.nomat.domain.asset.entity.AssetType;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
+import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
+import com.dogdog.nomat.domain.user.dto.ModifyPasswordRequest;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
+import com.dogdog.nomat.domain.user.dto.PasswordVerificationResponse;
 import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
 import com.dogdog.nomat.domain.user.dto.VerifyPasswordRequest;
 import com.dogdog.nomat.domain.user.entity.User;
@@ -18,6 +21,8 @@ import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -29,6 +34,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final AssetRepository assetRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuthTokenProvider authTokenProvider;
 
     @Transactional(readOnly = true)
     public MyInfoResponse getMyInfo(Long userId) {
@@ -57,12 +63,14 @@ public class UserService {
     }
 
     @Transactional(readOnly = true)
-    public void verifyPassword(Long userId, VerifyPasswordRequest request) {
+    public PasswordVerificationResponse verifyPassword(Long userId, VerifyPasswordRequest request) {
         User user = getAuthenticatedUser(userId);
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_id_or_password");
         }
+
+        return new PasswordVerificationResponse(authTokenProvider.issuePasswordVerificationToken(user));
     }
 
     @Transactional
@@ -73,6 +81,14 @@ public class UserService {
         Asset profileImageAsset = getProfileImageToUpdate(user, request.profileImageAssetId());
 
         user.changeProfile(nickname, profileImageAsset);
+    }
+
+    @Transactional
+    public void modifyPassword(Long userId, ModifyPasswordRequest request) {
+        User user = getAuthenticatedUser(userId);
+        validatePasswordVerificationToken(user, request.passwordVerificationToken());
+
+        user.changePassword(passwordEncoder.encode(request.password()));
     }
 
     private User getAuthenticatedUser(Long userId) {
@@ -116,6 +132,20 @@ public class UserService {
                 || asset.getProcessingStatus() != AssetProcessingStatus.READY
                 || !Objects.equals(asset.getUploader().getId(), user.getId())) {
             throw invalidRequest();
+        }
+    }
+
+    private void validatePasswordVerificationToken(User user, String passwordVerificationToken) {
+        Jwt jwt;
+        try {
+            jwt = authTokenProvider.decodePasswordVerificationToken(passwordVerificationToken);
+        } catch (JwtException exception) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token");
+        }
+
+        Number tokenUserId = jwt.getClaim("userId");
+        if (tokenUserId == null || !Objects.equals(tokenUserId.longValue(), user.getId())) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token");
         }
     }
 
