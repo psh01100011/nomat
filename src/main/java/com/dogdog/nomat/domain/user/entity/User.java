@@ -65,6 +65,11 @@ public class User {
         return new User(loginId, passwordHash, nickname);
     }
 
+    public void changeProfile(String nickname, Asset profileImageAsset) {
+        this.nickname = nickname;
+        this.profileImageAsset = profileImageAsset;
+    }
+
     @PrePersist
     void prePersist() {
         LocalDateTime now = LocalDateTime.now();

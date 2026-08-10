@@ -4,7 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
 
+import com.dogdog.nomat.domain.asset.entity.Asset;
+import com.dogdog.nomat.domain.asset.entity.AssetProcessingStatus;
+import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
+import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
 import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
 import com.dogdog.nomat.domain.user.dto.VerifyPasswordRequest;
@@ -25,6 +29,9 @@ class UserServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private AssetRepository assetRepository;
 
     @Mock
     private PasswordEncoder passwordEncoder;
@@ -139,5 +146,106 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.verifyPassword(1L, new VerifyPasswordRequest("password123!")))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_token");
+    }
+
+    @Test
+    void modifyMyInfoChangesNickname() {
+        User user = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(userRepository.existsByNicknameAndIdNot("newbie", 1L)).willReturn(false);
+
+        userService.modifyMyInfo(1L, new ModifyMyInfoRequest("newbie", null));
+
+        assertThat(user.getNickname()).isEqualTo("newbie");
+        assertThat(user.getProfileImageAsset()).isNull();
+    }
+
+    @Test
+    void modifyMyInfoRejectsDuplicateNickname() {
+        User user = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(userRepository.existsByNicknameAndIdNot("newbie", 1L)).willReturn(true);
+
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest("newbie", null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("duplicate_nickname");
+    }
+
+    @Test
+    void modifyMyInfoChangesProfileImageAndAttachesAsset() {
+        User user = activeUser(1L);
+        Asset asset = imageAsset(10L, user);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
+
+        userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L));
+
+        assertThat(user.getProfileImageAsset()).isEqualTo(asset);
+        assertThat(asset.getStatus()).isEqualTo(com.dogdog.nomat.domain.asset.entity.AssetStatus.ATTACHED);
+    }
+
+    @Test
+    void modifyMyInfoRejectsUnknownProfileImageAssetId() {
+        User user = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(assetRepository.findById(10L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+    }
+
+    @Test
+    void modifyMyInfoRejectsOtherUsersProfileImageAsset() {
+        User user = activeUser(1L);
+        User otherUser = activeUser(2L);
+        Asset asset = imageAsset(10L, otherUser);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
+
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+    }
+
+    @Test
+    void modifyMyInfoRejectsProfileImageAssetThatIsNotReady() {
+        User user = activeUser(1L);
+        Asset asset = imageAsset(10L, user);
+        ReflectionTestUtils.setField(asset, "processingStatus", AssetProcessingStatus.PROCESSING);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
+
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+    }
+
+    @Test
+    void modifyMyInfoRejectsUnknownUserId() {
+        given(userRepository.findById(1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest("newbie", null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+    }
+
+    private User activeUser(Long userId) {
+        User user = User.create("testuser" + userId, "encoded-password", "tester" + userId);
+        ReflectionTestUtils.setField(user, "id", userId);
+        return user;
+    }
+
+    private Asset imageAsset(Long assetId, User uploader) {
+        Asset asset = Asset.createImage(
+                uploader,
+                "profile.png",
+                "uploads/images/profile.png",
+                "https://cdn.nomat.com/uploads/images/profile.png",
+                "image/png",
+                1024L
+        );
+        ReflectionTestUtils.setField(asset, "id", assetId);
+        return asset;
     }
 }

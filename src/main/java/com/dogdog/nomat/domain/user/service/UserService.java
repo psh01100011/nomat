@@ -1,6 +1,12 @@
 package com.dogdog.nomat.domain.user.service;
 
+import com.dogdog.nomat.domain.asset.entity.Asset;
+import com.dogdog.nomat.domain.asset.entity.AssetProcessingStatus;
+import com.dogdog.nomat.domain.asset.entity.AssetStatus;
+import com.dogdog.nomat.domain.asset.entity.AssetType;
+import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
+import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
 import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
 import com.dogdog.nomat.domain.user.dto.VerifyPasswordRequest;
@@ -8,17 +14,20 @@ import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
 public class UserService {
 
     private final UserRepository userRepository;
+    private final AssetRepository assetRepository;
     private final PasswordEncoder passwordEncoder;
 
     @Transactional(readOnly = true)
@@ -58,5 +67,59 @@ public class UserService {
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_id_or_password");
         }
+    }
+
+    @Transactional
+    public void modifyMyInfo(Long userId, ModifyMyInfoRequest request) {
+        User user = userRepository.findById(userId)
+                .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
+                .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
+
+        String nickname = getNicknameToUpdate(user, request.nickname());
+        Asset profileImageAsset = getProfileImageToUpdate(user, request.profileImageAssetId());
+
+        user.changeProfile(nickname, profileImageAsset);
+    }
+
+    private String getNicknameToUpdate(User user, String nickname) {
+        if (nickname == null || user.getNickname().equals(nickname)) {
+            return user.getNickname();
+        }
+
+        if (!StringUtils.hasText(nickname)) {
+            throw invalidRequest();
+        }
+
+        if (userRepository.existsByNicknameAndIdNot(nickname, user.getId())) {
+            throw new BusinessException(HttpStatus.CONFLICT, "duplicate_nickname");
+        }
+
+        return nickname;
+    }
+
+    private Asset getProfileImageToUpdate(User user, Long profileImageAssetId) {
+        if (profileImageAssetId == null) {
+            return user.getProfileImageAsset();
+        }
+
+        Asset asset = assetRepository.findById(profileImageAssetId)
+                .orElseThrow(this::invalidRequest);
+        validateProfileImageAsset(user, asset);
+        asset.attach();
+
+        return asset;
+    }
+
+    private void validateProfileImageAsset(User user, Asset asset) {
+        if (asset.getAssetType() != AssetType.IMAGE
+                || asset.getStatus() == AssetStatus.DELETED
+                || asset.getProcessingStatus() != AssetProcessingStatus.READY
+                || !Objects.equals(asset.getUploader().getId(), user.getId())) {
+            throw invalidRequest();
+        }
+    }
+
+    private BusinessException invalidRequest() {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
     }
 }

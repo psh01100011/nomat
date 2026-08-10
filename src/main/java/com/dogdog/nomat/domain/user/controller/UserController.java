@@ -1,6 +1,7 @@
 package com.dogdog.nomat.domain.user.controller;
 
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
+import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
 import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
 import com.dogdog.nomat.domain.user.dto.VerifyPasswordRequest;
@@ -12,6 +13,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -54,6 +56,16 @@ public class UserController {
         Long userId = getUserId(jwt);
         userService.verifyPassword(userId, request);
         return ApiResponse.success("success_verify_password");
+    }
+
+    @PatchMapping("/me")
+    public ApiResponse<Void> modifyMyInfo(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody ModifyMyInfoRequest request
+    ) {
+        Long userId = getUserId(jwt);
+        userService.modifyMyInfo(userId, request);
+        return ApiResponse.success("success_modify_info");
     }
 
     private Long getUserId(Jwt jwt) {
