@@ -6,6 +6,7 @@ import static org.mockito.BDDMockito.given;
 
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
+import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
@@ -82,5 +83,27 @@ class UserServiceTest {
         AvailabilityResponse response = userService.checkNickname("tester");
 
         assertThat(response.available()).isFalse();
+    }
+
+    @Test
+    void getUserInfoReturnsActiveUserInfo() {
+        User user = User.create("testuser", "encoded-password", "tester");
+        ReflectionTestUtils.setField(user, "id", 1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+
+        UserInfoResponse response = userService.getUserInfo(1L);
+
+        assertThat(response.userId()).isEqualTo(1L);
+        assertThat(response.nickname()).isEqualTo("tester");
+        assertThat(response.profileImageUrl()).isNull();
+    }
+
+    @Test
+    void getUserInfoRejectsUnknownUserId() {
+        given(userRepository.findById(1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.getUserInfo(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
     }
 }

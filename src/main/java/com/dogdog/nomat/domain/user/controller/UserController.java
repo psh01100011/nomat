@@ -2,12 +2,14 @@ package com.dogdog.nomat.domain.user.controller;
 
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
+import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
 import com.dogdog.nomat.domain.user.service.UserService;
 import com.dogdog.nomat.global.dto.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -33,6 +35,11 @@ public class UserController {
     @GetMapping("/nickname/availability")
     public ApiResponse<AvailabilityResponse> checkNickname(@RequestParam String nickname) {
         return ApiResponse.of("success_check_nickname", userService.checkNickname(nickname));
+    }
+
+    @GetMapping("/{userId}")
+    public ApiResponse<UserInfoResponse> getUserInfo(@PathVariable Long userId) {
+        return ApiResponse.of("success_get_user_info", userService.getUserInfo(userId));
     }
 
     private Long getUserId(Jwt jwt) {

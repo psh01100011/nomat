@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.user.service;
 
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
+import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
@@ -34,5 +35,14 @@ public class UserService {
     @Transactional(readOnly = true)
     public AvailabilityResponse checkNickname(String nickname) {
         return new AvailabilityResponse(!userRepository.existsByNickname(nickname));
+    }
+
+    @Transactional(readOnly = true)
+    public UserInfoResponse getUserInfo(Long userId) {
+        User user = userRepository.findById(userId)
+                .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
+                .orElseThrow(() -> new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request"));
+
+        return UserInfoResponse.from(user);
     }
 }
