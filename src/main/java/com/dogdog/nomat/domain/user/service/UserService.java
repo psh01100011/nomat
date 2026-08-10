@@ -91,6 +91,13 @@ public class UserService {
         user.changePassword(passwordEncoder.encode(request.password()));
     }
 
+    @Transactional
+    public void deleteMyAccount(Long userId) {
+        User user = getAuthenticatedUser(userId);
+
+        user.delete();
+    }
+
     private User getAuthenticatedUser(Long userId) {
         return userRepository.findById(userId)
                 .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)

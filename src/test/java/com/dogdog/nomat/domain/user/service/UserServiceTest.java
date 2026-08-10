@@ -16,6 +16,7 @@ import com.dogdog.nomat.domain.user.dto.PasswordVerificationResponse;
 import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
 import com.dogdog.nomat.domain.user.dto.VerifyPasswordRequest;
 import com.dogdog.nomat.domain.user.entity.User;
+import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.Instant;
@@ -293,6 +294,32 @@ class UserServiceTest {
                 1L,
                 new ModifyPasswordRequest("password-verification-token", "newPassword123!")
         ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+    }
+
+    @Test
+    void deleteMyAccountMarksUserDeletedAndAnonymizesLoginFields() {
+        User user = activeUser(1L);
+        Asset asset = imageAsset(10L, user);
+        ReflectionTestUtils.setField(user, "profileImageAsset", asset);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+
+        userService.deleteMyAccount(1L);
+
+        assertThat(user.getStatus()).isEqualTo(UserStatus.DELETED);
+        assertThat(user.getDeletedAt()).isNotNull();
+        assertThat(user.getLoginId()).isEqualTo("deleted_user_1");
+        assertThat(user.getNickname()).isEqualTo("deleted_user_1");
+        assertThat(user.getPasswordHash()).isEqualTo("deleted");
+        assertThat(user.getProfileImageAsset()).isNull();
+    }
+
+    @Test
+    void deleteMyAccountRejectsUnknownUserId() {
+        given(userRepository.findById(1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.deleteMyAccount(1L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_token");
     }

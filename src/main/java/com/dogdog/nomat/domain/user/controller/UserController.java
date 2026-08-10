@@ -13,6 +13,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -77,6 +78,13 @@ public class UserController {
         Long userId = getUserId(jwt);
         userService.modifyPassword(userId, request);
         return ApiResponse.success("success_modify_info");
+    }
+
+    @DeleteMapping("/me")
+    public ApiResponse<Void> deleteMyAccount(@AuthenticationPrincipal Jwt jwt) {
+        Long userId = getUserId(jwt);
+        userService.deleteMyAccount(userId);
+        return ApiResponse.success("success_delete_user");
     }
 
     private Long getUserId(Jwt jwt) {
