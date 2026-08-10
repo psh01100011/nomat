@@ -12,6 +12,12 @@ server:
 
 app:
   asset:
+    cleanup:
+      enabled: true
+      temp-retention-hours: 24
+      batch-size: 100
+      initial-delay-ms: 60000
+      fixed-delay-ms: 3600000
     s3:
       bucket: ${AWS_S3_BUCKET}
       region: ${AWS_REGION:ap-northeast-2}
