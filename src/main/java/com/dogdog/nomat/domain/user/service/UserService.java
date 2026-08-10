@@ -3,12 +3,14 @@ package com.dogdog.nomat.domain.user.service;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
 import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
+import com.dogdog.nomat.domain.user.dto.VerifyPasswordRequest;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
     @Transactional(readOnly = true)
     public MyInfoResponse getMyInfo(Long userId) {
@@ -44,5 +47,16 @@ public class UserService {
                 .orElseThrow(() -> new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request"));
 
         return UserInfoResponse.from(user);
+    }
+
+    @Transactional(readOnly = true)
+    public void verifyPassword(Long userId, VerifyPasswordRequest request) {
+        User user = userRepository.findById(userId)
+                .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
+                .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
+
+        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_id_or_password");
+        }
     }
 }

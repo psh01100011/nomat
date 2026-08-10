@@ -7,6 +7,7 @@ import static org.mockito.BDDMockito.given;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
 import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
+import com.dogdog.nomat.domain.user.dto.VerifyPasswordRequest;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -23,6 +25,9 @@ class UserServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private PasswordEncoder passwordEncoder;
 
     @InjectMocks
     private UserService userService;
@@ -105,5 +110,34 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.getUserInfo(1L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_request");
+    }
+
+    @Test
+    void verifyPasswordSucceedsWhenPasswordMatches() {
+        User user = User.create("testuser", "encoded-password", "tester");
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(passwordEncoder.matches("password123!", "encoded-password")).willReturn(true);
+
+        userService.verifyPassword(1L, new VerifyPasswordRequest("password123!"));
+    }
+
+    @Test
+    void verifyPasswordRejectsWrongPassword() {
+        User user = User.create("testuser", "encoded-password", "tester");
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(passwordEncoder.matches("password123!", "encoded-password")).willReturn(false);
+
+        assertThatThrownBy(() -> userService.verifyPassword(1L, new VerifyPasswordRequest("password123!")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_id_or_password");
+    }
+
+    @Test
+    void verifyPasswordRejectsUnknownUserId() {
+        given(userRepository.findById(1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.verifyPassword(1L, new VerifyPasswordRequest("password123!")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
     }
 }

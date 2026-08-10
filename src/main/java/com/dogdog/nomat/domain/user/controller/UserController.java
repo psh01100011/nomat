@@ -3,13 +3,17 @@ package com.dogdog.nomat.domain.user.controller;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.MyInfoResponse;
 import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
+import com.dogdog.nomat.domain.user.dto.VerifyPasswordRequest;
 import com.dogdog.nomat.domain.user.service.UserService;
 import com.dogdog.nomat.global.dto.ApiResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -40,6 +44,16 @@ public class UserController {
     @GetMapping("/{userId}")
     public ApiResponse<UserInfoResponse> getUserInfo(@PathVariable Long userId) {
         return ApiResponse.of("success_get_user_info", userService.getUserInfo(userId));
+    }
+
+    @PostMapping("/me/password/verification")
+    public ApiResponse<Void> verifyPassword(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody VerifyPasswordRequest request
+    ) {
+        Long userId = getUserId(jwt);
+        userService.verifyPassword(userId, request);
+        return ApiResponse.success("success_verify_password");
     }
 
     private Long getUserId(Jwt jwt) {
