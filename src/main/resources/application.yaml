@@ -1,12 +1,23 @@
 spring:
   application:
     name: nomat
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
 
 server:
   servlet:
     context-path: /api
 
 app:
+  asset:
+    s3:
+      bucket: ${AWS_S3_BUCKET}
+      region: ${AWS_REGION:ap-northeast-2}
+      public-base-url: ${AWS_S3_PUBLIC_BASE_URL}
+      image-prefix: uploads/images
+      max-image-size-bytes: 10485760
   auth:
     jwt:
       issuer: nomat
