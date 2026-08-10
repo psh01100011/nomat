@@ -11,6 +11,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
@@ -69,4 +71,53 @@ public class Asset {
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    private Asset(
+            User uploader,
+            AssetType assetType,
+            String originalFilename,
+            String storageKey,
+            String url,
+            String mimeType,
+            Long sizeBytes
+    ) {
+        this.uploader = uploader;
+        this.assetType = assetType;
+        this.originalFilename = originalFilename;
+        this.storageKey = storageKey;
+        this.url = url;
+        this.mimeType = mimeType;
+        this.sizeBytes = sizeBytes;
+    }
+
+    public static Asset createImage(
+            User uploader,
+            String originalFilename,
+            String storageKey,
+            String url,
+            String mimeType,
+            Long sizeBytes
+    ) {
+        return new Asset(
+                uploader,
+                AssetType.IMAGE,
+                originalFilename,
+                storageKey,
+                url,
+                mimeType,
+                sizeBytes
+        );
+    }
+
+    @PrePersist
+    void prePersist() {
+        LocalDateTime now = LocalDateTime.now();
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
+
+    @PreUpdate
+    void preUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
 }
