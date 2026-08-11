@@ -61,6 +61,13 @@ public class QuestionMedia {
     @Column(name = "duration_ms")
     private Integer durationMs;
 
+    @Column(name = "processing_status", length = 20, nullable = false)
+    @Enumerated(EnumType.STRING)
+    private QuestionMediaProcessingStatus processingStatus = QuestionMediaProcessingStatus.READY;
+
+    @Column(name = "failure_message", length = 500)
+    private String failureMessage;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -83,6 +90,9 @@ public class QuestionMedia {
         this.startTimeMs = startTimeMs;
         this.endTimeMs = endTimeMs;
         this.durationMs = durationMs;
+        if (sourceType == QuestionMediaSourceType.YOUTUBE || sourceType == QuestionMediaSourceType.TTS) {
+            this.processingStatus = QuestionMediaProcessingStatus.PENDING;
+        }
     }
 
     public static QuestionMedia create(
@@ -95,6 +105,31 @@ public class QuestionMedia {
             Integer durationMs
     ) {
         return new QuestionMedia(question, asset, sourceType, sourceUrl, startTimeMs, endTimeMs, durationMs);
+    }
+
+    public void startProcessing() {
+        this.processingStatus = QuestionMediaProcessingStatus.PROCESSING;
+        this.failureMessage = null;
+    }
+
+    public void completeProcessing(Asset asset, Integer durationMs) {
+        this.asset = asset;
+        this.durationMs = durationMs;
+        this.processingStatus = QuestionMediaProcessingStatus.READY;
+        this.failureMessage = null;
+    }
+
+    public void failProcessing(String failureMessage) {
+        this.processingStatus = QuestionMediaProcessingStatus.FAILED;
+        this.failureMessage = truncate(failureMessage);
+    }
+
+    private String truncate(String value) {
+        if (value == null || value.length() <= 500) {
+            return value;
+        }
+
+        return value.substring(0, 500);
     }
 
     @PrePersist

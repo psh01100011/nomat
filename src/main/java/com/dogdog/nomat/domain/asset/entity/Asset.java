@@ -79,7 +79,8 @@ public class Asset {
             String storageKey,
             String url,
             String mimeType,
-            Long sizeBytes
+            Long sizeBytes,
+            Integer durationMs
     ) {
         this.uploader = uploader;
         this.assetType = assetType;
@@ -88,6 +89,7 @@ public class Asset {
         this.url = url;
         this.mimeType = mimeType;
         this.sizeBytes = sizeBytes;
+        this.durationMs = durationMs;
     }
 
     public static Asset createImage(
@@ -105,7 +107,29 @@ public class Asset {
                 storageKey,
                 url,
                 mimeType,
-                sizeBytes
+                sizeBytes,
+                null
+        );
+    }
+
+    public static Asset createAudio(
+            User uploader,
+            String originalFilename,
+            String storageKey,
+            String url,
+            String mimeType,
+            Long sizeBytes,
+            Integer durationMs
+    ) {
+        return new Asset(
+                uploader,
+                AssetType.AUDIO,
+                originalFilename,
+                storageKey,
+                url,
+                mimeType,
+                sizeBytes,
+                durationMs
         );
     }
 

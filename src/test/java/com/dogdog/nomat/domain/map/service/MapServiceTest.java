@@ -13,14 +13,17 @@ import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.Question;
 import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
+import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionMediaSourceType;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
+import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.CategoryRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionAnswerRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
@@ -63,12 +66,15 @@ class MapServiceTest {
     @Mock
     private QuestionMediaRepository questionMediaRepository;
 
+    @Mock
+    private AudioProcessingJobRepository audioProcessingJobRepository;
+
     @InjectMocks
     private MapService mapService;
 
     @Test
     @SuppressWarnings("unchecked")
-    void createMapPublishesMapWithQuestionsAnswersAndYoutubeMedia() {
+    void createMapKeepsMapProcessingWithQuestionsAnswersAndYoutubeMedia() {
         User creator = activeUser(1L);
         Category category = category(10L);
         CreateMapRequest request = audioYoutubeMapRequest(null);
@@ -94,10 +100,10 @@ class MapServiceTest {
         assertThat(savedMap.getQuestionType()).isEqualTo(QuestionType.AUDIO);
         assertThat(savedMap.getTitle()).isEqualTo("20년대 아이돌 노래 맞히기");
         assertThat(savedMap.getDescription()).isEqualTo("20년대 아이돌 노래 맞히기입니다.");
-        assertThat(savedMap.getStatus()).isEqualTo(MapStatus.PUBLISHED);
+        assertThat(savedMap.getStatus()).isEqualTo(MapStatus.PROCESSING);
         assertThat(savedMap.getVisibility()).isEqualTo(MapVisibility.PUBLIC);
         assertThat(savedMap.getQuestionCount()).isEqualTo(1);
-        assertThat(savedMap.getPublishedAt()).isNotNull();
+        assertThat(savedMap.getPublishedAt()).isNull();
 
         ArgumentCaptor<Question> questionCaptor = ArgumentCaptor.forClass(Question.class);
         verify(questionRepository).save(questionCaptor.capture());
@@ -124,6 +130,11 @@ class MapServiceTest {
         assertThat(savedMedia.getStartTimeMs()).isEqualTo(60000);
         assertThat(savedMedia.getEndTimeMs()).isEqualTo(102000);
         assertThat(savedMedia.getDurationMs()).isEqualTo(42000);
+        assertThat(savedMedia.getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PENDING);
+
+        ArgumentCaptor<AudioProcessingJob> jobCaptor = ArgumentCaptor.forClass(AudioProcessingJob.class);
+        verify(audioProcessingJobRepository).save(jobCaptor.capture());
+        assertThat(jobCaptor.getValue().getQuestionMedia()).isEqualTo(savedMedia);
     }
 
     @Test

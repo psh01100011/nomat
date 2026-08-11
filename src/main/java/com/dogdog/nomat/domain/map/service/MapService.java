@@ -8,6 +8,8 @@ import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
+import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.Question;
 import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
@@ -15,6 +17,7 @@ import com.dogdog.nomat.domain.map.entity.QuestionMedia;
 import com.dogdog.nomat.domain.map.entity.QuestionMediaSourceType;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
+import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.CategoryRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionAnswerRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
@@ -47,6 +50,7 @@ public class MapService {
     private final QuestionRepository questionRepository;
     private final QuestionAnswerRepository questionAnswerRepository;
     private final QuestionMediaRepository questionMediaRepository;
+    private final AudioProcessingJobRepository audioProcessingJobRepository;
 
     @Transactional
     public CreateMapResponse createMap(Long userId, CreateMapRequest request) {
@@ -57,8 +61,11 @@ public class MapService {
         Asset thumbnailAsset = getImageAssetToAttach(request.thumbnailAssetId(), creator);
 
         validateQuestions(questionType, request.questions());
+        MapStatus mapStatus = hasPendingAudioProcessing(request.questions())
+                ? MapStatus.PROCESSING
+                : MapStatus.PUBLISHED;
 
-        QuizMap map = QuizMap.publish(
+        QuizMap map = QuizMap.create(
                 creator,
                 category,
                 thumbnailAsset,
@@ -66,7 +73,8 @@ public class MapService {
                 request.title(),
                 request.description(),
                 visibility,
-                request.questions().size()
+                request.questions().size(),
+                mapStatus
         );
         QuizMap savedMap = quizMapRepository.save(map);
 
@@ -183,6 +191,13 @@ public class MapService {
         }
     }
 
+    private boolean hasPendingAudioProcessing(List<CreateMapRequest.QuestionRequest> questions) {
+        return questions.stream()
+                .map(CreateMapRequest.QuestionRequest::media)
+                .filter(Objects::nonNull)
+                .anyMatch(media -> parseMediaSourceType(media.sourceType()) == QuestionMediaSourceType.YOUTUBE);
+    }
+
     private void validateAnswers(List<String> answers) {
         if (answers == null || answers.isEmpty()) {
             throw invalidRequest();
@@ -220,6 +235,11 @@ public class MapService {
                 throw invalidRequest();
             }
             validateMediaTimeRange(media.startTimeMs(), media.endTimeMs());
+            return;
+        }
+
+        if (sourceType == QuestionMediaSourceType.TTS) {
+            throw invalidRequest();
         }
     }
 
@@ -250,7 +270,11 @@ public class MapService {
         questionAnswerRepository.saveAll(answers);
 
         if (request.media() != null) {
-            questionMediaRepository.save(createQuestionMedia(question, questionType, request.media(), creator));
+            QuestionMedia media = createQuestionMedia(question, questionType, request.media(), creator);
+            questionMediaRepository.save(media);
+            if (media.getSourceType() == QuestionMediaSourceType.YOUTUBE) {
+                audioProcessingJobRepository.save(AudioProcessingJob.create(media));
+            }
         }
     }
 

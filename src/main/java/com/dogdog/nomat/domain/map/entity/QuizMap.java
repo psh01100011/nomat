@@ -111,7 +111,8 @@ public class QuizMap {
             String title,
             String description,
             MapVisibility visibility,
-            int questionCount
+            int questionCount,
+            MapStatus status
     ) {
         this.creator = creator;
         this.category = category;
@@ -119,10 +120,36 @@ public class QuizMap {
         this.questionType = questionType;
         this.title = title;
         this.description = description;
-        this.status = MapStatus.PUBLISHED;
+        this.status = status;
         this.visibility = visibility;
         this.questionCount = questionCount;
-        this.publishedAt = LocalDateTime.now();
+        if (status == MapStatus.PUBLISHED) {
+            this.publishedAt = LocalDateTime.now();
+        }
+    }
+
+    public static QuizMap create(
+            User creator,
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount,
+            MapStatus status
+    ) {
+        return new QuizMap(
+                creator,
+                category,
+                thumbnailAsset,
+                questionType,
+                title,
+                description,
+                visibility,
+                questionCount,
+                status
+        );
     }
 
     public static QuizMap publish(
@@ -135,7 +162,7 @@ public class QuizMap {
             MapVisibility visibility,
             int questionCount
     ) {
-        return new QuizMap(
+        return create(
                 creator,
                 category,
                 thumbnailAsset,
@@ -143,8 +170,18 @@ public class QuizMap {
                 title,
                 description,
                 visibility,
-                questionCount
+                questionCount,
+                MapStatus.PUBLISHED
         );
+    }
+
+    public void publishIfProcessing() {
+        if (status != MapStatus.PROCESSING) {
+            return;
+        }
+
+        this.status = MapStatus.PUBLISHED;
+        this.publishedAt = LocalDateTime.now();
     }
 
     @PrePersist

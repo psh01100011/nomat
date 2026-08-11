@@ -28,11 +28,18 @@ public class AssetS3Properties {
     @NotBlank
     private String imagePrefix;
 
+    @NotBlank
+    private String audioPrefix;
+
     @Positive
     private long maxImageSizeBytes;
 
     public String normalizedImagePrefix() {
         return trimSlashes(imagePrefix);
+    }
+
+    public String normalizedAudioPrefix() {
+        return trimSlashes(audioPrefix);
     }
 
     public String resolvedPublicBaseUrl() {
