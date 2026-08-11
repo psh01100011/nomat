@@ -65,6 +65,29 @@ public class User {
         return new User(loginId, passwordHash, nickname);
     }
 
+    public void changeProfile(String nickname, Asset profileImageAsset) {
+        this.nickname = nickname;
+        this.profileImageAsset = profileImageAsset;
+    }
+
+    public void changePassword(String passwordHash) {
+        this.passwordHash = passwordHash;
+    }
+
+    public void delete() {
+        if (status == UserStatus.DELETED) {
+            return;
+        }
+
+        // TODO: 맵/댓글 응답 DTO에서 탈퇴한 유저를 익명 사용자로 표시하도록 처리
+        this.loginId = "deleted_user_" + id;
+        this.passwordHash = "deleted";
+        this.nickname = "deleted_user_" + id;
+        this.profileImageAsset = null;
+        this.status = UserStatus.DELETED;
+        this.deletedAt = LocalDateTime.now();
+    }
+
     @PrePersist
     void prePersist() {
         LocalDateTime now = LocalDateTime.now();

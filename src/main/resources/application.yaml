@@ -30,3 +30,4 @@ app:
       secret: ${JWT_SECRET:nomat-local-development-secret-key-32}
       access-token-validity-seconds: 1800
       refresh-token-validity-seconds: 1209600
+      password-verification-token-validity-seconds: 300
