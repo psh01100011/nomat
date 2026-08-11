@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.map.controller;
 
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
+import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.service.MapService;
 import com.dogdog.nomat.global.dto.ApiResponse;
 import jakarta.validation.Valid;
@@ -9,6 +10,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -30,6 +33,15 @@ public class MapController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_create_map", mapService.createMap(userId, request));
+    }
+
+    @GetMapping("/{mapId}/editor")
+    public ApiResponse<MapEditorResponse> getMapEditor(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_get_map_editor", mapService.getMapEditor(userId, mapId));
     }
 
     private Long getUserId(Jwt jwt) {

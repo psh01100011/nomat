@@ -12,6 +12,7 @@ import com.dogdog.nomat.domain.asset.entity.AssetStatus;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
+import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
@@ -32,6 +33,7 @@ import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -71,6 +73,93 @@ class MapServiceTest {
 
     @InjectMocks
     private MapService mapService;
+
+    @Test
+    void getMapEditorReturnsCreatorEditableMapDetails() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PROCESSING);
+        Question question = question(200L, map);
+        QuestionAnswer primaryAnswer = QuestionAnswer.create(question, "우주를 줄게", "우주를줄게", true);
+        QuestionAnswer aliasAnswer = QuestionAnswer.create(question, "우주", "우주", false);
+        QuestionMedia media = QuestionMedia.create(
+                question,
+                null,
+                QuestionMediaSourceType.YOUTUBE,
+                "https://youtube.com/watch?v=---",
+                60000,
+                102000,
+                42000
+        );
+        ReflectionTestUtils.setField(media, "id", 300L);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+        given(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(100L, com.dogdog.nomat.domain.map.entity.QuestionStatus.ACTIVE))
+                .willReturn(List.of(question));
+        given(questionAnswerRepository.findByQuestionIdInOrderByQuestionIdAscIdAsc(List.of(200L)))
+                .willReturn(List.of(primaryAnswer, aliasAnswer));
+        given(questionMediaRepository.findByQuestionIdIn(List.of(200L))).willReturn(List.of(media));
+
+        MapEditorResponse response = mapService.getMapEditor(1L, 100L);
+
+        assertThat(response.mapId()).isEqualTo(100L);
+        assertThat(response.version()).isEqualTo(1);
+        assertThat(response.status()).isEqualTo("PROCESSING");
+        assertThat(response.visibility()).isEqualTo("PUBLIC");
+        assertThat(response.title()).isEqualTo("오디오 퀴즈");
+        assertThat(response.categoryId()).isEqualTo(10L);
+        assertThat(response.questionType()).isEqualTo("AUDIO");
+        assertThat(response.thumbnailAssetId()).isNull();
+        assertThat(response.thumbnailUrl()).isNull();
+        assertThat(response.description()).isEqualTo("설명");
+        assertThat(response.questions()).hasSize(1);
+
+        MapEditorResponse.QuestionEditorResponse questionResponse = response.questions().getFirst();
+        assertThat(questionResponse.questionId()).isEqualTo(200L);
+        assertThat(questionResponse.promptText()).isEqualTo("이 노래는?");
+        assertThat(questionResponse.answers()).containsExactly("우주를 줄게", "우주");
+
+        MapEditorResponse.MediaEditorResponse mediaResponse = questionResponse.media();
+        assertThat(mediaResponse.mediaId()).isEqualTo(300L);
+        assertThat(mediaResponse.sourceType()).isEqualTo("YOUTUBE");
+        assertThat(mediaResponse.assetId()).isNull();
+        assertThat(mediaResponse.sourceUrl()).isEqualTo("https://youtube.com/watch?v=---");
+        assertThat(mediaResponse.startTimeMs()).isEqualTo(60000);
+        assertThat(mediaResponse.endTimeMs()).isEqualTo(102000);
+        assertThat(mediaResponse.durationMs()).isEqualTo(42000);
+        assertThat(mediaResponse.processingStatus()).isEqualTo("PENDING");
+        assertThat(mediaResponse.failureMessage()).isNull();
+        assertThat(mediaResponse.audioUrl()).isNull();
+        assertThat(response.createdAt()).isEqualTo(LocalDateTime.of(2026, 8, 11, 10, 0));
+        assertThat(response.updatedAt()).isEqualTo(LocalDateTime.of(2026, 8, 11, 10, 30));
+    }
+
+    @Test
+    void getMapEditorRejectsOtherUsersMap() {
+        User user = activeUser(1L);
+        User creator = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+
+        assertThatThrownBy(() -> mapService.getMapEditor(1L, 100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("forbidden_map_access");
+    }
+
+    @Test
+    void getMapEditorRejectsUnknownMapId() {
+        User creator = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> mapService.getMapEditor(1L, 100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("map_or_question_not_found");
+    }
 
     @Test
     @SuppressWarnings("unchecked")
@@ -287,6 +376,30 @@ class MapServiceTest {
         Category category = Category.create("음악");
         ReflectionTestUtils.setField(category, "id", id);
         return category;
+    }
+
+    private QuizMap quizMap(Long id, User creator, Category category, MapStatus status) {
+        QuizMap map = QuizMap.create(
+                creator,
+                category,
+                null,
+                QuestionType.AUDIO,
+                "오디오 퀴즈",
+                "설명",
+                MapVisibility.PUBLIC,
+                1,
+                status
+        );
+        ReflectionTestUtils.setField(map, "id", id);
+        ReflectionTestUtils.setField(map, "createdAt", LocalDateTime.of(2026, 8, 11, 10, 0));
+        ReflectionTestUtils.setField(map, "updatedAt", LocalDateTime.of(2026, 8, 11, 10, 30));
+        return map;
+    }
+
+    private Question question(Long id, QuizMap map) {
+        Question question = Question.create(map, 1, "이 노래는?");
+        ReflectionTestUtils.setField(question, "id", id);
+        return question;
     }
 
     private Asset imageAsset(Long id, User uploader) {

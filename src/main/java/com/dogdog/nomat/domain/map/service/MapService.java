@@ -7,6 +7,7 @@ import com.dogdog.nomat.domain.asset.entity.AssetType;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
+import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
@@ -15,6 +16,7 @@ import com.dogdog.nomat.domain.map.entity.Question;
 import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
 import com.dogdog.nomat.domain.map.entity.QuestionMediaSourceType;
+import com.dogdog.nomat.domain.map.entity.QuestionStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
@@ -31,8 +33,11 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -83,6 +88,36 @@ public class MapService {
         }
 
         return CreateMapResponse.from(savedMap);
+    }
+
+    @Transactional(readOnly = true)
+    public MapEditorResponse getMapEditor(Long userId, Long mapId) {
+        getAuthenticatedUser(userId);
+        QuizMap map = quizMapRepository.findByIdAndStatusNot(mapId, MapStatus.DELETED)
+                .orElseThrow(this::mapOrQuestionNotFound);
+
+        if (!Objects.equals(map.getCreator().getId(), userId)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_map_access");
+        }
+
+        List<Question> questions = questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(
+                mapId,
+                QuestionStatus.ACTIVE
+        );
+        List<Long> questionIds = questions.stream()
+                .map(Question::getId)
+                .toList();
+
+        Map<Long, List<QuestionAnswer>> answersByQuestionId = questionAnswerRepository
+                .findByQuestionIdInOrderByQuestionIdAscIdAsc(questionIds)
+                .stream()
+                .collect(Collectors.groupingBy(answer -> answer.getQuestion().getId()));
+
+        Map<Long, QuestionMedia> mediaByQuestionId = questionMediaRepository.findByQuestionIdIn(questionIds)
+                .stream()
+                .collect(Collectors.toMap(media -> media.getQuestion().getId(), Function.identity()));
+
+        return MapEditorResponse.of(map, questions, answersByQuestionId, mediaByQuestionId);
     }
 
     private User getAuthenticatedUser(Long userId) {
@@ -334,5 +369,9 @@ public class MapService {
 
     private BusinessException invalidRequest() {
         return new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+    }
+
+    private BusinessException mapOrQuestionNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "map_or_question_not_found");
     }
 }

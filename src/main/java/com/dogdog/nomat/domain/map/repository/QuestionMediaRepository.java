@@ -2,6 +2,9 @@ package com.dogdog.nomat.domain.map.repository;
 
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
 import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
+import java.util.Collection;
+import java.util.List;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface QuestionMediaRepository extends JpaRepository<QuestionMedia, Long> {
@@ -10,4 +13,7 @@ public interface QuestionMediaRepository extends JpaRepository<QuestionMedia, Lo
             Long mapId,
             QuestionMediaProcessingStatus processingStatus
     );
+
+    @EntityGraph(attributePaths = {"asset"})
+    List<QuestionMedia> findByQuestionIdIn(Collection<Long> questionIds);
 }
