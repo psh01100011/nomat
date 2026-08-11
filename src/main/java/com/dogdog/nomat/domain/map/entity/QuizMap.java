@@ -14,6 +14,8 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
@@ -100,4 +102,60 @@ public class QuizMap {
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    private QuizMap(
+            User creator,
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount
+    ) {
+        this.creator = creator;
+        this.category = category;
+        this.thumbnailAsset = thumbnailAsset;
+        this.questionType = questionType;
+        this.title = title;
+        this.description = description;
+        this.status = MapStatus.PUBLISHED;
+        this.visibility = visibility;
+        this.questionCount = questionCount;
+        this.publishedAt = LocalDateTime.now();
+    }
+
+    public static QuizMap publish(
+            User creator,
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount
+    ) {
+        return new QuizMap(
+                creator,
+                category,
+                thumbnailAsset,
+                questionType,
+                title,
+                description,
+                visibility,
+                questionCount
+        );
+    }
+
+    @PrePersist
+    void prePersist() {
+        LocalDateTime now = LocalDateTime.now();
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
+
+    @PreUpdate
+    void preUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
 }

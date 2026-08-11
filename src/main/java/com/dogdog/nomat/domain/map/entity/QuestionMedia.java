@@ -13,6 +13,8 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
@@ -64,4 +66,46 @@ public class QuestionMedia {
 
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    private QuestionMedia(
+            Question question,
+            Asset asset,
+            QuestionMediaSourceType sourceType,
+            String sourceUrl,
+            Integer startTimeMs,
+            Integer endTimeMs,
+            Integer durationMs
+    ) {
+        this.question = question;
+        this.asset = asset;
+        this.sourceType = sourceType;
+        this.sourceUrl = sourceUrl;
+        this.startTimeMs = startTimeMs;
+        this.endTimeMs = endTimeMs;
+        this.durationMs = durationMs;
+    }
+
+    public static QuestionMedia create(
+            Question question,
+            Asset asset,
+            QuestionMediaSourceType sourceType,
+            String sourceUrl,
+            Integer startTimeMs,
+            Integer endTimeMs,
+            Integer durationMs
+    ) {
+        return new QuestionMedia(question, asset, sourceType, sourceUrl, startTimeMs, endTimeMs, durationMs);
+    }
+
+    @PrePersist
+    void prePersist() {
+        LocalDateTime now = LocalDateTime.now();
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
+
+    @PreUpdate
+    void preUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
 }

@@ -9,6 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
@@ -49,4 +50,20 @@ public class QuestionAnswer {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    private QuestionAnswer(Question question, String answerText, String answerKey, boolean primary) {
+        this.question = question;
+        this.answerText = answerText;
+        this.answerKey = answerKey;
+        this.primary = primary;
+    }
+
+    public static QuestionAnswer create(Question question, String answerText, String answerKey, boolean primary) {
+        return new QuestionAnswer(question, answerText, answerKey, primary);
+    }
+
+    @PrePersist
+    void prePersist() {
+        this.createdAt = LocalDateTime.now();
+    }
 }
