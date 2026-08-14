@@ -4,6 +4,7 @@ import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
+import com.dogdog.nomat.domain.map.dto.MapLikeResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
 import com.dogdog.nomat.domain.map.dto.ModifyMapRequest;
 import com.dogdog.nomat.domain.map.dto.ModifyMapResponse;
@@ -52,6 +53,24 @@ public class MapController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_save_map_draft", mapService.saveMapDraft(userId, request));
+    }
+
+    @PostMapping("/{mapId}/like")
+    public ApiResponse<MapLikeResponse> likeMap(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_like_map", mapService.likeMap(userId, mapId));
+    }
+
+    @DeleteMapping("/{mapId}/like")
+    public ApiResponse<MapLikeResponse> unlikeMap(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_unlike_map", mapService.unlikeMap(userId, mapId));
     }
 
     @PatchMapping("/{mapId}")

@@ -14,6 +14,7 @@ import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
+import com.dogdog.nomat.domain.map.dto.MapLikeResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
 import com.dogdog.nomat.domain.map.dto.ModifyMapRequest;
 import com.dogdog.nomat.domain.map.dto.ModifyMapResponse;
@@ -21,6 +22,8 @@ import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
+import com.dogdog.nomat.domain.map.entity.MapLike;
+import com.dogdog.nomat.domain.map.entity.MapLikeId;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.Question;
@@ -33,6 +36,7 @@ import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.CategoryRepository;
+import com.dogdog.nomat.domain.map.repository.MapLikeRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionAnswerRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionRepository;
@@ -81,6 +85,9 @@ class MapServiceTest {
     @Mock
     private AudioProcessingJobRepository audioProcessingJobRepository;
 
+    @Mock
+    private MapLikeRepository mapLikeRepository;
+
     @InjectMocks
     private MapService mapService;
 
@@ -118,6 +125,24 @@ class MapServiceTest {
         assertThat(response.favorited()).isFalse();
         assertThat(response.createdAt()).isEqualTo(LocalDateTime.of(2026, 8, 11, 10, 0));
         assertThat(response.updatedAt()).isEqualTo(LocalDateTime.of(2026, 8, 11, 10, 30));
+    }
+
+    @Test
+    void getMapReturnsLikedStatusForAuthenticatedUser() {
+        User user = activeUser(1L);
+        User creator = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+        given(mapLikeRepository.existsById(new MapLikeId(100L, 1L))).willReturn(true);
+
+        MapDetailResponse response = mapService.getMap(1L, 100L);
+
+        assertThat(response.liked()).isTrue();
+        assertThat(response.favorited()).isFalse();
     }
 
     @Test
@@ -256,6 +281,34 @@ class MapServiceTest {
                 .containsExactly(MapStatus.DRAFT, MapStatus.PROCESSING, MapStatus.PUBLISHED, MapStatus.BLOCKED);
         assertThat(visibilityCaptor.getValue()).isNull();
         assertThat(creatorIdCaptor.getValue()).isEqualTo(1L);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void getMapsReturnsLikedStatusForAuthenticatedUser() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        QuizMap likedMap = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+        QuizMap notLikedMap = quizMap(101L, creator, category, MapStatus.PUBLISHED);
+
+        given(quizMapRepository.searchMaps(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(Pageable.class)
+        )).willReturn(new PageImpl<>(List.of(likedMap, notLikedMap)));
+        given(mapLikeRepository.findMapIdsByUserIdAndMapIdIn(2L, List.of(100L, 101L)))
+                .willReturn(List.of(100L));
+
+        MapListResponse response = mapService.getMaps(2L, null, null, null, 0, 20, "latest", null);
+
+        assertThat(response.maps()).hasSize(2);
+        assertThat(response.maps().get(0).liked()).isTrue();
+        assertThat(response.maps().get(1).liked()).isFalse();
+        assertThat(response.maps().get(0).favorited()).isFalse();
     }
 
     @Test
@@ -715,6 +768,99 @@ class MapServiceTest {
                 .hasMessageContaining("map_not_found");
 
         verify(audioProcessingJobRepository, never()).deleteByQuestionMediaQuestionMapId(any());
+    }
+
+    @Test
+    void likeMapCreatesLikeAndIncreasesLikeCount() {
+        User user = activeUser(1L);
+        User creator = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+        ReflectionTestUtils.setField(map, "likeCount", 12L);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+        given(mapLikeRepository.existsById(new MapLikeId(100L, 1L))).willReturn(false);
+
+        MapLikeResponse response = mapService.likeMap(1L, 100L);
+
+        assertThat(response.mapId()).isEqualTo(100L);
+        assertThat(response.liked()).isTrue();
+        assertThat(response.likeCount()).isEqualTo(13L);
+        assertThat(map.getLikeCount()).isEqualTo(13L);
+
+        ArgumentCaptor<MapLike> mapLikeCaptor = ArgumentCaptor.forClass(MapLike.class);
+        verify(mapLikeRepository).save(mapLikeCaptor.capture());
+        assertThat(mapLikeCaptor.getValue().getId()).isEqualTo(new MapLikeId(100L, 1L));
+        assertThat(mapLikeCaptor.getValue().getMap()).isEqualTo(map);
+        assertThat(mapLikeCaptor.getValue().getUser()).isEqualTo(user);
+    }
+
+    @Test
+    void likeMapRejectsAlreadyLikedMap() {
+        User user = activeUser(1L);
+        User creator = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+        ReflectionTestUtils.setField(map, "likeCount", 12L);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+        given(mapLikeRepository.existsById(new MapLikeId(100L, 1L))).willReturn(true);
+
+        assertThatThrownBy(() -> mapService.likeMap(1L, 100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("already_liked_map");
+
+        assertThat(map.getLikeCount()).isEqualTo(12L);
+        verify(mapLikeRepository, never()).save(any(MapLike.class));
+    }
+
+    @Test
+    void unlikeMapDeletesLikeAndDecreasesLikeCount() {
+        User user = activeUser(1L);
+        User creator = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+        ReflectionTestUtils.setField(map, "likeCount", 12L);
+        MapLike mapLike = MapLike.create(map, user);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+        given(mapLikeRepository.findById(new MapLikeId(100L, 1L))).willReturn(Optional.of(mapLike));
+
+        MapLikeResponse response = mapService.unlikeMap(1L, 100L);
+
+        assertThat(response.mapId()).isEqualTo(100L);
+        assertThat(response.liked()).isFalse();
+        assertThat(response.likeCount()).isEqualTo(11L);
+        assertThat(map.getLikeCount()).isEqualTo(11L);
+        verify(mapLikeRepository).delete(mapLike);
+    }
+
+    @Test
+    void unlikeMapReturnsSuccessWhenLikeDoesNotExist() {
+        User user = activeUser(1L);
+        User creator = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+        ReflectionTestUtils.setField(map, "likeCount", 12L);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+        given(mapLikeRepository.findById(new MapLikeId(100L, 1L))).willReturn(Optional.empty());
+
+        MapLikeResponse response = mapService.unlikeMap(1L, 100L);
+
+        assertThat(response.mapId()).isEqualTo(100L);
+        assertThat(response.liked()).isFalse();
+        assertThat(response.likeCount()).isEqualTo(12L);
+        assertThat(map.getLikeCount()).isEqualTo(12L);
+        verify(mapLikeRepository, never()).delete(any(MapLike.class));
     }
 
     @Test

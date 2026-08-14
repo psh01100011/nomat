@@ -237,6 +237,16 @@ public class QuizMap {
         this.deletedAt = LocalDateTime.now();
     }
 
+    public void increaseLikeCount() {
+        this.likeCount++;
+    }
+
+    public void decreaseLikeCount() {
+        if (likeCount > 0) {
+            this.likeCount--;
+        }
+    }
+
     private void changeStatus(MapStatus status) {
         this.status = status;
         if (status == MapStatus.PUBLISHED && this.publishedAt == null) {
