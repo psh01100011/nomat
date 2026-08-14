@@ -15,6 +15,8 @@ import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
+import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
+import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
@@ -355,6 +357,152 @@ class MapServiceTest {
         assertThatThrownBy(() -> mapService.getMapEditor(1L, 100L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("map_or_question_not_found");
+    }
+
+    @Test
+    void saveMapDraftStoresIncompleteDraftWithoutRequiredMapFields() {
+        User creator = activeUser(1L);
+        SaveMapDraftRequest request = new SaveMapDraftRequest(
+                null,
+                null,
+                null,
+                null,
+                "임시 메모",
+                null,
+                null
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.save(any(QuizMap.class))).willAnswer(invocation -> {
+            QuizMap map = invocation.getArgument(0);
+            ReflectionTestUtils.setField(map, "id", 100L);
+            return map;
+        });
+
+        SaveMapDraftResponse response = mapService.saveMapDraft(1L, request);
+
+        assertThat(response.mapId()).isEqualTo(100L);
+        assertThat(response.status()).isEqualTo("DRAFT");
+        assertThat(response.version()).isEqualTo(1);
+        assertThat(response.savedAt()).isNotNull();
+
+        ArgumentCaptor<QuizMap> mapCaptor = ArgumentCaptor.forClass(QuizMap.class);
+        verify(quizMapRepository).save(mapCaptor.capture());
+        QuizMap savedMap = mapCaptor.getValue();
+        assertThat(savedMap.getCreator()).isEqualTo(creator);
+        assertThat(savedMap.getCategory()).isNull();
+        assertThat(savedMap.getQuestionType()).isNull();
+        assertThat(savedMap.getTitle()).isNull();
+        assertThat(savedMap.getDescription()).isEqualTo("임시 메모");
+        assertThat(savedMap.getStatus()).isEqualTo(MapStatus.DRAFT);
+        assertThat(savedMap.getVisibility()).isEqualTo(MapVisibility.PRIVATE);
+        assertThat(savedMap.getQuestionCount()).isZero();
+        assertThat(savedMap.getPublishedAt()).isNull();
+
+        verify(questionRepository, never()).save(any(Question.class));
+        verify(audioProcessingJobRepository, never()).save(any(AudioProcessingJob.class));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void saveMapDraftStoresPartialQuestionAndYoutubeMediaWithoutProcessingJob() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        SaveMapDraftRequest request = new SaveMapDraftRequest(
+                "작성 중인 오디오 퀴즈",
+                10L,
+                "AUDIO",
+                null,
+                null,
+                "PRIVATE",
+                List.of(new SaveMapDraftRequest.QuestionRequest(
+                        null,
+                        new SaveMapDraftRequest.MediaRequest(
+                                "YOUTUBE",
+                                null,
+                                "https://youtube.com/watch?v=draft",
+                                1000L,
+                                null
+                        ),
+                        List.of("", "정답", "정 답")
+                ))
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
+        given(quizMapRepository.save(any(QuizMap.class))).willAnswer(invocation -> {
+            QuizMap map = invocation.getArgument(0);
+            ReflectionTestUtils.setField(map, "id", 100L);
+            return map;
+        });
+        given(questionRepository.save(any(Question.class))).willAnswer(invocation -> invocation.getArgument(0));
+
+        mapService.saveMapDraft(1L, request);
+
+        ArgumentCaptor<QuizMap> mapCaptor = ArgumentCaptor.forClass(QuizMap.class);
+        verify(quizMapRepository).save(mapCaptor.capture());
+        QuizMap savedMap = mapCaptor.getValue();
+        assertThat(savedMap.getCategory()).isEqualTo(category);
+        assertThat(savedMap.getQuestionType()).isEqualTo(QuestionType.AUDIO);
+        assertThat(savedMap.getStatus()).isEqualTo(MapStatus.DRAFT);
+        assertThat(savedMap.getQuestionCount()).isEqualTo(1);
+
+        ArgumentCaptor<Question> questionCaptor = ArgumentCaptor.forClass(Question.class);
+        verify(questionRepository).save(questionCaptor.capture());
+        Question savedQuestion = questionCaptor.getValue();
+        assertThat(savedQuestion.getMap()).isEqualTo(savedMap);
+        assertThat(savedQuestion.getPromptText()).isNull();
+
+        ArgumentCaptor<List<QuestionAnswer>> answersCaptor = ArgumentCaptor.forClass(List.class);
+        verify(questionAnswerRepository).saveAll(answersCaptor.capture());
+        List<QuestionAnswer> savedAnswers = answersCaptor.getValue();
+        assertThat(savedAnswers).hasSize(1);
+        assertThat(savedAnswers.getFirst().getAnswerText()).isEqualTo("정답");
+        assertThat(savedAnswers.getFirst().isPrimary()).isTrue();
+
+        ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
+        verify(questionMediaRepository).save(mediaCaptor.capture());
+        QuestionMedia savedMedia = mediaCaptor.getValue();
+        assertThat(savedMedia.getSourceType()).isEqualTo(QuestionMediaSourceType.YOUTUBE);
+        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://youtube.com/watch?v=draft");
+        assertThat(savedMedia.getStartTimeMs()).isEqualTo(1000);
+        assertThat(savedMedia.getEndTimeMs()).isNull();
+        assertThat(savedMedia.getDurationMs()).isNull();
+        assertThat(savedMedia.getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PENDING);
+
+        verify(audioProcessingJobRepository, never()).save(any(AudioProcessingJob.class));
+    }
+
+    @Test
+    void saveMapDraftRejectsInvalidYoutubeTimeRange() {
+        User creator = activeUser(1L);
+        SaveMapDraftRequest request = new SaveMapDraftRequest(
+                null,
+                null,
+                "AUDIO",
+                null,
+                null,
+                null,
+                List.of(new SaveMapDraftRequest.QuestionRequest(
+                        null,
+                        new SaveMapDraftRequest.MediaRequest(
+                                "YOUTUBE",
+                                null,
+                                "https://youtube.com/watch?v=draft",
+                                2000L,
+                                1000L
+                        ),
+                        null
+                ))
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+
+        assertThatThrownBy(() -> mapService.saveMapDraft(1L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+
+        verify(quizMapRepository, never()).save(any(QuizMap.class));
     }
 
     @Test

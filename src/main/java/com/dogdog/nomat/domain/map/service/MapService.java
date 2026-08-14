@@ -10,6 +10,8 @@ import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
+import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
+import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
@@ -31,6 +33,7 @@ import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -95,6 +98,37 @@ public class MapService {
         }
 
         return CreateMapResponse.from(savedMap);
+    }
+
+    @Transactional
+    public SaveMapDraftResponse saveMapDraft(Long userId, SaveMapDraftRequest request) {
+        User creator = getAuthenticatedUser(userId);
+        Category category = getActiveCategoryOrNull(request.categoryId());
+        QuestionType questionType = parseQuestionTypeOrNull(request.questionType());
+        MapVisibility visibility = parseVisibilityForDraft(request.visibility());
+        Asset thumbnailAsset = getImageAssetToAttach(request.thumbnailAssetId(), creator);
+        List<SaveMapDraftRequest.QuestionRequest> questions = draftQuestions(request.questions());
+
+        validateDraftQuestions(questionType, questions);
+
+        QuizMap map = QuizMap.draft(
+                creator,
+                category,
+                thumbnailAsset,
+                questionType,
+                request.title(),
+                request.description(),
+                visibility,
+                questions.size()
+        );
+        QuizMap savedMap = quizMapRepository.save(map);
+
+        for (int index = 0; index < questions.size(); index++) {
+            saveDraftQuestion(savedMap, questionType, questions.get(index), index + 1, creator);
+        }
+
+        LocalDateTime savedAt = savedMap.getUpdatedAt() == null ? LocalDateTime.now() : savedMap.getUpdatedAt();
+        return SaveMapDraftResponse.of(savedMap, savedAt);
     }
 
     @Transactional(readOnly = true)
@@ -191,6 +225,14 @@ public class MapService {
                 .orElseThrow(this::invalidRequest);
     }
 
+    private Category getActiveCategoryOrNull(Long categoryId) {
+        if (categoryId == null) {
+            return null;
+        }
+
+        return getActiveCategory(categoryId);
+    }
+
     private QuestionType parseQuestionType(String value) {
         return parseEnum(QuestionType.class, value);
     }
@@ -206,6 +248,14 @@ public class MapService {
     private MapVisibility parseVisibility(String value) {
         if (!StringUtils.hasText(value)) {
             return MapVisibility.PUBLIC;
+        }
+
+        return parseEnum(MapVisibility.class, value);
+    }
+
+    private MapVisibility parseVisibilityForDraft(String value) {
+        if (!StringUtils.hasText(value)) {
+            return MapVisibility.PRIVATE;
         }
 
         return parseEnum(MapVisibility.class, value);
@@ -298,8 +348,36 @@ public class MapService {
         return asset;
     }
 
+    private Asset getDraftMediaAssetToAttach(Long assetId, User uploader, QuestionType questionType) {
+        if (assetId == null) {
+            return null;
+        }
+
+        Asset asset = assetRepository.findById(assetId)
+                .orElseThrow(this::invalidRequest);
+        if (questionType == QuestionType.IMAGE) {
+            validateAttachableAsset(asset, uploader, AssetType.IMAGE);
+        } else if (questionType == QuestionType.AUDIO) {
+            validateAttachableAsset(asset, uploader, AssetType.AUDIO);
+        } else {
+            validateAttachableDraftMediaAsset(asset, uploader);
+        }
+        asset.attach();
+
+        return asset;
+    }
+
     private void validateAttachableAsset(Asset asset, User uploader, AssetType assetType) {
         if (asset.getAssetType() != assetType
+                || asset.getStatus() == AssetStatus.DELETED
+                || asset.getProcessingStatus() != AssetProcessingStatus.READY
+                || !Objects.equals(asset.getUploader().getId(), uploader.getId())) {
+            throw invalidRequest();
+        }
+    }
+
+    private void validateAttachableDraftMediaAsset(Asset asset, User uploader) {
+        if ((asset.getAssetType() != AssetType.IMAGE && asset.getAssetType() != AssetType.AUDIO)
                 || asset.getStatus() == AssetStatus.DELETED
                 || asset.getProcessingStatus() != AssetProcessingStatus.READY
                 || !Objects.equals(asset.getUploader().getId(), uploader.getId())) {
@@ -384,6 +462,64 @@ public class MapService {
         }
     }
 
+    private List<SaveMapDraftRequest.QuestionRequest> draftQuestions(
+            List<SaveMapDraftRequest.QuestionRequest> questions
+    ) {
+        return questions == null ? List.of() : questions;
+    }
+
+    private void validateDraftQuestions(
+            QuestionType questionType,
+            List<SaveMapDraftRequest.QuestionRequest> questions
+    ) {
+        for (SaveMapDraftRequest.QuestionRequest question : questions) {
+            if (question == null) {
+                throw invalidRequest();
+            }
+
+            if (question.media() != null && StringUtils.hasText(question.media().sourceType())) {
+                validateDraftMedia(questionType, question.media());
+            }
+        }
+    }
+
+    private void validateDraftMedia(QuestionType questionType, SaveMapDraftRequest.MediaRequest media) {
+        QuestionMediaSourceType sourceType = parseMediaSourceType(media.sourceType());
+
+        if (sourceType == QuestionMediaSourceType.UPLOAD) {
+            if (questionType == QuestionType.TEXT) {
+                throw invalidRequest();
+            }
+            return;
+        }
+
+        if (sourceType == QuestionMediaSourceType.YOUTUBE) {
+            if (questionType == QuestionType.IMAGE || questionType == QuestionType.TEXT) {
+                throw invalidRequest();
+            }
+            validateDraftMediaTimeRange(media.startTimeMs(), media.endTimeMs());
+            return;
+        }
+
+        if (sourceType == QuestionMediaSourceType.TTS) {
+            throw invalidRequest();
+        }
+    }
+
+    private void validateDraftMediaTimeRange(Long startTimeMs, Long endTimeMs) {
+        if (startTimeMs != null) {
+            validateNonNegativeMillis(startTimeMs);
+        }
+
+        if (endTimeMs != null) {
+            validateNonNegativeMillis(endTimeMs);
+        }
+
+        if (startTimeMs != null && endTimeMs != null && endTimeMs <= startTimeMs) {
+            throw invalidRequest();
+        }
+    }
+
     private void validateMediaTimeRange(Long startTimeMs, Long endTimeMs) {
         if (startTimeMs == null || endTimeMs == null || startTimeMs < 0 || endTimeMs <= startTimeMs) {
             throw invalidRequest();
@@ -417,6 +553,84 @@ public class MapService {
                 audioProcessingJobRepository.save(AudioProcessingJob.create(media));
             }
         }
+    }
+
+    private void saveDraftQuestion(
+            QuizMap map,
+            QuestionType questionType,
+            SaveMapDraftRequest.QuestionRequest request,
+            int questionOrder,
+            User creator
+    ) {
+        Question question = questionRepository.save(Question.create(map, questionOrder, request.promptText()));
+
+        List<QuestionAnswer> answers = createDraftAnswers(question, request.answers());
+        if (!answers.isEmpty()) {
+            questionAnswerRepository.saveAll(answers);
+        }
+
+        QuestionMedia media = createDraftQuestionMedia(question, questionType, request.media(), creator);
+        if (media != null) {
+            questionMediaRepository.save(media);
+        }
+    }
+
+    private List<QuestionAnswer> createDraftAnswers(Question question, List<String> answerValues) {
+        if (answerValues == null || answerValues.isEmpty()) {
+            return List.of();
+        }
+
+        List<QuestionAnswer> answers = new ArrayList<>();
+        Set<String> answerKeys = new HashSet<>();
+        for (String answer : answerValues) {
+            if (!StringUtils.hasText(answer)) {
+                continue;
+            }
+
+            String answerKey = createAnswerKey(answer);
+            if (answerKeys.add(answerKey)) {
+                answers.add(QuestionAnswer.create(question, answer, answerKey, answers.isEmpty()));
+            }
+        }
+
+        return answers;
+    }
+
+    private QuestionMedia createDraftQuestionMedia(
+            Question question,
+            QuestionType questionType,
+            SaveMapDraftRequest.MediaRequest media,
+            User creator
+    ) {
+        if (media == null || !StringUtils.hasText(media.sourceType())) {
+            return null;
+        }
+
+        QuestionMediaSourceType sourceType = parseMediaSourceType(media.sourceType());
+        Asset asset = null;
+        Integer startTimeMs = null;
+        Integer endTimeMs = null;
+        Integer durationMs = null;
+
+        if (sourceType == QuestionMediaSourceType.UPLOAD) {
+            asset = getDraftMediaAssetToAttach(media.assetId(), creator, questionType);
+        }
+
+        if (sourceType == QuestionMediaSourceType.YOUTUBE) {
+            startTimeMs = media.startTimeMs() == null ? null : toIntegerMillis(media.startTimeMs());
+            endTimeMs = media.endTimeMs() == null ? null : toIntegerMillis(media.endTimeMs());
+            durationMs = startTimeMs == null || endTimeMs == null ? null : endTimeMs - startTimeMs;
+        }
+
+        return QuestionMedia.create(
+                question,
+                asset,
+                sourceType,
+                media.sourceUrl(),
+                startTimeMs,
+                endTimeMs,
+                durationMs
+        );
     }
 
     private QuestionMedia createQuestionMedia(
@@ -463,6 +677,14 @@ public class MapService {
         }
 
         return answerKey;
+    }
+
+    private void validateNonNegativeMillis(Long value) {
+        if (value < 0) {
+            throw invalidRequest();
+        }
+
+        toIntegerMillis(value);
     }
 
     private Integer toIntegerMillis(Long value) {

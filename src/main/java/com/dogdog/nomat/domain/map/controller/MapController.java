@@ -5,6 +5,8 @@ import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
+import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
+import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
 import com.dogdog.nomat.domain.map.service.MapService;
 import com.dogdog.nomat.global.dto.ApiResponse;
 import jakarta.validation.Valid;
@@ -36,6 +38,16 @@ public class MapController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_create_map", mapService.createMap(userId, request));
+    }
+
+    @PostMapping("/drafts")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<SaveMapDraftResponse> saveMapDraft(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody SaveMapDraftRequest request
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_save_map_draft", mapService.saveMapDraft(userId, request));
     }
 
     @GetMapping("/{mapId}/editor")

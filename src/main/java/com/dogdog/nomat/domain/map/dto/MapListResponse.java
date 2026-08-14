@@ -57,7 +57,7 @@ public record MapListResponse(
                     map.getStatus().name(),
                     map.getVisibility().name(),
                     CategorySummaryResponse.from(map.getCategory()),
-                    map.getQuestionType().name(),
+                    map.getQuestionType() == null ? null : map.getQuestionType().name(),
                     thumbnailAsset == null ? null : thumbnailAsset.getUrl(),
                     CreatorSummaryResponse.from(map.getCreator()),
                     map.getQuestionCount(),
@@ -78,6 +78,10 @@ public record MapListResponse(
     ) {
 
         private static CategorySummaryResponse from(Category category) {
+            if (category == null) {
+                return null;
+            }
+
             return new CategorySummaryResponse(category.getId(), category.getName());
         }
     }

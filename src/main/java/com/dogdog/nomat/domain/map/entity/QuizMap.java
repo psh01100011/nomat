@@ -46,19 +46,19 @@ public class QuizMap {
     @JoinColumn(name = "creator_id", nullable = false)
     private User creator;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "category_id", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id")
     private Category category;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "thumbnail_asset_id")
     private Asset thumbnailAsset;
 
-    @Column(name = "question_type", length = 20, nullable = false)
+    @Column(name = "question_type", length = 20)
     @Enumerated(EnumType.STRING)
     private QuestionType questionType;
 
-    @Column(name = "title", length = 100, nullable = false)
+    @Column(name = "title", length = 100)
     private String title;
 
     @Lob
@@ -172,6 +172,29 @@ public class QuizMap {
                 visibility,
                 questionCount,
                 MapStatus.PUBLISHED
+        );
+    }
+
+    public static QuizMap draft(
+            User creator,
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount
+    ) {
+        return create(
+                creator,
+                category,
+                thumbnailAsset,
+                questionType,
+                title,
+                description,
+                visibility,
+                questionCount,
+                MapStatus.DRAFT
         );
     }
 

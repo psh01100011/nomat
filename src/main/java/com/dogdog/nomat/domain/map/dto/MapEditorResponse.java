@@ -1,6 +1,7 @@
 package com.dogdog.nomat.domain.map.dto;
 
 import com.dogdog.nomat.domain.asset.entity.Asset;
+import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.Question;
 import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
@@ -33,14 +34,15 @@ public record MapEditorResponse(
             Map<Long, QuestionMedia> mediaByQuestionId
     ) {
         Asset thumbnailAsset = map.getThumbnailAsset();
+        Category category = map.getCategory();
         return new MapEditorResponse(
                 map.getId(),
                 map.getVersion(),
                 map.getStatus().name(),
                 map.getVisibility().name(),
                 map.getTitle(),
-                map.getCategory().getId(),
-                map.getQuestionType().name(),
+                category == null ? null : category.getId(),
+                map.getQuestionType() == null ? null : map.getQuestionType().name(),
                 thumbnailAsset == null ? null : thumbnailAsset.getId(),
                 thumbnailAsset == null ? null : thumbnailAsset.getUrl(),
                 map.getDescription(),
