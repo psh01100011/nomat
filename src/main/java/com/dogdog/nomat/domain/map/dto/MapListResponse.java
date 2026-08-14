@@ -20,7 +20,7 @@ public record MapListResponse(
     public static MapListResponse from(Page<QuizMap> maps) {
         return new MapListResponse(
                 maps.getContent().stream()
-                        .map(MapSummaryResponse::from)
+                        .map(map -> MapSummaryResponse.from(map, false, false))
                         .toList(),
                 maps.getNumber(),
                 maps.getSize(),
@@ -49,7 +49,7 @@ public record MapListResponse(
             LocalDateTime createdAt
     ) {
 
-        private static MapSummaryResponse from(QuizMap map) {
+        private static MapSummaryResponse from(QuizMap map, boolean liked, boolean favorited) {
             Asset thumbnailAsset = map.getThumbnailAsset();
             return new MapSummaryResponse(
                     map.getId(),
@@ -65,8 +65,8 @@ public record MapListResponse(
                     map.getLikeCount(),
                     map.getFavoriteCount(),
                     map.getCommentCount(),
-                    false,
-                    false,
+                    liked,
+                    favorited,
                     map.getCreatedAt()
             );
         }

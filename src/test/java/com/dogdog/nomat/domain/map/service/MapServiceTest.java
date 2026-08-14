@@ -12,6 +12,7 @@ import com.dogdog.nomat.domain.asset.entity.AssetStatus;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
+import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
@@ -76,6 +77,63 @@ class MapServiceTest {
 
     @InjectMocks
     private MapService mapService;
+
+    @Test
+    void getMapReturnsPublicPublishedMapDetail() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+        ReflectionTestUtils.setField(map, "playCount", 135L);
+        ReflectionTestUtils.setField(map, "likeCount", 12L);
+        ReflectionTestUtils.setField(map, "favoriteCount", 4L);
+        ReflectionTestUtils.setField(map, "commentCount", 5L);
+
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+
+        MapDetailResponse response = mapService.getMap(null, 100L);
+
+        assertThat(response.mapId()).isEqualTo(100L);
+        assertThat(response.title()).isEqualTo("오디오 퀴즈");
+        assertThat(response.category().categoryId()).isEqualTo(10L);
+        assertThat(response.category().name()).isEqualTo("음악");
+        assertThat(response.questionType()).isEqualTo("AUDIO");
+        assertThat(response.thumbnailUrl()).isNull();
+        assertThat(response.description()).isEqualTo("설명");
+        assertThat(response.creator().userId()).isEqualTo(1L);
+        assertThat(response.creator().nickname()).isEqualTo("tester1");
+        assertThat(response.creator().profileImageUrl()).isNull();
+        assertThat(response.questionCount()).isEqualTo(1);
+        assertThat(response.playCount()).isEqualTo(135L);
+        assertThat(response.likeCount()).isEqualTo(12L);
+        assertThat(response.favoriteCount()).isEqualTo(4L);
+        assertThat(response.commentCount()).isEqualTo(5L);
+        assertThat(response.liked()).isFalse();
+        assertThat(response.favorited()).isFalse();
+        assertThat(response.createdAt()).isEqualTo(LocalDateTime.of(2026, 8, 11, 10, 0));
+        assertThat(response.updatedAt()).isEqualTo(LocalDateTime.of(2026, 8, 11, 10, 30));
+    }
+
+    @Test
+    void getMapRejectsMapThatIsNotPublicPublished() {
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> mapService.getMap(null, 100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("map_not_found");
+    }
+
+    @Test
+    void getMapRejectsUnknownAuthenticatedUser() {
+        given(userRepository.findById(1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> mapService.getMap(1L, 100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+
+        verify(quizMapRepository, never()).findByIdAndStatusAndVisibility(any(), any(), any());
+    }
 
     @Test
     @SuppressWarnings("unchecked")

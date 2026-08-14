@@ -7,6 +7,7 @@ import com.dogdog.nomat.domain.asset.entity.AssetType;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
+import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
@@ -127,7 +128,25 @@ public class MapService {
                 pageable
         );
 
+        // TODO: 좋아요/즐겨찾기 도메인 구현 후 userId 기준으로 liked/favorited mapId 목록 조회
         return MapListResponse.from(maps);
+    }
+
+    @Transactional(readOnly = true)
+    public MapDetailResponse getMap(Long userId, Long mapId) {
+        if (userId != null) {
+            getAuthenticatedUser(userId);
+        }
+
+        QuizMap map = quizMapRepository.findByIdAndStatusAndVisibility(
+                        mapId,
+                        MapStatus.PUBLISHED,
+                        MapVisibility.PUBLIC
+                )
+                .orElseThrow(this::mapNotFound);
+
+        // TODO: 좋아요/즐겨찾기 도메인 구현 후 userId와 mapId 기준으로 liked/favorited 조회
+        return MapDetailResponse.from(map, false, false);
     }
 
     @Transactional(readOnly = true)
@@ -460,5 +479,9 @@ public class MapService {
 
     private BusinessException mapOrQuestionNotFound() {
         return new BusinessException(HttpStatus.NOT_FOUND, "map_or_question_not_found");
+    }
+
+    private BusinessException mapNotFound() {
+        return new BusinessException(HttpStatus.NOT_FOUND, "map_not_found");
     }
 }

@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.map.controller;
 
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
+import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
 import com.dogdog.nomat.domain.map.service.MapService;
@@ -44,6 +45,15 @@ public class MapController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_get_map_editor", mapService.getMapEditor(userId, mapId));
+    }
+
+    @GetMapping("/{mapId}")
+    public ApiResponse<MapDetailResponse> getMap(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId
+    ) {
+        Long userId = getUserIdOrNull(jwt);
+        return ApiResponse.of("success_get_map", mapService.getMap(userId, mapId));
     }
 
     @GetMapping

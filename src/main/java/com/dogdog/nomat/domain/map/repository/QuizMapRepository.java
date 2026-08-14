@@ -18,6 +18,9 @@ public interface QuizMapRepository extends JpaRepository<QuizMap, Long> {
     @EntityGraph(attributePaths = {"creator", "category", "thumbnailAsset"})
     Optional<QuizMap> findByIdAndStatusNot(Long id, MapStatus status);
 
+    @EntityGraph(attributePaths = {"creator", "creator.profileImageAsset", "category", "thumbnailAsset"})
+    Optional<QuizMap> findByIdAndStatusAndVisibility(Long id, MapStatus status, MapVisibility visibility);
+
     @EntityGraph(attributePaths = {"creator", "category", "thumbnailAsset"})
     @Query("""
             SELECT map
