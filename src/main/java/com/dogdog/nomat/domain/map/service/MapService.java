@@ -8,6 +8,7 @@ import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
+import com.dogdog.nomat.domain.map.dto.MapListResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
@@ -30,6 +31,7 @@ import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -39,6 +41,10 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -91,6 +97,40 @@ public class MapService {
     }
 
     @Transactional(readOnly = true)
+    public MapListResponse getMaps(
+            Long userId,
+            String keyword,
+            Long categoryId,
+            String questionTypeValue,
+            int page,
+            int size,
+            String sort,
+            Long creatorId
+    ) {
+        validatePage(page, size);
+
+        QuestionType questionType = parseQuestionTypeOrNull(questionTypeValue);
+        boolean viewingOwnMaps = userId != null && Objects.equals(userId, creatorId);
+        Collection<MapStatus> statuses = viewingOwnMaps
+                ? List.of(MapStatus.DRAFT, MapStatus.PROCESSING, MapStatus.PUBLISHED, MapStatus.BLOCKED)
+                : List.of(MapStatus.PUBLISHED);
+        MapVisibility visibility = viewingOwnMaps ? null : MapVisibility.PUBLIC;
+        Pageable pageable = PageRequest.of(page, size, sortBy(sort));
+
+        Page<QuizMap> maps = quizMapRepository.searchMaps(
+                statuses,
+                visibility,
+                normalizeKeyword(keyword),
+                categoryId,
+                questionType,
+                creatorId,
+                pageable
+        );
+
+        return MapListResponse.from(maps);
+    }
+
+    @Transactional(readOnly = true)
     public MapEditorResponse getMapEditor(Long userId, Long mapId) {
         getAuthenticatedUser(userId);
         QuizMap map = quizMapRepository.findByIdAndStatusNot(mapId, MapStatus.DELETED)
@@ -136,6 +176,14 @@ public class MapService {
         return parseEnum(QuestionType.class, value);
     }
 
+    private QuestionType parseQuestionTypeOrNull(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+
+        return parseQuestionType(value);
+    }
+
     private MapVisibility parseVisibility(String value) {
         if (!StringUtils.hasText(value)) {
             return MapVisibility.PUBLIC;
@@ -146,6 +194,45 @@ public class MapService {
 
     private QuestionMediaSourceType parseMediaSourceType(String value) {
         return parseEnum(QuestionMediaSourceType.class, value);
+    }
+
+    private void validatePage(int page, int size) {
+        if (page < 0 || size < 1 || size > 100) {
+            throw invalidRequest();
+        }
+    }
+
+    private Sort sortBy(String sort) {
+        String sortValue = StringUtils.hasText(sort) ? sort : "latest";
+        return switch (sortValue) {
+            case "latest" -> Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
+            case "popular" -> Sort.by(
+                    Sort.Order.desc("likeCount"),
+                    Sort.Order.desc("favoriteCount"),
+                    Sort.Order.desc("playCount"),
+                    Sort.Order.desc("createdAt"),
+                    Sort.Order.desc("id")
+            );
+            case "mostPlayed" -> Sort.by(
+                    Sort.Order.desc("playCount"),
+                    Sort.Order.desc("createdAt"),
+                    Sort.Order.desc("id")
+            );
+            case "mostLiked" -> Sort.by(
+                    Sort.Order.desc("likeCount"),
+                    Sort.Order.desc("createdAt"),
+                    Sort.Order.desc("id")
+            );
+            default -> throw invalidRequest();
+        };
+    }
+
+    private String normalizeKeyword(String keyword) {
+        if (!StringUtils.hasText(keyword)) {
+            return null;
+        }
+
+        return keyword.trim();
     }
 
     private <T extends Enum<T>> T parseEnum(Class<T> enumType, String value) {

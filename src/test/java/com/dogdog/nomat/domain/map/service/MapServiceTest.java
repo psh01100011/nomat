@@ -13,6 +13,7 @@ import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
+import com.dogdog.nomat.domain.map.dto.MapListResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
@@ -42,6 +43,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -73,6 +76,141 @@ class MapServiceTest {
 
     @InjectMocks
     private MapService mapService;
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void getMapsReturnsPublicPublishedMaps() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+        ReflectionTestUtils.setField(map, "playCount", 135L);
+        ReflectionTestUtils.setField(map, "likeCount", 12L);
+        ReflectionTestUtils.setField(map, "favoriteCount", 4L);
+        ReflectionTestUtils.setField(map, "commentCount", 5L);
+
+        given(quizMapRepository.searchMaps(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(Pageable.class)
+        )).willReturn(new PageImpl<>(List.of(map)));
+
+        MapListResponse response = mapService.getMaps(
+                null,
+                "아이돌",
+                10L,
+                "AUDIO",
+                0,
+                20,
+                "popular",
+                null
+        );
+
+        assertThat(response.maps()).hasSize(1);
+        assertThat(response.page()).isEqualTo(0);
+        assertThat(response.size()).isEqualTo(1);
+        assertThat(response.totalElements()).isEqualTo(1);
+        assertThat(response.hasNext()).isFalse();
+
+        MapListResponse.MapSummaryResponse summary = response.maps().getFirst();
+        assertThat(summary.mapId()).isEqualTo(100L);
+        assertThat(summary.title()).isEqualTo("오디오 퀴즈");
+        assertThat(summary.status()).isEqualTo("PUBLISHED");
+        assertThat(summary.visibility()).isEqualTo("PUBLIC");
+        assertThat(summary.category().categoryId()).isEqualTo(10L);
+        assertThat(summary.category().name()).isEqualTo("음악");
+        assertThat(summary.questionType()).isEqualTo("AUDIO");
+        assertThat(summary.creator().userId()).isEqualTo(1L);
+        assertThat(summary.creator().nickname()).isEqualTo("tester1");
+        assertThat(summary.questionCount()).isEqualTo(1);
+        assertThat(summary.playCount()).isEqualTo(135L);
+        assertThat(summary.likeCount()).isEqualTo(12L);
+        assertThat(summary.favoriteCount()).isEqualTo(4L);
+        assertThat(summary.commentCount()).isEqualTo(5L);
+        assertThat(summary.liked()).isFalse();
+        assertThat(summary.favorited()).isFalse();
+
+        ArgumentCaptor<List<MapStatus>> statusesCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<MapVisibility> visibilityCaptor = ArgumentCaptor.forClass(MapVisibility.class);
+        ArgumentCaptor<String> keywordCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Long> categoryIdCaptor = ArgumentCaptor.forClass(Long.class);
+        ArgumentCaptor<QuestionType> questionTypeCaptor = ArgumentCaptor.forClass(QuestionType.class);
+        ArgumentCaptor<Long> creatorIdCaptor = ArgumentCaptor.forClass(Long.class);
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(quizMapRepository).searchMaps(
+                statusesCaptor.capture(),
+                visibilityCaptor.capture(),
+                keywordCaptor.capture(),
+                categoryIdCaptor.capture(),
+                questionTypeCaptor.capture(),
+                creatorIdCaptor.capture(),
+                pageableCaptor.capture()
+        );
+
+        assertThat(statusesCaptor.getValue()).containsExactly(MapStatus.PUBLISHED);
+        assertThat(visibilityCaptor.getValue()).isEqualTo(MapVisibility.PUBLIC);
+        assertThat(keywordCaptor.getValue()).isEqualTo("아이돌");
+        assertThat(categoryIdCaptor.getValue()).isEqualTo(10L);
+        assertThat(questionTypeCaptor.getValue()).isEqualTo(QuestionType.AUDIO);
+        assertThat(creatorIdCaptor.getValue()).isNull();
+        assertThat(pageableCaptor.getValue().getPageNumber()).isEqualTo(0);
+        assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(20);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void getMapsIncludesOwnNonDeletedMapsWhenCreatorIdIsCurrentUser() {
+        given(quizMapRepository.searchMaps(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(Pageable.class)
+        )).willReturn(new PageImpl<>(List.of()));
+
+        mapService.getMaps(1L, null, null, null, 0, 20, "latest", 1L);
+
+        ArgumentCaptor<List<MapStatus>> statusesCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<MapVisibility> visibilityCaptor = ArgumentCaptor.forClass(MapVisibility.class);
+        ArgumentCaptor<Long> creatorIdCaptor = ArgumentCaptor.forClass(Long.class);
+        verify(quizMapRepository).searchMaps(
+                statusesCaptor.capture(),
+                visibilityCaptor.capture(),
+                any(),
+                any(),
+                any(),
+                creatorIdCaptor.capture(),
+                any(Pageable.class)
+        );
+
+        assertThat(statusesCaptor.getValue())
+                .containsExactly(MapStatus.DRAFT, MapStatus.PROCESSING, MapStatus.PUBLISHED, MapStatus.BLOCKED);
+        assertThat(visibilityCaptor.getValue()).isNull();
+        assertThat(creatorIdCaptor.getValue()).isEqualTo(1L);
+    }
+
+    @Test
+    void getMapsRejectsInvalidPageRequest() {
+        assertThatThrownBy(() -> mapService.getMaps(null, null, null, null, -1, 20, "latest", null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+
+        assertThatThrownBy(() -> mapService.getMaps(null, null, null, null, 0, 101, "latest", null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+    }
+
+    @Test
+    void getMapsRejectsUnsupportedSort() {
+        assertThatThrownBy(() -> mapService.getMaps(null, null, null, null, 0, 20, "unknown", null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+    }
 
     @Test
     void getMapEditorReturnsCreatorEditableMapDetails() {
