@@ -13,6 +13,8 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
@@ -59,9 +61,106 @@ public class QuestionMedia {
     @Column(name = "duration_ms")
     private Integer durationMs;
 
+    @Column(name = "processing_status", length = 20, nullable = false)
+    @Enumerated(EnumType.STRING)
+    private QuestionMediaProcessingStatus processingStatus = QuestionMediaProcessingStatus.READY;
+
+    @Column(name = "failure_message", length = 500)
+    private String failureMessage;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    private QuestionMedia(
+            Question question,
+            Asset asset,
+            QuestionMediaSourceType sourceType,
+            String sourceUrl,
+            Integer startTimeMs,
+            Integer endTimeMs,
+            Integer durationMs
+    ) {
+        this.question = question;
+        this.asset = asset;
+        this.sourceType = sourceType;
+        this.sourceUrl = sourceUrl;
+        this.startTimeMs = startTimeMs;
+        this.endTimeMs = endTimeMs;
+        this.durationMs = durationMs;
+        if (sourceType == QuestionMediaSourceType.YOUTUBE || sourceType == QuestionMediaSourceType.TTS) {
+            this.processingStatus = QuestionMediaProcessingStatus.PENDING;
+        }
+    }
+
+    public static QuestionMedia create(
+            Question question,
+            Asset asset,
+            QuestionMediaSourceType sourceType,
+            String sourceUrl,
+            Integer startTimeMs,
+            Integer endTimeMs,
+            Integer durationMs
+    ) {
+        return new QuestionMedia(question, asset, sourceType, sourceUrl, startTimeMs, endTimeMs, durationMs);
+    }
+
+    public void update(
+            Asset asset,
+            QuestionMediaSourceType sourceType,
+            String sourceUrl,
+            Integer startTimeMs,
+            Integer endTimeMs,
+            Integer durationMs
+    ) {
+        this.asset = asset;
+        this.sourceType = sourceType;
+        this.sourceUrl = sourceUrl;
+        this.startTimeMs = startTimeMs;
+        this.endTimeMs = endTimeMs;
+        this.durationMs = durationMs;
+        this.failureMessage = null;
+        this.processingStatus = sourceType == QuestionMediaSourceType.YOUTUBE || sourceType == QuestionMediaSourceType.TTS
+                ? QuestionMediaProcessingStatus.PENDING
+                : QuestionMediaProcessingStatus.READY;
+    }
+
+    public void startProcessing() {
+        this.processingStatus = QuestionMediaProcessingStatus.PROCESSING;
+        this.failureMessage = null;
+    }
+
+    public void completeProcessing(Asset asset, Integer durationMs) {
+        this.asset = asset;
+        this.durationMs = durationMs;
+        this.processingStatus = QuestionMediaProcessingStatus.READY;
+        this.failureMessage = null;
+    }
+
+    public void failProcessing(String failureMessage) {
+        this.processingStatus = QuestionMediaProcessingStatus.FAILED;
+        this.failureMessage = truncate(failureMessage);
+    }
+
+    private String truncate(String value) {
+        if (value == null || value.length() <= 500) {
+            return value;
+        }
+
+        return value.substring(0, 500);
+    }
+
+    @PrePersist
+    void prePersist() {
+        LocalDateTime now = LocalDateTime.now();
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
+
+    @PreUpdate
+    void preUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
 }

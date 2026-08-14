@@ -25,4 +25,12 @@ public class Category {
 
     @Column(name = "active", nullable = false)
     private boolean active = true;
+
+    private Category(String name) {
+        this.name = name;
+    }
+
+    public static Category create(String name) {
+        return new Category(name);
+    }
 }

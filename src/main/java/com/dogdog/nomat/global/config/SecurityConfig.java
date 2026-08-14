@@ -55,6 +55,8 @@ public class SecurityConfig {
                         .requestMatchers("/users/login-id/availability").permitAll()
                         .requestMatchers("/users/nickname/availability").permitAll()
                         .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/users/\\d+$")).permitAll()
+                        .requestMatchers(HttpMethod.GET, "/maps").permitAll()
+                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/maps/\\d+$")).permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         .anyRequest().authenticated()
                 )

@@ -1,0 +1,11 @@
+package com.dogdog.nomat.domain.map.repository;
+
+import com.dogdog.nomat.domain.map.entity.Question;
+import com.dogdog.nomat.domain.map.entity.QuestionStatus;
+import java.util.List;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface QuestionRepository extends JpaRepository<Question, Long> {
+
+    List<Question> findByMapIdAndStatusOrderByQuestionOrderAsc(Long mapId, QuestionStatus status);
+}

@@ -23,7 +23,16 @@ app:
       region: ${AWS_REGION:ap-northeast-2}
       public-base-url: ${AWS_S3_PUBLIC_BASE_URL}
       image-prefix: uploads/images
+      audio-prefix: uploads/audios
       max-image-size-bytes: 10485760
+  audio-processing:
+    enabled: false
+    batch-size: 5
+    initial-delay-ms: 10000
+    fixed-delay-ms: 30000
+    command-timeout-seconds: 300
+    yt-dlp-path: ${YT_DLP_PATH:yt-dlp}
+    ffmpeg-path: ${FFMPEG_PATH:ffmpeg}
   auth:
     jwt:
       issuer: nomat

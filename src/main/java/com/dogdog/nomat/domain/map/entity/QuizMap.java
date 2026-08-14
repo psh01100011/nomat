@@ -14,6 +14,8 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
@@ -44,19 +46,19 @@ public class QuizMap {
     @JoinColumn(name = "creator_id", nullable = false)
     private User creator;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "category_id", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id")
     private Category category;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "thumbnail_asset_id")
     private Asset thumbnailAsset;
 
-    @Column(name = "question_type", length = 20, nullable = false)
+    @Column(name = "question_type", length = 20)
     @Enumerated(EnumType.STRING)
     private QuestionType questionType;
 
-    @Column(name = "title", length = 100, nullable = false)
+    @Column(name = "title", length = 100)
     private String title;
 
     @Lob
@@ -100,4 +102,157 @@ public class QuizMap {
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    private QuizMap(
+            User creator,
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount,
+            MapStatus status
+    ) {
+        this.creator = creator;
+        this.category = category;
+        this.thumbnailAsset = thumbnailAsset;
+        this.questionType = questionType;
+        this.title = title;
+        this.description = description;
+        this.status = status;
+        this.visibility = visibility;
+        this.questionCount = questionCount;
+        if (status == MapStatus.PUBLISHED) {
+            this.publishedAt = LocalDateTime.now();
+        }
+    }
+
+    public static QuizMap create(
+            User creator,
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount,
+            MapStatus status
+    ) {
+        return new QuizMap(
+                creator,
+                category,
+                thumbnailAsset,
+                questionType,
+                title,
+                description,
+                visibility,
+                questionCount,
+                status
+        );
+    }
+
+    public static QuizMap publish(
+            User creator,
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount
+    ) {
+        return create(
+                creator,
+                category,
+                thumbnailAsset,
+                questionType,
+                title,
+                description,
+                visibility,
+                questionCount,
+                MapStatus.PUBLISHED
+        );
+    }
+
+    public static QuizMap draft(
+            User creator,
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount
+    ) {
+        return create(
+                creator,
+                category,
+                thumbnailAsset,
+                questionType,
+                title,
+                description,
+                visibility,
+                questionCount,
+                MapStatus.DRAFT
+        );
+    }
+
+    public void publishIfProcessing() {
+        if (status != MapStatus.PROCESSING) {
+            return;
+        }
+
+        this.status = MapStatus.PUBLISHED;
+        this.publishedAt = LocalDateTime.now();
+    }
+
+    public void modify(
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount,
+            MapStatus status
+    ) {
+        this.category = category;
+        this.thumbnailAsset = thumbnailAsset;
+        this.questionType = questionType;
+        this.title = title;
+        this.description = description;
+        this.visibility = visibility;
+        this.questionCount = questionCount;
+        changeStatus(status);
+        this.version++;
+    }
+
+    public void delete() {
+        if (status == MapStatus.DELETED) {
+            return;
+        }
+
+        this.status = MapStatus.DELETED;
+        this.deletedAt = LocalDateTime.now();
+    }
+
+    private void changeStatus(MapStatus status) {
+        this.status = status;
+        if (status == MapStatus.PUBLISHED && this.publishedAt == null) {
+            this.publishedAt = LocalDateTime.now();
+        }
+    }
+
+    @PrePersist
+    void prePersist() {
+        LocalDateTime now = LocalDateTime.now();
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
+
+    @PreUpdate
+    void preUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
 }
