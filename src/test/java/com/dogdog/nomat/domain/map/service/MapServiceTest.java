@@ -670,6 +670,54 @@ class MapServiceTest {
     }
 
     @Test
+    void deleteMapDeletesOwnMapAndPendingAudioJobs() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PROCESSING);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+
+        mapService.deleteMap(1L, 100L);
+
+        assertThat(map.getStatus()).isEqualTo(MapStatus.DELETED);
+        assertThat(map.getDeletedAt()).isNotNull();
+        verify(audioProcessingJobRepository).deleteByQuestionMediaQuestionMapId(100L);
+    }
+
+    @Test
+    void deleteMapRejectsOtherUsersMap() {
+        User user = activeUser(1L);
+        User creator = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+
+        assertThatThrownBy(() -> mapService.deleteMap(1L, 100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("forbidden_map_access");
+
+        assertThat(map.getStatus()).isEqualTo(MapStatus.PUBLISHED);
+        verify(audioProcessingJobRepository, never()).deleteByQuestionMediaQuestionMapId(any());
+    }
+
+    @Test
+    void deleteMapRejectsUnknownOrDeletedMap() {
+        User creator = activeUser(1L);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> mapService.deleteMap(1L, 100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("map_not_found");
+
+        verify(audioProcessingJobRepository, never()).deleteByQuestionMediaQuestionMapId(any());
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void createMapKeepsMapProcessingWithQuestionsAnswersAndYoutubeMedia() {
         User creator = activeUser(1L);

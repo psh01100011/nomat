@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -61,6 +62,16 @@ public class MapController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_modify_map", mapService.modifyMap(userId, mapId, request));
+    }
+
+    @DeleteMapping("/{mapId}")
+    public ApiResponse<Void> deleteMap(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId
+    ) {
+        Long userId = getUserId(jwt);
+        mapService.deleteMap(userId, mapId);
+        return ApiResponse.success("success_delete_map");
     }
 
     @GetMapping("/{mapId}/editor")

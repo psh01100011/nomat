@@ -16,4 +16,6 @@ public interface AudioProcessingJobRepository extends JpaRepository<AudioProcess
     void deleteByQuestionMediaId(Long questionMediaId);
 
     void deleteByQuestionMediaQuestionId(Long questionId);
+
+    void deleteByQuestionMediaQuestionMapId(Long mapId);
 }

@@ -230,6 +230,20 @@ public class MapService {
         return ModifyMapResponse.of(map, createdQuestionResponses, updatedAt);
     }
 
+    @Transactional
+    public void deleteMap(Long userId, Long mapId) {
+        getAuthenticatedUser(userId);
+        QuizMap map = quizMapRepository.findByIdAndStatusNot(mapId, MapStatus.DELETED)
+                .orElseThrow(this::mapNotFound);
+
+        if (!Objects.equals(map.getCreator().getId(), userId)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_map_access");
+        }
+
+        audioProcessingJobRepository.deleteByQuestionMediaQuestionMapId(mapId);
+        map.delete();
+    }
+
     @Transactional(readOnly = true)
     public MapListResponse getMaps(
             Long userId,

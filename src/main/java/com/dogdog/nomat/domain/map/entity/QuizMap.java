@@ -228,6 +228,15 @@ public class QuizMap {
         this.version++;
     }
 
+    public void delete() {
+        if (status == MapStatus.DELETED) {
+            return;
+        }
+
+        this.status = MapStatus.DELETED;
+        this.deletedAt = LocalDateTime.now();
+    }
+
     private void changeStatus(MapStatus status) {
         this.status = status;
         if (status == MapStatus.PUBLISHED && this.publishedAt == null) {
