@@ -5,6 +5,8 @@ import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
+import com.dogdog.nomat.domain.map.dto.ModifyMapRequest;
+import com.dogdog.nomat.domain.map.dto.ModifyMapResponse;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
 import com.dogdog.nomat.domain.map.service.MapService;
@@ -15,6 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -48,6 +51,16 @@ public class MapController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_save_map_draft", mapService.saveMapDraft(userId, request));
+    }
+
+    @PatchMapping("/{mapId}")
+    public ApiResponse<ModifyMapResponse> modifyMap(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId,
+            @Valid @RequestBody ModifyMapRequest request
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_modify_map", mapService.modifyMap(userId, mapId, request));
     }
 
     @GetMapping("/{mapId}/editor")

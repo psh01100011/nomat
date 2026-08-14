@@ -207,6 +207,34 @@ public class QuizMap {
         this.publishedAt = LocalDateTime.now();
     }
 
+    public void modify(
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount,
+            MapStatus status
+    ) {
+        this.category = category;
+        this.thumbnailAsset = thumbnailAsset;
+        this.questionType = questionType;
+        this.title = title;
+        this.description = description;
+        this.visibility = visibility;
+        this.questionCount = questionCount;
+        changeStatus(status);
+        this.version++;
+    }
+
+    private void changeStatus(MapStatus status) {
+        this.status = status;
+        if (status == MapStatus.PUBLISHED && this.publishedAt == null) {
+            this.publishedAt = LocalDateTime.now();
+        }
+    }
+
     @PrePersist
     void prePersist() {
         LocalDateTime now = LocalDateTime.now();

@@ -76,6 +76,14 @@ public class AudioProcessingJob {
         this.questionMedia.startProcessing();
     }
 
+    public void reset() {
+        this.status = AudioProcessingJobStatus.PENDING;
+        this.attemptCount = 0;
+        this.failureMessage = null;
+        this.startedAt = null;
+        this.completedAt = null;
+    }
+
     public void succeed() {
         this.status = AudioProcessingJobStatus.SUCCEEDED;
         this.completedAt = LocalDateTime.now();

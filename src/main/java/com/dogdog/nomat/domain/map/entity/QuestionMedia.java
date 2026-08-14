@@ -107,6 +107,26 @@ public class QuestionMedia {
         return new QuestionMedia(question, asset, sourceType, sourceUrl, startTimeMs, endTimeMs, durationMs);
     }
 
+    public void update(
+            Asset asset,
+            QuestionMediaSourceType sourceType,
+            String sourceUrl,
+            Integer startTimeMs,
+            Integer endTimeMs,
+            Integer durationMs
+    ) {
+        this.asset = asset;
+        this.sourceType = sourceType;
+        this.sourceUrl = sourceUrl;
+        this.startTimeMs = startTimeMs;
+        this.endTimeMs = endTimeMs;
+        this.durationMs = durationMs;
+        this.failureMessage = null;
+        this.processingStatus = sourceType == QuestionMediaSourceType.YOUTUBE || sourceType == QuestionMediaSourceType.TTS
+                ? QuestionMediaProcessingStatus.PENDING
+                : QuestionMediaProcessingStatus.READY;
+    }
+
     public void startProcessing() {
         this.processingStatus = QuestionMediaProcessingStatus.PROCESSING;
         this.failureMessage = null;

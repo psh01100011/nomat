@@ -15,6 +15,8 @@ import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
+import com.dogdog.nomat.domain.map.dto.ModifyMapRequest;
+import com.dogdog.nomat.domain.map.dto.ModifyMapResponse;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
@@ -26,6 +28,7 @@ import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
 import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionMediaSourceType;
+import com.dogdog.nomat.domain.map.entity.QuestionStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
@@ -39,6 +42,7 @@ import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -503,6 +507,166 @@ class MapServiceTest {
                 .hasMessageContaining("invalid_request");
 
         verify(quizMapRepository, never()).save(any(QuizMap.class));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void modifyMapPublishesCompletedDraftWithCreatedTextQuestion() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        QuizMap map = QuizMap.draft(
+                creator,
+                null,
+                null,
+                null,
+                null,
+                null,
+                MapVisibility.PRIVATE,
+                0
+        );
+        ReflectionTestUtils.setField(map, "id", 100L);
+        ReflectionTestUtils.setField(map, "createdAt", LocalDateTime.of(2026, 8, 11, 10, 0));
+        ReflectionTestUtils.setField(map, "updatedAt", LocalDateTime.of(2026, 8, 11, 10, 30));
+        ModifyMapRequest request = new ModifyMapRequest(
+                1,
+                Map.of(
+                        "title", "텍스트 퀴즈",
+                        "categoryId", 10L,
+                        "questionType", "TEXT",
+                        "visibility", "PUBLIC"
+                ),
+                new ModifyMapRequest.QuestionsRequest(
+                        List.of(new ModifyMapRequest.CreateQuestionRequest(
+                                "temp-1",
+                                "정답은?",
+                                null,
+                                List.of("정답")
+                        )),
+                        null,
+                        null
+                )
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+        given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
+        given(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(100L, QuestionStatus.ACTIVE))
+                .willReturn(List.of());
+        given(questionAnswerRepository.findByQuestionIdInOrderByQuestionIdAscIdAsc(List.of()))
+                .willReturn(List.of());
+        given(questionMediaRepository.findByQuestionIdIn(List.of())).willReturn(List.of());
+        given(questionRepository.save(any(Question.class))).willAnswer(invocation -> {
+            Question question = invocation.getArgument(0);
+            ReflectionTestUtils.setField(question, "id", 200L);
+            return question;
+        });
+
+        ModifyMapResponse response = mapService.modifyMap(1L, 100L, request);
+
+        assertThat(response.mapId()).isEqualTo(100L);
+        assertThat(response.version()).isEqualTo(2);
+        assertThat(response.createdQuestions()).hasSize(1);
+        assertThat(response.createdQuestions().getFirst().clientId()).isEqualTo("temp-1");
+        assertThat(response.createdQuestions().getFirst().questionId()).isEqualTo(200L);
+        assertThat(map.getTitle()).isEqualTo("텍스트 퀴즈");
+        assertThat(map.getCategory()).isEqualTo(category);
+        assertThat(map.getQuestionType()).isEqualTo(QuestionType.TEXT);
+        assertThat(map.getVisibility()).isEqualTo(MapVisibility.PUBLIC);
+        assertThat(map.getQuestionCount()).isEqualTo(1);
+        assertThat(map.getStatus()).isEqualTo(MapStatus.PUBLISHED);
+        assertThat(map.getPublishedAt()).isNotNull();
+
+        ArgumentCaptor<List<QuestionAnswer>> answersCaptor = ArgumentCaptor.forClass(List.class);
+        verify(questionAnswerRepository).saveAll(answersCaptor.capture());
+        assertThat(answersCaptor.getValue()).hasSize(1);
+        assertThat(answersCaptor.getValue().getFirst().getAnswerText()).isEqualTo("정답");
+        verify(questionMediaRepository, never()).save(any(QuestionMedia.class));
+        verify(audioProcessingJobRepository, never()).save(any(AudioProcessingJob.class));
+    }
+
+    @Test
+    void modifyMapRejectsVersionConflict() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+        ReflectionTestUtils.setField(map, "version", 4);
+        ModifyMapRequest request = new ModifyMapRequest(3, null, null);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+
+        assertThatThrownBy(() -> mapService.modifyMap(1L, 100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("map_version_conflict");
+
+        verify(questionRepository, never()).findByMapIdAndStatusOrderByQuestionOrderAsc(any(), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void modifyMapUpdatesQuestionWithYoutubeMediaAndKeepsMapProcessing() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+        Question question = question(200L, map);
+        QuestionAnswer oldAnswer = QuestionAnswer.create(question, "이전 정답", "이전정답", true);
+        ModifyMapRequest request = new ModifyMapRequest(
+                1,
+                null,
+                new ModifyMapRequest.QuestionsRequest(
+                        null,
+                        List.of(new ModifyMapRequest.UpdateQuestionRequest(
+                                200L,
+                                "수정된 문제",
+                                new ModifyMapRequest.MediaRequest(
+                                        "YOUTUBE",
+                                        null,
+                                        "https://youtube.com/watch?v=updated",
+                                        60000L,
+                                        80000L
+                                ),
+                                List.of("수정 정답", "수정")
+                        )),
+                        null
+                )
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+        given(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(100L, QuestionStatus.ACTIVE))
+                .willReturn(List.of(question));
+        given(questionAnswerRepository.findByQuestionIdInOrderByQuestionIdAscIdAsc(List.of(200L)))
+                .willReturn(List.of(oldAnswer));
+        given(questionMediaRepository.findByQuestionIdIn(List.of(200L))).willReturn(List.of());
+        given(questionMediaRepository.save(any(QuestionMedia.class))).willAnswer(invocation -> invocation.getArgument(0));
+
+        ModifyMapResponse response = mapService.modifyMap(1L, 100L, request);
+
+        assertThat(response.version()).isEqualTo(2);
+        assertThat(question.getPromptText()).isEqualTo("수정된 문제");
+        assertThat(map.getStatus()).isEqualTo(MapStatus.PROCESSING);
+        assertThat(map.getQuestionCount()).isEqualTo(1);
+
+        ArgumentCaptor<List<QuestionAnswer>> answersCaptor = ArgumentCaptor.forClass(List.class);
+        verify(questionAnswerRepository).saveAll(answersCaptor.capture());
+        List<QuestionAnswer> savedAnswers = answersCaptor.getValue();
+        assertThat(savedAnswers).hasSize(2);
+        assertThat(savedAnswers.getFirst().getAnswerText()).isEqualTo("수정 정답");
+        assertThat(savedAnswers.getFirst().isPrimary()).isTrue();
+        verify(questionAnswerRepository).deleteByQuestionId(200L);
+
+        ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
+        verify(questionMediaRepository).save(mediaCaptor.capture());
+        QuestionMedia savedMedia = mediaCaptor.getValue();
+        assertThat(savedMedia.getSourceType()).isEqualTo(QuestionMediaSourceType.YOUTUBE);
+        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://youtube.com/watch?v=updated");
+        assertThat(savedMedia.getStartTimeMs()).isEqualTo(60000);
+        assertThat(savedMedia.getEndTimeMs()).isEqualTo(80000);
+        assertThat(savedMedia.getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PENDING);
+
+        ArgumentCaptor<AudioProcessingJob> jobCaptor = ArgumentCaptor.forClass(AudioProcessingJob.class);
+        verify(audioProcessingJobRepository).save(jobCaptor.capture());
+        assertThat(jobCaptor.getValue().getQuestionMedia()).isEqualTo(savedMedia);
     }
 
     @Test

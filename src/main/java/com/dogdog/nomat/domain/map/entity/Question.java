@@ -73,6 +73,19 @@ public class Question {
         return new Question(map, questionOrder, promptText);
     }
 
+    public void update(String promptText) {
+        this.promptText = promptText;
+    }
+
+    public void delete() {
+        if (status == QuestionStatus.DELETED) {
+            return;
+        }
+
+        this.status = QuestionStatus.DELETED;
+        this.deletedAt = LocalDateTime.now();
+    }
+
     @PrePersist
     void prePersist() {
         LocalDateTime now = LocalDateTime.now();

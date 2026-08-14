@@ -10,6 +10,8 @@ import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
+import com.dogdog.nomat.domain.map.dto.ModifyMapRequest;
+import com.dogdog.nomat.domain.map.dto.ModifyMapResponse;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
@@ -19,6 +21,7 @@ import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.Question;
 import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
+import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionMediaSourceType;
 import com.dogdog.nomat.domain.map.entity.QuestionStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
@@ -131,6 +134,102 @@ public class MapService {
         return SaveMapDraftResponse.of(savedMap, savedAt);
     }
 
+    @Transactional
+    public ModifyMapResponse modifyMap(Long userId, Long mapId, ModifyMapRequest request) {
+        User creator = getAuthenticatedUser(userId);
+        QuizMap map = quizMapRepository.findByIdAndStatusNot(mapId, MapStatus.DELETED)
+                .orElseThrow(this::mapOrQuestionNotFound);
+
+        if (!Objects.equals(map.getCreator().getId(), userId)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_map_access");
+        }
+
+        if (map.getVersion() != request.version()) {
+            throw new BusinessException(
+                    HttpStatus.CONFLICT,
+                    "map_version_conflict",
+                    Map.of("currentVersion", map.getVersion())
+            );
+        }
+
+        MapPatchState patchState = resolveMapPatch(map, request.map(), creator);
+        QuestionChanges questionChanges = questionChanges(request.questions());
+        List<Question> existingQuestions = questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(
+                mapId,
+                QuestionStatus.ACTIVE
+        );
+        Map<Long, Question> existingQuestionsById = existingQuestions.stream()
+                .collect(Collectors.toMap(Question::getId, Function.identity()));
+        validateQuestionTargets(existingQuestionsById, questionChanges);
+
+        List<Long> existingQuestionIds = existingQuestions.stream()
+                .map(Question::getId)
+                .toList();
+        Map<Long, List<QuestionAnswer>> answersByQuestionId = questionAnswerRepository
+                .findByQuestionIdInOrderByQuestionIdAscIdAsc(existingQuestionIds)
+                .stream()
+                .collect(Collectors.groupingBy(answer -> answer.getQuestion().getId()));
+        Map<Long, QuestionMedia> mediaByQuestionId = questionMediaRepository.findByQuestionIdIn(existingQuestionIds)
+                .stream()
+                .collect(Collectors.toMap(media -> media.getQuestion().getId(), Function.identity()));
+
+        Set<Long> deletedQuestionIds = new HashSet<>(questionChanges.deleteQuestionIds());
+        deleteQuestions(existingQuestionsById, deletedQuestionIds, answersByQuestionId, mediaByQuestionId);
+        updateQuestions(
+                questionChanges.updateRequests(),
+                existingQuestionsById,
+                answersByQuestionId,
+                mediaByQuestionId,
+                patchState.questionType(),
+                creator
+        );
+        List<Question> createdQuestions = new ArrayList<>();
+        List<ModifyMapResponse.CreatedQuestionResponse> createdQuestionResponses = createQuestions(
+                map,
+                questionChanges.createRequests(),
+                existingQuestions,
+                createdQuestions,
+                answersByQuestionId,
+                mediaByQuestionId,
+                patchState.questionType(),
+                creator
+        );
+
+        List<Question> activeQuestions = new ArrayList<>();
+        for (Question question : existingQuestions) {
+            if (!deletedQuestionIds.contains(question.getId())) {
+                activeQuestions.add(question);
+            }
+        }
+        activeQuestions.addAll(createdQuestions);
+
+        validateCompleteMapState(
+                patchState.title(),
+                patchState.category(),
+                patchState.questionType(),
+                activeQuestions,
+                answersByQuestionId,
+                mediaByQuestionId
+        );
+
+        MapStatus status = hasUnreadyMedia(activeQuestions, mediaByQuestionId)
+                ? MapStatus.PROCESSING
+                : MapStatus.PUBLISHED;
+        map.modify(
+                patchState.category(),
+                patchState.thumbnailAsset(),
+                patchState.questionType(),
+                patchState.title(),
+                patchState.description(),
+                patchState.visibility(),
+                activeQuestions.size(),
+                status
+        );
+
+        LocalDateTime updatedAt = map.getUpdatedAt() == null ? LocalDateTime.now() : map.getUpdatedAt();
+        return ModifyMapResponse.of(map, createdQuestionResponses, updatedAt);
+    }
+
     @Transactional(readOnly = true)
     public MapListResponse getMaps(
             Long userId,
@@ -211,6 +310,443 @@ public class MapService {
                 .collect(Collectors.toMap(media -> media.getQuestion().getId(), Function.identity()));
 
         return MapEditorResponse.of(map, questions, answersByQuestionId, mediaByQuestionId);
+    }
+
+    private MapPatchState resolveMapPatch(QuizMap map, Map<String, Object> mapNode, User creator) {
+        String title = map.getTitle();
+        Category category = map.getCategory();
+        QuestionType questionType = map.getQuestionType();
+        Asset thumbnailAsset = map.getThumbnailAsset();
+        String description = map.getDescription();
+        MapVisibility visibility = map.getVisibility();
+
+        if (mapNode == null) {
+            return new MapPatchState(title, category, questionType, thumbnailAsset, description, visibility);
+        }
+
+        if (mapNode.containsKey("title")) {
+            title = readTextField(mapNode, "title", true, 100);
+        }
+
+        if (mapNode.containsKey("categoryId")) {
+            category = getActiveCategory(readLongField(mapNode, "categoryId"));
+        }
+
+        if (mapNode.containsKey("questionType")) {
+            questionType = parseQuestionType(readTextField(mapNode, "questionType", true, null));
+        }
+
+        if (mapNode.containsKey("thumbnailAssetId")) {
+            Object thumbnailValue = mapNode.get("thumbnailAssetId");
+            thumbnailAsset = thumbnailValue == null
+                    ? null
+                    : getImageAssetToAttach(readLongField(mapNode, "thumbnailAssetId"), creator);
+        }
+
+        if (mapNode.containsKey("description")) {
+            description = readTextField(mapNode, "description", false, null);
+        }
+
+        if (mapNode.containsKey("visibility")) {
+            visibility = parseVisibility(readTextField(mapNode, "visibility", true, null));
+        }
+
+        return new MapPatchState(title, category, questionType, thumbnailAsset, description, visibility);
+    }
+
+    private String readTextField(Map<String, Object> node, String fieldName, boolean required, Integer maxLength) {
+        Object field = node.get(fieldName);
+        if (field == null) {
+            if (required) {
+                throw invalidRequest();
+            }
+
+            return null;
+        }
+
+        if (!(field instanceof String value)) {
+            throw invalidRequest();
+        }
+
+        if (maxLength != null && value.length() > maxLength) {
+            throw invalidRequest();
+        }
+
+        return value;
+    }
+
+    private Long readLongField(Map<String, Object> node, String fieldName) {
+        Object field = node.get(fieldName);
+        if (!(field instanceof Number value)) {
+            throw invalidRequest();
+        }
+
+        return value.longValue();
+    }
+
+    private QuestionChanges questionChanges(ModifyMapRequest.QuestionsRequest request) {
+        if (request == null) {
+            return new QuestionChanges(List.of(), List.of(), List.of());
+        }
+
+        return new QuestionChanges(
+                request.create() == null ? List.of() : request.create(),
+                request.update() == null ? List.of() : request.update(),
+                request.delete() == null ? List.of() : request.delete()
+        );
+    }
+
+    private void validateQuestionTargets(Map<Long, Question> existingQuestionsById, QuestionChanges questionChanges) {
+        Set<Long> requestedQuestionIds = new HashSet<>();
+        for (ModifyMapRequest.UpdateQuestionRequest updateRequest : questionChanges.updateRequests()) {
+            if (updateRequest == null || updateRequest.questionId() == null) {
+                throw invalidRequest();
+            }
+
+            Long questionId = updateRequest.questionId();
+            if (!requestedQuestionIds.add(questionId)) {
+                throw invalidRequest();
+            }
+
+            if (!existingQuestionsById.containsKey(questionId)) {
+                throw mapOrQuestionNotFound();
+            }
+        }
+
+        for (Long questionId : questionChanges.deleteQuestionIds()) {
+            if (questionId == null) {
+                throw invalidRequest();
+            }
+
+            if (!requestedQuestionIds.add(questionId)) {
+                throw invalidRequest();
+            }
+
+            if (!existingQuestionsById.containsKey(questionId)) {
+                throw mapOrQuestionNotFound();
+            }
+        }
+    }
+
+    private void deleteQuestions(
+            Map<Long, Question> existingQuestionsById,
+            Set<Long> deletedQuestionIds,
+            Map<Long, List<QuestionAnswer>> answersByQuestionId,
+            Map<Long, QuestionMedia> mediaByQuestionId
+    ) {
+        if (deletedQuestionIds.isEmpty()) {
+            return;
+        }
+
+        for (Long questionId : deletedQuestionIds) {
+            audioProcessingJobRepository.deleteByQuestionMediaQuestionId(questionId);
+            questionMediaRepository.deleteByQuestionId(questionId);
+            questionAnswerRepository.deleteByQuestionId(questionId);
+            existingQuestionsById.get(questionId).delete();
+            answersByQuestionId.remove(questionId);
+            mediaByQuestionId.remove(questionId);
+        }
+    }
+
+    private void updateQuestions(
+            List<ModifyMapRequest.UpdateQuestionRequest> updateRequests,
+            Map<Long, Question> existingQuestionsById,
+            Map<Long, List<QuestionAnswer>> answersByQuestionId,
+            Map<Long, QuestionMedia> mediaByQuestionId,
+            QuestionType questionType,
+            User creator
+    ) {
+        for (ModifyMapRequest.UpdateQuestionRequest request : updateRequests) {
+            validateModifyQuestion(questionType, request.promptText(), request.media(), request.answers());
+
+            Question question = existingQuestionsById.get(request.questionId());
+            question.update(request.promptText());
+            questionAnswerRepository.deleteByQuestionId(question.getId());
+            List<QuestionAnswer> answers = createAnswers(question, request.answers());
+            questionAnswerRepository.saveAll(answers);
+            answersByQuestionId.put(question.getId(), answers);
+            updateQuestionMedia(question, questionType, request.media(), creator, mediaByQuestionId);
+        }
+    }
+
+    private List<ModifyMapResponse.CreatedQuestionResponse> createQuestions(
+            QuizMap map,
+            List<ModifyMapRequest.CreateQuestionRequest> createRequests,
+            List<Question> existingQuestions,
+            List<Question> createdQuestions,
+            Map<Long, List<QuestionAnswer>> answersByQuestionId,
+            Map<Long, QuestionMedia> mediaByQuestionId,
+            QuestionType questionType,
+            User creator
+    ) {
+        List<ModifyMapResponse.CreatedQuestionResponse> responses = new ArrayList<>();
+        int nextQuestionOrder = existingQuestions.stream()
+                .mapToInt(Question::getQuestionOrder)
+                .max()
+                .orElse(0) + 1;
+
+        for (ModifyMapRequest.CreateQuestionRequest request : createRequests) {
+            if (request == null) {
+                throw invalidRequest();
+            }
+            validateModifyQuestion(questionType, request.promptText(), request.media(), request.answers());
+
+            Question question = questionRepository.save(Question.create(map, nextQuestionOrder++, request.promptText()));
+            List<QuestionAnswer> answers = createAnswers(question, request.answers());
+            questionAnswerRepository.saveAll(answers);
+            QuestionMedia media = createModifiedQuestionMedia(question, questionType, request.media(), creator);
+            if (media != null) {
+                questionMediaRepository.save(media);
+                syncAudioProcessingJob(media);
+                mediaByQuestionId.put(question.getId(), media);
+            }
+
+            createdQuestions.add(question);
+            answersByQuestionId.put(question.getId(), answers);
+            responses.add(new ModifyMapResponse.CreatedQuestionResponse(request.clientId(), question.getId()));
+        }
+
+        return responses;
+    }
+
+    private void validateModifyQuestion(
+            QuestionType questionType,
+            String promptText,
+            ModifyMapRequest.MediaRequest media,
+            List<String> answers
+    ) {
+        if (questionType == null) {
+            throw invalidRequest();
+        }
+
+        validateQuestionCore(questionType, promptText, media, answers);
+    }
+
+    private void validateQuestionCore(
+            QuestionType questionType,
+            String promptText,
+            ModifyMapRequest.MediaRequest media,
+            List<String> answers
+    ) {
+        if (!StringUtils.hasText(promptText)) {
+            throw invalidRequest();
+        }
+
+        if (questionType != QuestionType.TEXT && media == null) {
+            throw invalidRequest();
+        }
+
+        if (questionType == QuestionType.TEXT && media != null) {
+            throw invalidRequest();
+        }
+
+        validateAnswers(answers);
+        if (media != null) {
+            validateMedia(questionType, media);
+        }
+    }
+
+    private List<QuestionAnswer> createAnswers(Question question, List<String> answerValues) {
+        List<QuestionAnswer> answers = new ArrayList<>();
+        for (int index = 0; index < answerValues.size(); index++) {
+            String answer = answerValues.get(index);
+            answers.add(QuestionAnswer.create(question, answer, createAnswerKey(answer), index == 0));
+        }
+
+        return answers;
+    }
+
+    private void updateQuestionMedia(
+            Question question,
+            QuestionType questionType,
+            ModifyMapRequest.MediaRequest mediaRequest,
+            User creator,
+            Map<Long, QuestionMedia> mediaByQuestionId
+    ) {
+        if (mediaRequest == null) {
+            removeQuestionMedia(question.getId(), mediaByQuestionId);
+            return;
+        }
+
+        QuestionMedia existingMedia = mediaByQuestionId.get(question.getId());
+        QuestionMedia newMedia = createModifiedQuestionMedia(question, questionType, mediaRequest, creator);
+        if (existingMedia == null) {
+            questionMediaRepository.save(newMedia);
+            mediaByQuestionId.put(question.getId(), newMedia);
+            syncAudioProcessingJob(newMedia);
+            return;
+        }
+
+        existingMedia.update(
+                newMedia.getAsset(),
+                newMedia.getSourceType(),
+                newMedia.getSourceUrl(),
+                newMedia.getStartTimeMs(),
+                newMedia.getEndTimeMs(),
+                newMedia.getDurationMs()
+        );
+        mediaByQuestionId.put(question.getId(), existingMedia);
+        syncAudioProcessingJob(existingMedia);
+    }
+
+    private void removeQuestionMedia(Long questionId, Map<Long, QuestionMedia> mediaByQuestionId) {
+        QuestionMedia existingMedia = mediaByQuestionId.remove(questionId);
+        if (existingMedia == null) {
+            return;
+        }
+
+        audioProcessingJobRepository.deleteByQuestionMediaQuestionId(questionId);
+        questionMediaRepository.deleteByQuestionId(questionId);
+    }
+
+    private QuestionMedia createModifiedQuestionMedia(
+            Question question,
+            QuestionType questionType,
+            ModifyMapRequest.MediaRequest media,
+            User creator
+    ) {
+        if (media == null) {
+            return null;
+        }
+
+        QuestionMediaSourceType sourceType = parseMediaSourceType(media.sourceType());
+        Asset asset = null;
+        Integer startTimeMs = null;
+        Integer endTimeMs = null;
+        Integer durationMs = null;
+
+        if (sourceType == QuestionMediaSourceType.UPLOAD) {
+            asset = getMediaAssetToAttach(media.assetId(), creator, questionType);
+        }
+
+        if (sourceType == QuestionMediaSourceType.YOUTUBE) {
+            startTimeMs = toIntegerMillis(media.startTimeMs());
+            endTimeMs = toIntegerMillis(media.endTimeMs());
+            durationMs = endTimeMs - startTimeMs;
+        }
+
+        return QuestionMedia.create(
+                question,
+                asset,
+                sourceType,
+                media.sourceUrl(),
+                startTimeMs,
+                endTimeMs,
+                durationMs
+        );
+    }
+
+    private void syncAudioProcessingJob(QuestionMedia media) {
+        if (media.getSourceType() != QuestionMediaSourceType.YOUTUBE) {
+            if (media.getId() != null) {
+                audioProcessingJobRepository.deleteByQuestionMediaId(media.getId());
+            }
+            return;
+        }
+
+        if (media.getId() == null) {
+            audioProcessingJobRepository.save(AudioProcessingJob.create(media));
+            return;
+        }
+
+        audioProcessingJobRepository.findByQuestionMediaId(media.getId())
+                .ifPresentOrElse(
+                        AudioProcessingJob::reset,
+                        () -> audioProcessingJobRepository.save(AudioProcessingJob.create(media))
+                );
+    }
+
+    private void validateCompleteMapState(
+            String title,
+            Category category,
+            QuestionType questionType,
+            List<Question> activeQuestions,
+            Map<Long, List<QuestionAnswer>> answersByQuestionId,
+            Map<Long, QuestionMedia> mediaByQuestionId
+    ) {
+        if (!StringUtils.hasText(title) || category == null || questionType == null || activeQuestions.isEmpty()) {
+            throw invalidRequest();
+        }
+
+        for (Question question : activeQuestions) {
+            if (!StringUtils.hasText(question.getPromptText())) {
+                throw invalidRequest();
+            }
+
+            List<QuestionAnswer> answers = answersByQuestionId.getOrDefault(question.getId(), List.of());
+            validatePersistedAnswers(answers);
+            validatePersistedMedia(questionType, mediaByQuestionId.get(question.getId()));
+        }
+    }
+
+    private void validatePersistedAnswers(List<QuestionAnswer> answers) {
+        if (answers.isEmpty()) {
+            throw invalidRequest();
+        }
+
+        Set<String> answerKeys = new HashSet<>();
+        for (QuestionAnswer answer : answers) {
+            if (!StringUtils.hasText(answer.getAnswerText())
+                    || !StringUtils.hasText(answer.getAnswerKey())
+                    || !answerKeys.add(answer.getAnswerKey())) {
+                throw invalidRequest();
+            }
+        }
+    }
+
+    private void validatePersistedMedia(QuestionType questionType, QuestionMedia media) {
+        if (questionType == QuestionType.TEXT) {
+            if (media != null) {
+                throw invalidRequest();
+            }
+            return;
+        }
+
+        if (media == null) {
+            throw invalidRequest();
+        }
+
+        if (media.getSourceType() == QuestionMediaSourceType.UPLOAD) {
+            if (media.getAsset() == null) {
+                throw invalidRequest();
+            }
+
+            AssetType expectedAssetType = switch (questionType) {
+                case IMAGE -> AssetType.IMAGE;
+                case AUDIO -> AssetType.AUDIO;
+                case TEXT -> throw invalidRequest();
+            };
+            if (media.getAsset().getAssetType() != expectedAssetType) {
+                throw invalidRequest();
+            }
+            return;
+        }
+
+        if (questionType == QuestionType.IMAGE) {
+            throw invalidRequest();
+        }
+
+        if (media.getSourceType() == QuestionMediaSourceType.YOUTUBE) {
+            if (!StringUtils.hasText(media.getSourceUrl())) {
+                throw invalidRequest();
+            }
+            validateMediaTimeRange(
+                    media.getStartTimeMs() == null ? null : media.getStartTimeMs().longValue(),
+                    media.getEndTimeMs() == null ? null : media.getEndTimeMs().longValue()
+            );
+            return;
+        }
+
+        if (media.getSourceType() == QuestionMediaSourceType.TTS) {
+            throw invalidRequest();
+        }
+    }
+
+    private boolean hasUnreadyMedia(List<Question> activeQuestions, Map<Long, QuestionMedia> mediaByQuestionId) {
+        return activeQuestions.stream()
+                .map(question -> mediaByQuestionId.get(question.getId()))
+                .filter(Objects::nonNull)
+                .anyMatch(media -> media.getProcessingStatus() != QuestionMediaProcessingStatus.READY);
     }
 
     private User getAuthenticatedUser(Long userId) {
@@ -432,6 +968,37 @@ public class MapService {
     }
 
     private void validateMedia(QuestionType questionType, CreateMapRequest.MediaRequest media) {
+        QuestionMediaSourceType sourceType = parseMediaSourceType(media.sourceType());
+
+        if (sourceType == QuestionMediaSourceType.UPLOAD) {
+            if (questionType == QuestionType.TEXT) {
+                throw invalidRequest();
+            }
+
+            if (media.assetId() == null) {
+                throw invalidRequest();
+            }
+            return;
+        }
+
+        if (questionType == QuestionType.IMAGE) {
+            throw invalidRequest();
+        }
+
+        if (sourceType == QuestionMediaSourceType.YOUTUBE) {
+            if (!StringUtils.hasText(media.sourceUrl())) {
+                throw invalidRequest();
+            }
+            validateMediaTimeRange(media.startTimeMs(), media.endTimeMs());
+            return;
+        }
+
+        if (sourceType == QuestionMediaSourceType.TTS) {
+            throw invalidRequest();
+        }
+    }
+
+    private void validateMedia(QuestionType questionType, ModifyMapRequest.MediaRequest media) {
         QuestionMediaSourceType sourceType = parseMediaSourceType(media.sourceType());
 
         if (sourceType == QuestionMediaSourceType.UPLOAD) {
@@ -705,5 +1272,22 @@ public class MapService {
 
     private BusinessException mapNotFound() {
         return new BusinessException(HttpStatus.NOT_FOUND, "map_not_found");
+    }
+
+    private record MapPatchState(
+            String title,
+            Category category,
+            QuestionType questionType,
+            Asset thumbnailAsset,
+            String description,
+            MapVisibility visibility
+    ) {
+    }
+
+    private record QuestionChanges(
+            List<ModifyMapRequest.CreateQuestionRequest> createRequests,
+            List<ModifyMapRequest.UpdateQuestionRequest> updateRequests,
+            List<Long> deleteQuestionIds
+    ) {
     }
 }
