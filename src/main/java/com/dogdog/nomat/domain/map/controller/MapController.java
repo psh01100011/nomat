@@ -4,6 +4,7 @@ import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
+import com.dogdog.nomat.domain.map.dto.MapFavoriteResponse;
 import com.dogdog.nomat.domain.map.dto.MapLikeResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
 import com.dogdog.nomat.domain.map.dto.ModifyMapRequest;
@@ -71,6 +72,24 @@ public class MapController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_unlike_map", mapService.unlikeMap(userId, mapId));
+    }
+
+    @PostMapping("/{mapId}/favorite")
+    public ApiResponse<MapFavoriteResponse> favoriteMap(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_favorite_map", mapService.favoriteMap(userId, mapId));
+    }
+
+    @DeleteMapping("/{mapId}/favorite")
+    public ApiResponse<MapFavoriteResponse> unfavoriteMap(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_unfavorite_map", mapService.unfavoriteMap(userId, mapId));
     }
 
     @PatchMapping("/{mapId}")

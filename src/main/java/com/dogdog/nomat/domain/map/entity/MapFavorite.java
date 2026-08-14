@@ -9,6 +9,7 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.MapsId;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
@@ -41,4 +42,19 @@ public class MapFavorite {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    private MapFavorite(QuizMap map, User user) {
+        this.id = new MapFavoriteId(map.getId(), user.getId());
+        this.map = map;
+        this.user = user;
+    }
+
+    public static MapFavorite create(QuizMap map, User user) {
+        return new MapFavorite(map, user);
+    }
+
+    @PrePersist
+    void prePersist() {
+        this.createdAt = LocalDateTime.now();
+    }
 }

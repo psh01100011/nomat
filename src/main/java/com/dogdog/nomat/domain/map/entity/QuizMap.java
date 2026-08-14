@@ -247,6 +247,16 @@ public class QuizMap {
         }
     }
 
+    public void increaseFavoriteCount() {
+        this.favoriteCount++;
+    }
+
+    public void decreaseFavoriteCount() {
+        if (favoriteCount > 0) {
+            this.favoriteCount--;
+        }
+    }
+
     private void changeStatus(MapStatus status) {
         this.status = status;
         if (status == MapStatus.PUBLISHED && this.publishedAt == null) {
