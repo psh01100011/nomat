@@ -14,6 +14,8 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
@@ -60,4 +62,26 @@ public class MapComment {
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    private MapComment(QuizMap map, User writer, String content) {
+        this.map = map;
+        this.writer = writer;
+        this.content = content;
+    }
+
+    public static MapComment create(QuizMap map, User writer, String content) {
+        return new MapComment(map, writer, content);
+    }
+
+    @PrePersist
+    void prePersist() {
+        LocalDateTime now = LocalDateTime.now();
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
+
+    @PreUpdate
+    void preUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
 }

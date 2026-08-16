@@ -1,5 +1,7 @@
 package com.dogdog.nomat.domain.map.controller;
 
+import com.dogdog.nomat.domain.comment.dto.MapCommentListResponse;
+import com.dogdog.nomat.domain.comment.service.CommentService;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
@@ -35,6 +37,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class MapController {
 
     private final MapService mapService;
+    private final CommentService commentService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -145,6 +148,21 @@ public class MapController {
         return ApiResponse.of(
                 "success_get_maps",
                 mapService.getMaps(userId, keyword, categoryId, questionType, page, size, sort, creatorId)
+        );
+    }
+
+    @GetMapping("/{mapId}/comments")
+    public ApiResponse<MapCommentListResponse> getMapComments(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "latest") String sort
+    ) {
+        Long userId = getUserIdOrNull(jwt);
+        return ApiResponse.of(
+                "success_get_map_comments",
+                commentService.getMapComments(userId, mapId, page, size, sort)
         );
     }
 
