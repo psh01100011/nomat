@@ -9,6 +9,8 @@ import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
 import com.dogdog.nomat.domain.map.dto.MapEditorResponse;
+import com.dogdog.nomat.domain.map.dto.MapFavoriteResponse;
+import com.dogdog.nomat.domain.map.dto.MapLikeResponse;
 import com.dogdog.nomat.domain.map.dto.MapListResponse;
 import com.dogdog.nomat.domain.map.dto.ModifyMapRequest;
 import com.dogdog.nomat.domain.map.dto.ModifyMapResponse;
@@ -16,6 +18,10 @@ import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
+import com.dogdog.nomat.domain.map.entity.MapFavorite;
+import com.dogdog.nomat.domain.map.entity.MapFavoriteId;
+import com.dogdog.nomat.domain.map.entity.MapLike;
+import com.dogdog.nomat.domain.map.entity.MapLikeId;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.Question;
@@ -28,6 +34,8 @@ import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.CategoryRepository;
+import com.dogdog.nomat.domain.map.repository.MapFavoriteRepository;
+import com.dogdog.nomat.domain.map.repository.MapLikeRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionAnswerRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionRepository;
@@ -69,6 +77,8 @@ public class MapService {
     private final QuestionAnswerRepository questionAnswerRepository;
     private final QuestionMediaRepository questionMediaRepository;
     private final AudioProcessingJobRepository audioProcessingJobRepository;
+    private final MapLikeRepository mapLikeRepository;
+    private final MapFavoriteRepository mapFavoriteRepository;
 
     @Transactional
     public CreateMapResponse createMap(Long userId, CreateMapRequest request) {
@@ -244,6 +254,68 @@ public class MapService {
         map.delete();
     }
 
+    @Transactional
+    public MapLikeResponse likeMap(Long userId, Long mapId) {
+        User user = getAuthenticatedUser(userId);
+        QuizMap map = getPublicPublishedMap(mapId);
+        MapLikeId likeId = new MapLikeId(mapId, userId);
+
+        if (mapLikeRepository.existsById(likeId)) {
+            throw new BusinessException(HttpStatus.CONFLICT, "already_liked_map");
+        }
+
+        mapLikeRepository.save(MapLike.create(map, user));
+        map.increaseLikeCount();
+
+        return new MapLikeResponse(map.getId(), true, map.getLikeCount());
+    }
+
+    @Transactional
+    public MapLikeResponse unlikeMap(Long userId, Long mapId) {
+        getAuthenticatedUser(userId);
+        QuizMap map = getPublicPublishedMap(mapId);
+        MapLikeId likeId = new MapLikeId(mapId, userId);
+
+        mapLikeRepository.findById(likeId)
+                .ifPresent(like -> {
+                    mapLikeRepository.delete(like);
+                    map.decreaseLikeCount();
+                });
+
+        return new MapLikeResponse(map.getId(), false, map.getLikeCount());
+    }
+
+    @Transactional
+    public MapFavoriteResponse favoriteMap(Long userId, Long mapId) {
+        User user = getAuthenticatedUser(userId);
+        QuizMap map = getPublicPublishedMap(mapId);
+        MapFavoriteId favoriteId = new MapFavoriteId(mapId, userId);
+
+        if (mapFavoriteRepository.existsById(favoriteId)) {
+            throw new BusinessException(HttpStatus.CONFLICT, "already_favorited_map");
+        }
+
+        mapFavoriteRepository.save(MapFavorite.create(map, user));
+        map.increaseFavoriteCount();
+
+        return new MapFavoriteResponse(map.getId(), true, map.getFavoriteCount());
+    }
+
+    @Transactional
+    public MapFavoriteResponse unfavoriteMap(Long userId, Long mapId) {
+        getAuthenticatedUser(userId);
+        QuizMap map = getPublicPublishedMap(mapId);
+        MapFavoriteId favoriteId = new MapFavoriteId(mapId, userId);
+
+        mapFavoriteRepository.findById(favoriteId)
+                .ifPresent(favorite -> {
+                    mapFavoriteRepository.delete(favorite);
+                    map.decreaseFavoriteCount();
+                });
+
+        return new MapFavoriteResponse(map.getId(), false, map.getFavoriteCount());
+    }
+
     @Transactional(readOnly = true)
     public MapListResponse getMaps(
             Long userId,
@@ -275,8 +347,9 @@ public class MapService {
                 pageable
         );
 
-        // TODO: 좋아요/즐겨찾기 도메인 구현 후 userId 기준으로 liked/favorited mapId 목록 조회
-        return MapListResponse.from(maps);
+        Set<Long> likedMapIds = getLikedMapIds(userId, maps.getContent());
+        Set<Long> favoritedMapIds = getFavoritedMapIds(userId, maps.getContent());
+        return MapListResponse.from(maps, likedMapIds, favoritedMapIds);
     }
 
     @Transactional(readOnly = true)
@@ -285,15 +358,11 @@ public class MapService {
             getAuthenticatedUser(userId);
         }
 
-        QuizMap map = quizMapRepository.findByIdAndStatusAndVisibility(
-                        mapId,
-                        MapStatus.PUBLISHED,
-                        MapVisibility.PUBLIC
-                )
-                .orElseThrow(this::mapNotFound);
+        QuizMap map = getPublicPublishedMap(mapId);
 
-        // TODO: 좋아요/즐겨찾기 도메인 구현 후 userId와 mapId 기준으로 liked/favorited 조회
-        return MapDetailResponse.from(map, false, false);
+        boolean liked = userId != null && mapLikeRepository.existsById(new MapLikeId(mapId, userId));
+        boolean favorited = userId != null && mapFavoriteRepository.existsById(new MapFavoriteId(mapId, userId));
+        return MapDetailResponse.from(map, liked, favorited);
     }
 
     @Transactional(readOnly = true)
@@ -324,6 +393,39 @@ public class MapService {
                 .collect(Collectors.toMap(media -> media.getQuestion().getId(), Function.identity()));
 
         return MapEditorResponse.of(map, questions, answersByQuestionId, mediaByQuestionId);
+    }
+
+    private QuizMap getPublicPublishedMap(Long mapId) {
+        return quizMapRepository.findByIdAndStatusAndVisibility(
+                        mapId,
+                        MapStatus.PUBLISHED,
+                        MapVisibility.PUBLIC
+                )
+                .orElseThrow(this::mapNotFound);
+    }
+
+    private Set<Long> getLikedMapIds(Long userId, List<QuizMap> maps) {
+        if (userId == null || maps.isEmpty()) {
+            return Set.of();
+        }
+
+        List<Long> mapIds = maps.stream()
+                .map(QuizMap::getId)
+                .toList();
+
+        return new HashSet<>(mapLikeRepository.findMapIdsByUserIdAndMapIdIn(userId, mapIds));
+    }
+
+    private Set<Long> getFavoritedMapIds(Long userId, List<QuizMap> maps) {
+        if (userId == null || maps.isEmpty()) {
+            return Set.of();
+        }
+
+        List<Long> mapIds = maps.stream()
+                .map(QuizMap::getId)
+                .toList();
+
+        return new HashSet<>(mapFavoriteRepository.findMapIdsByUserIdAndMapIdIn(userId, mapIds));
     }
 
     private MapPatchState resolveMapPatch(QuizMap map, Map<String, Object> mapNode, User creator) {

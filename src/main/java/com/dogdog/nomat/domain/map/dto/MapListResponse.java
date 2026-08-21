@@ -6,6 +6,7 @@ import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.user.entity.User;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 import org.springframework.data.domain.Page;
 
 public record MapListResponse(
@@ -18,9 +19,17 @@ public record MapListResponse(
 ) {
 
     public static MapListResponse from(Page<QuizMap> maps) {
+        return from(maps, Set.of(), Set.of());
+    }
+
+    public static MapListResponse from(Page<QuizMap> maps, Set<Long> likedMapIds, Set<Long> favoritedMapIds) {
         return new MapListResponse(
                 maps.getContent().stream()
-                        .map(map -> MapSummaryResponse.from(map, false, false))
+                        .map(map -> MapSummaryResponse.from(
+                                map,
+                                likedMapIds.contains(map.getId()),
+                                favoritedMapIds.contains(map.getId())
+                        ))
                         .toList(),
                 maps.getNumber(),
                 maps.getSize(),

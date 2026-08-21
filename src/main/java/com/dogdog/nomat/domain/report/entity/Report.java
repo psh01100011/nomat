@@ -13,6 +13,7 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
@@ -69,4 +70,41 @@ public class Report {
 
     @Column(name = "resolved_at")
     private LocalDateTime resolvedAt;
+
+    private Report(
+            ReportTargetType targetType,
+            Long targetId,
+            User reporter,
+            String reason,
+            String description
+    ) {
+        this.targetType = targetType;
+        this.targetId = targetId;
+        this.reporter = reporter;
+        this.reason = reason;
+        this.description = description;
+    }
+
+    public static Report createMapReport(
+            Long mapId,
+            User reporter,
+            String reason,
+            String description
+    ) {
+        return new Report(ReportTargetType.MAP, mapId, reporter, reason, description);
+    }
+
+    public static Report createCommentReport(
+            Long commentId,
+            User reporter,
+            String reason,
+            String description
+    ) {
+        return new Report(ReportTargetType.MAP_COMMENT, commentId, reporter, reason, description);
+    }
+
+    @PrePersist
+    void prePersist() {
+        this.createdAt = LocalDateTime.now();
+    }
 }
