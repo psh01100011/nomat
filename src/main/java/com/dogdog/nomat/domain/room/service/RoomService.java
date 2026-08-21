@@ -183,6 +183,22 @@ public class RoomService {
                 .ifPresent(roomId -> leaveRoomByDisconnect(userId, roomId));
     }
 
+    @Transactional
+    public void closeRoom(Long userId, Long roomId) {
+        getAuthenticatedUser(userId);
+
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+
+        RoomTransitionResult result = roomStateMachine.transition(
+                room,
+                RoomCommand.close(userId, LocalDateTime.now())
+        );
+
+        roomRedisRepository.deleteRoom(result.room());
+        roomEventPublisher.publish(result.events());
+    }
+
     private void leaveRoomByDisconnect(Long userId, Long roomId) {
         RoomState room = roomRedisRepository.findById(roomId).orElse(null);
         if (room == null || !room.hasMember(userId)) {

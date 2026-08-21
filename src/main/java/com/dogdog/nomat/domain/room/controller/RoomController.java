@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -78,6 +79,16 @@ public class RoomController {
         Long userId = getUserId(jwt);
         roomService.leaveRoom(userId, roomId);
         return ApiResponse.success("success_leave_room");
+    }
+
+    @DeleteMapping("/{roomId}")
+    public ApiResponse<Void> closeRoom(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long roomId
+    ) {
+        Long userId = getUserId(jwt);
+        roomService.closeRoom(userId, roomId);
+        return ApiResponse.success("success_delete_room");
     }
 
     private Long getUserId(Jwt jwt) {
