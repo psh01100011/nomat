@@ -4,5 +4,9 @@ public enum RoomStatus {
     WAITING,
     PLAYING,
     CLOSED,
-    ENDED
+    ENDED;
+
+    public boolean isTerminal() {
+        return this == CLOSED || this == ENDED;
+    }
 }

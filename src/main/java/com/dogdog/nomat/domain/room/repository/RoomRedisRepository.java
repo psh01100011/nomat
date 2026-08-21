@@ -108,6 +108,23 @@ public class RoomRedisRepository {
         );
     }
 
+    public void saveLeftRoom(RoomState room, Long leftUserId) {
+        redisTemplate.delete(userRoomKey(leftUserId));
+        if (room.status().isTerminal()) {
+            deleteRoom(room);
+            return;
+        }
+
+        saveRoom(room);
+    }
+
+    public void deleteRoom(RoomState room) {
+        redisTemplate.delete(roomKey(room.roomId()));
+        redisTemplate.opsForZSet().remove(ROOM_CREATED_AT_INDEX_KEY, String.valueOf(room.roomId()));
+        redisTemplate.opsForZSet().remove(ROOM_MEMBER_COUNT_INDEX_KEY, String.valueOf(room.roomId()));
+        room.members().forEach(member -> redisTemplate.delete(userRoomKey(member.userId())));
+    }
+
     private String serialize(RoomState room) {
         try {
             return objectMapper.writeValueAsString(room);

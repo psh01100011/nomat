@@ -70,6 +70,16 @@ public class RoomController {
         return ApiResponse.of("success_join_room", roomService.joinRoom(userId, roomId, request));
     }
 
+    @PostMapping("/{roomId}/leave")
+    public ApiResponse<Void> leaveRoom(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long roomId
+    ) {
+        Long userId = getUserId(jwt);
+        roomService.leaveRoom(userId, roomId);
+        return ApiResponse.success("success_leave_room");
+    }
+
     private Long getUserId(Jwt jwt) {
         Number userId = jwt.getClaim("userId");
         return userId.longValue();

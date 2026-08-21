@@ -161,6 +161,43 @@ public class RoomService {
         return RoomDetailResponse.from(result.room());
     }
 
+    @Transactional
+    public void leaveRoom(Long userId, Long roomId) {
+        getAuthenticatedUser(userId);
+
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_or_member_not_found"));
+
+        RoomTransitionResult result = roomStateMachine.transition(
+                room,
+                RoomCommand.leave(userId, LocalDateTime.now())
+        );
+
+        roomRedisRepository.saveLeftRoom(result.room(), userId);
+        roomEventPublisher.publish(result.events());
+    }
+
+    @Transactional
+    public void leaveCurrentRoomByDisconnect(Long userId) {
+        roomRedisRepository.findJoinedRoomId(userId)
+                .ifPresent(roomId -> leaveRoomByDisconnect(userId, roomId));
+    }
+
+    private void leaveRoomByDisconnect(Long userId, Long roomId) {
+        RoomState room = roomRedisRepository.findById(roomId).orElse(null);
+        if (room == null || !room.hasMember(userId)) {
+            return;
+        }
+
+        RoomTransitionResult result = roomStateMachine.transition(
+                room,
+                RoomCommand.leave(userId, LocalDateTime.now())
+        );
+
+        roomRedisRepository.saveLeftRoom(result.room(), userId);
+        roomEventPublisher.publish(result.events());
+    }
+
     private User getAuthenticatedUser(Long userId) {
         return userRepository.findById(userId)
                 .filter(user -> user.getStatus() == UserStatus.ACTIVE)

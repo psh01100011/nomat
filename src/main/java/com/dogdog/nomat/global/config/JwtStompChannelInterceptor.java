@@ -1,5 +1,6 @@
 package com.dogdog.nomat.global.config;
 
+import com.dogdog.nomat.domain.room.service.RoomWebSocketSessionRegistry;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.messaging.Message;
@@ -21,9 +22,14 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final JwtDecoder jwtDecoder;
+    private final RoomWebSocketSessionRegistry sessionRegistry;
 
-    public JwtStompChannelInterceptor(@Qualifier("jwtDecoder") JwtDecoder jwtDecoder) {
+    public JwtStompChannelInterceptor(
+            @Qualifier("jwtDecoder") JwtDecoder jwtDecoder,
+            RoomWebSocketSessionRegistry sessionRegistry
+    ) {
         this.jwtDecoder = jwtDecoder;
+        this.sessionRegistry = sessionRegistry;
     }
 
     @Override
@@ -37,7 +43,11 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
             return message;
         }
 
-        accessor.setUser(new StompUserPrincipal(decodeUserId(accessor)));
+        Long userId = decodeUserId(accessor);
+        accessor.setUser(new StompUserPrincipal(userId));
+        if (accessor.getCommand() == StompCommand.CONNECT) {
+            sessionRegistry.connect(accessor.getSessionId(), userId);
+        }
         return message;
     }
 
