@@ -1,5 +1,6 @@
 package com.dogdog.nomat.domain.room.repository;
 
+import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import java.time.Duration;
 import java.time.ZoneId;
@@ -18,6 +19,7 @@ public class RoomRedisRepository {
 
     private static final String ROOM_ID_SEQUENCE_KEY = "rooms:sequence";
     private static final String ROOM_KEY_PREFIX = "rooms:";
+    private static final String ROOM_GAME_KEY_PREFIX = "rooms:games:";
     private static final String USER_ROOM_KEY_PREFIX = "users:rooms:";
     private static final String ROOM_CREATED_AT_INDEX_KEY = "rooms:index:created-at";
     private static final String ROOM_MEMBER_COUNT_INDEX_KEY = "rooms:index:member-count";
@@ -123,31 +125,54 @@ public class RoomRedisRepository {
         saveRoom(room);
     }
 
+    public void saveStartedRoom(RoomState room, RoomGameState gameState) {
+        saveRoom(room);
+        redisTemplate.opsForValue().set(roomGameKey(room.roomId()), serialize(gameState), ROOM_TTL);
+    }
+
+    public Optional<RoomGameState> findGameState(Long roomId) {
+        String gameState = redisTemplate.opsForValue().get(roomGameKey(roomId));
+        if (gameState == null) {
+            return Optional.empty();
+        }
+
+        return Optional.of(deserialize(gameState, RoomGameState.class));
+    }
+
     public void deleteRoom(RoomState room) {
         redisTemplate.delete(roomKey(room.roomId()));
+        redisTemplate.delete(roomGameKey(room.roomId()));
         redisTemplate.opsForZSet().remove(ROOM_CREATED_AT_INDEX_KEY, String.valueOf(room.roomId()));
         redisTemplate.opsForZSet().remove(ROOM_MEMBER_COUNT_INDEX_KEY, String.valueOf(room.roomId()));
         room.members().forEach(member -> redisTemplate.delete(userRoomKey(member.userId())));
     }
 
-    private String serialize(RoomState room) {
+    private String serialize(Object value) {
         try {
-            return objectMapper.writeValueAsString(room);
+            return objectMapper.writeValueAsString(value);
         } catch (JacksonException exception) {
-            throw new IllegalStateException("Failed to serialize room state.", exception);
+            throw new IllegalStateException("Failed to serialize Redis value.", exception);
         }
     }
 
     private RoomState deserialize(String room) {
+        return deserialize(room, RoomState.class);
+    }
+
+    private <T> T deserialize(String value, Class<T> valueType) {
         try {
-            return objectMapper.readValue(room, RoomState.class);
+            return objectMapper.readValue(value, valueType);
         } catch (JacksonException exception) {
-            throw new IllegalStateException("Failed to deserialize room state.", exception);
+            throw new IllegalStateException("Failed to deserialize Redis value.", exception);
         }
     }
 
     private String roomKey(Long roomId) {
         return ROOM_KEY_PREFIX + roomId;
+    }
+
+    private String roomGameKey(Long roomId) {
+        return ROOM_GAME_KEY_PREFIX + roomId;
     }
 
     private String userRoomKey(Long userId) {

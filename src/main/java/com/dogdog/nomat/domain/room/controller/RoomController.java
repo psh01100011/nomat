@@ -102,6 +102,15 @@ public class RoomController {
         return ApiResponse.success("success_kick_room_member");
     }
 
+    @PostMapping("/{roomId}/start")
+    public ApiResponse<RoomDetailResponse> startGame(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long roomId
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_start_game", roomService.startGame(userId, roomId));
+    }
+
     private Long getUserId(Jwt jwt) {
         Number userId = jwt.getClaim("userId");
         return userId.longValue();

@@ -12,8 +12,14 @@ import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
+import com.dogdog.nomat.domain.map.entity.Question;
+import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
+import com.dogdog.nomat.domain.map.entity.QuestionStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
+import com.dogdog.nomat.domain.map.repository.QuestionAnswerRepository;
+import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
+import com.dogdog.nomat.domain.map.repository.QuestionRepository;
 import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
@@ -21,6 +27,7 @@ import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
+import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.model.RoomStatus;
@@ -49,6 +56,15 @@ class RoomServiceTest {
 
     @Mock
     private QuizMapRepository quizMapRepository;
+
+    @Mock
+    private QuestionRepository questionRepository;
+
+    @Mock
+    private QuestionAnswerRepository questionAnswerRepository;
+
+    @Mock
+    private QuestionMediaRepository questionMediaRepository;
 
     @Mock
     private RoomRedisRepository roomRedisRepository;
@@ -609,6 +625,91 @@ class RoomServiceTest {
         verify(roomRedisRepository, never()).saveKickedRoom(any(RoomState.class), eq(4L));
     }
 
+    @Test
+    void startGameAllowsSingleHostAndSavesGameState() {
+        User host = user(3L);
+        QuizMap map = publishedPublicMap(15L, 20);
+        RoomState room = room(25L, "혼자 하는 방", 15L, 10);
+        List<Question> questions = questions(map, 10);
+        given(userRepository.findById(3L)).willReturn(Optional.of(host));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+        given(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(15L, QuestionStatus.ACTIVE))
+                .willReturn(questions);
+        given(questionAnswerRepository.findByQuestionIdInOrderByQuestionIdAscIdAsc(
+                org.mockito.ArgumentMatchers.anyCollection()
+        )).willReturn(answers(questions));
+        given(questionMediaRepository.findByQuestionIdIn(org.mockito.ArgumentMatchers.anyCollection()))
+                .willReturn(List.of());
+
+        RoomDetailResponse response = roomService.startGame(3L, 25L);
+
+        assertThat(response.status()).isEqualTo("PLAYING");
+
+        ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
+        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
+        verify(roomRedisRepository).saveStartedRoom(roomCaptor.capture(), gameStateCaptor.capture());
+
+        RoomState savedRoom = roomCaptor.getValue();
+        RoomGameState gameState = gameStateCaptor.getValue();
+        assertThat(savedRoom.status()).isEqualTo(RoomStatus.PLAYING);
+        assertThat(savedRoom.randomSeed()).isNotBlank();
+        assertThat(gameState.roomId()).isEqualTo(25L);
+        assertThat(gameState.randomSeed()).isEqualTo(savedRoom.randomSeed());
+        assertThat(gameState.questions()).hasSize(10);
+        assertThat(gameState.currentQuestionIndex()).isEqualTo(-1);
+        assertThat(gameState.scores()).containsEntry(3L, 0);
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 1
+                        && events.getFirst().type() == RoomDomainEventType.GAME_STARTED
+                        && events.getFirst().memberCount() == 1
+        ));
+    }
+
+    @Test
+    void startGameRejectsNonHostStartedRoomMissingMapOrInsufficientQuestions() {
+        User member = user(4L);
+        RoomState room = roomWithMember(25L, member(4L));
+        given(userRepository.findById(4L)).willReturn(Optional.of(member));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(publishedPublicMap(15L, 20)));
+        assertThatThrownBy(() -> roomService.startGame(4L, 25L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("forbidden_room_access");
+
+        User host = user(3L);
+        given(userRepository.findById(3L)).willReturn(Optional.of(host));
+        given(roomRedisRepository.findById(26L)).willReturn(Optional.of(room(26L, "시작된 방", 15L, 10)
+                .started("seed", now())));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(publishedPublicMap(15L, 20)));
+        assertThatThrownBy(() -> roomService.startGame(3L, 26L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("cannot_start_game");
+
+        given(roomRedisRepository.findById(27L)).willReturn(Optional.of(room(27L, "삭제된 맵 방", 15L, 10)));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.empty());
+        assertThatThrownBy(() -> roomService.startGame(3L, 27L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("map_not_found");
+
+        QuizMap map = publishedPublicMap(15L, 20);
+        given(roomRedisRepository.findById(28L)).willReturn(Optional.of(room(28L, "문제 부족 방", 15L, 10)));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+        given(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(15L, QuestionStatus.ACTIVE))
+                .willReturn(questions(map, 3));
+        assertThatThrownBy(() -> roomService.startGame(3L, 28L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("cannot_start_game");
+
+        verify(roomRedisRepository, never()).saveStartedRoom(any(RoomState.class), any(RoomGameState.class));
+    }
+
     private CreateRoomRequest request(Long mapId, String password, int selectedQuestionCount) {
         return new CreateRoomRequest(
                 mapId,
@@ -644,6 +745,30 @@ class RoomServiceTest {
         ReflectionTestUtils.setField(map, "id", id);
         ReflectionTestUtils.setField(map, "version", 3);
         return map;
+    }
+
+    private List<Question> questions(QuizMap map, int count) {
+        return java.util.stream.IntStream.rangeClosed(1, count)
+                .mapToObj(index -> question(map, index))
+                .toList();
+    }
+
+    private Question question(QuizMap map, int questionOrder) {
+        Question question = Question.create(map, questionOrder, "문제 " + questionOrder);
+        ReflectionTestUtils.setField(question, "id", (long) questionOrder);
+        return question;
+    }
+
+    private List<QuestionAnswer> answers(List<Question> questions) {
+        return questions.stream()
+                .map(question -> answer(question, question.getId()))
+                .toList();
+    }
+
+    private QuestionAnswer answer(Question question, Long id) {
+        QuestionAnswer answer = QuestionAnswer.create(question, "정답 " + id, "정답" + id, true);
+        ReflectionTestUtils.setField(answer, "id", id);
+        return answer;
     }
 
     private RoomState room(Long roomId, String title, Long mapId, int maxPlayers) {

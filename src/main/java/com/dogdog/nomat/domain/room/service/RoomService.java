@@ -5,7 +5,14 @@ import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
+import com.dogdog.nomat.domain.map.entity.Question;
+import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
+import com.dogdog.nomat.domain.map.entity.QuestionMedia;
+import com.dogdog.nomat.domain.map.entity.QuestionStatus;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
+import com.dogdog.nomat.domain.map.repository.QuestionAnswerRepository;
+import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
+import com.dogdog.nomat.domain.map.repository.QuestionRepository;
 import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
@@ -13,6 +20,8 @@ import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomCommand;
+import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
+import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.model.RoomStatus;
@@ -23,8 +32,15 @@ import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -43,6 +59,9 @@ public class RoomService {
 
     private final UserRepository userRepository;
     private final QuizMapRepository quizMapRepository;
+    private final QuestionRepository questionRepository;
+    private final QuestionAnswerRepository questionAnswerRepository;
+    private final QuestionMediaRepository questionMediaRepository;
     private final RoomRedisRepository roomRedisRepository;
     private final RoomStateMachine roomStateMachine;
     private final RoomEventPublisher roomEventPublisher;
@@ -215,6 +234,37 @@ public class RoomService {
         roomEventPublisher.publish(result.events());
     }
 
+    @Transactional
+    public RoomDetailResponse startGame(Long hostUserId, Long roomId) {
+        getAuthenticatedUser(hostUserId);
+
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+
+        validateMinimumPlayers(room);
+        getPublicPublishedMap(room.mapId());
+
+        String randomSeed = UUID.randomUUID().toString();
+        LocalDateTime now = LocalDateTime.now();
+        RoomTransitionResult result = roomStateMachine.transition(
+                room,
+                RoomCommand.start(hostUserId, randomSeed, now)
+        );
+
+        RoomGameState gameState = RoomGameState.started(
+                room.roomId(),
+                randomSeed,
+                selectQuestions(room, randomSeed),
+                room.members().stream()
+                        .collect(Collectors.toMap(RoomMember::userId, ignored -> 0)),
+                now
+        );
+
+        roomRedisRepository.saveStartedRoom(result.room(), gameState);
+        roomEventPublisher.publish(result.events());
+        return RoomDetailResponse.from(result.room());
+    }
+
     private void leaveRoomByDisconnect(Long userId, Long roomId) {
         RoomState room = roomRedisRepository.findById(roomId).orElse(null);
         if (room == null || !room.hasMember(userId)) {
@@ -228,6 +278,93 @@ public class RoomService {
 
         roomRedisRepository.saveLeftRoom(result.room(), userId);
         roomEventPublisher.publish(result.events());
+    }
+
+    private void validateMinimumPlayers(RoomState room) {
+        if (room.memberCount() < 1) {
+            throw new BusinessException(HttpStatus.CONFLICT, "cannot_start_game");
+        }
+    }
+
+    private List<RoomGameQuestion> selectQuestions(RoomState room, String randomSeed) {
+        List<Question> questions = new ArrayList<>(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(
+                room.mapId(),
+                QuestionStatus.ACTIVE
+        ));
+        if (questions.size() < room.selectedQuestionCount()) {
+            throw new BusinessException(HttpStatus.CONFLICT, "cannot_start_game");
+        }
+
+        Collections.shuffle(questions, new java.util.Random(randomSeed.hashCode()));
+        List<Question> selectedQuestions = questions.stream()
+                .limit(room.selectedQuestionCount())
+                .toList();
+        List<Long> questionIds = selectedQuestions.stream()
+                .map(Question::getId)
+                .toList();
+        Map<Long, List<QuestionAnswer>> answersByQuestionId = questionAnswerRepository
+                .findByQuestionIdInOrderByQuestionIdAscIdAsc(questionIds)
+                .stream()
+                .collect(Collectors.groupingBy(answer -> answer.getQuestion().getId()));
+        Map<Long, QuestionMedia> mediaByQuestionId = questionMediaRepository.findByQuestionIdIn(questionIds)
+                .stream()
+                .collect(Collectors.toMap(media -> media.getQuestion().getId(), Function.identity()));
+
+        return java.util.stream.IntStream.range(0, selectedQuestions.size())
+                .mapToObj(index -> toGameQuestion(
+                        selectedQuestions.get(index),
+                        index + 1,
+                        answersByQuestionId.getOrDefault(selectedQuestions.get(index).getId(), List.of()),
+                        mediaByQuestionId.get(selectedQuestions.get(index).getId())
+                ))
+                .toList();
+    }
+
+    private RoomGameQuestion toGameQuestion(
+            Question question,
+            int questionNumber,
+            List<QuestionAnswer> answers,
+            QuestionMedia media
+    ) {
+        List<QuestionAnswer> sortedAnswers = answers.stream()
+                .sorted(Comparator.comparing(QuestionAnswer::isPrimary).reversed()
+                        .thenComparing(QuestionAnswer::getId))
+                .toList();
+        String primaryAnswer = sortedAnswers.stream()
+                .filter(QuestionAnswer::isPrimary)
+                .findFirst()
+                .or(() -> sortedAnswers.stream().findFirst())
+                .map(QuestionAnswer::getAnswerText)
+                .orElse(null);
+        String mediaUrl = mediaUrl(media);
+
+        return new RoomGameQuestion(
+                question.getId(),
+                questionNumber,
+                question.getPromptText(),
+                sortedAnswers.stream()
+                        .map(QuestionAnswer::getAnswerKey)
+                        .toList(),
+                primaryAnswer,
+                mediaUrl,
+                media == null ? null : media.getSourceType().name(),
+                media == null ? null : media.getStartTimeMs(),
+                media == null ? null : media.getEndTimeMs(),
+                media == null ? null : media.getDurationMs()
+        );
+    }
+
+    private String mediaUrl(QuestionMedia media) {
+        if (media == null) {
+            return null;
+        }
+
+        Asset asset = media.getAsset();
+        if (asset != null) {
+            return asset.getUrl();
+        }
+
+        return media.getSourceUrl();
     }
 
     private User getAuthenticatedUser(Long userId) {
