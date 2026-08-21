@@ -1,0 +1,76 @@
+package com.dogdog.nomat.domain.room.repository;
+
+import com.dogdog.nomat.domain.room.model.RoomState;
+import java.time.Duration;
+import java.time.ZoneId;
+import java.util.Optional;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Repository;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+
+@Repository
+@RequiredArgsConstructor
+public class RoomRedisRepository {
+
+    private static final String ROOM_ID_SEQUENCE_KEY = "rooms:sequence";
+    private static final String ROOM_KEY_PREFIX = "rooms:";
+    private static final String USER_ROOM_KEY_PREFIX = "users:rooms:";
+    private static final String ROOM_CREATED_AT_INDEX_KEY = "rooms:index:created-at";
+    private static final String ROOM_MEMBER_COUNT_INDEX_KEY = "rooms:index:member-count";
+    private static final Duration ROOM_TTL = Duration.ofHours(6);
+
+    private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;
+
+    public Optional<Long> findJoinedRoomId(Long userId) {
+        String roomId = redisTemplate.opsForValue().get(userRoomKey(userId));
+        if (roomId == null) {
+            return Optional.empty();
+        }
+
+        return Optional.of(Long.valueOf(roomId));
+    }
+
+    public Long nextRoomId() {
+        return redisTemplate.opsForValue().increment(ROOM_ID_SEQUENCE_KEY);
+    }
+
+    public boolean createRoom(RoomState room) {
+        Boolean reserved = redisTemplate.opsForValue()
+                .setIfAbsent(userRoomKey(room.hostUserId()), String.valueOf(room.roomId()), ROOM_TTL);
+        if (!Boolean.TRUE.equals(reserved)) {
+            return false;
+        }
+
+        redisTemplate.opsForValue().set(roomKey(room.roomId()), serialize(room), ROOM_TTL);
+        redisTemplate.opsForZSet().add(
+                ROOM_CREATED_AT_INDEX_KEY,
+                String.valueOf(room.roomId()),
+                room.createdAt().atZone(ZoneId.systemDefault()).toEpochSecond()
+        );
+        redisTemplate.opsForZSet().add(
+                ROOM_MEMBER_COUNT_INDEX_KEY,
+                String.valueOf(room.roomId()),
+                room.memberCount()
+        );
+        return true;
+    }
+
+    private String serialize(RoomState room) {
+        try {
+            return objectMapper.writeValueAsString(room);
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("Failed to serialize room state.", exception);
+        }
+    }
+
+    private String roomKey(Long roomId) {
+        return ROOM_KEY_PREFIX + roomId;
+    }
+
+    private String userRoomKey(Long userId) {
+        return USER_ROOM_KEY_PREFIX + userId;
+    }
+}

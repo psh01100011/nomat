@@ -156,6 +156,7 @@ class RoomStateMachineTest {
                 300,
                 3,
                 false,
+                null,
                 10,
                 50,
                 30,
