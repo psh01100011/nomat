@@ -16,6 +16,11 @@ public record RoomDomainEvent(
         String nickname,
         Integer score,
         Integer questionNumber,
+        Long questionId,
+        String promptText,
+        String mediaUrl,
+        String mediaSourceType,
+        String hint,
         LocalDateTime occurredAt
 ) {
 
@@ -28,6 +33,11 @@ public record RoomDomainEvent(
                 null,
                 null,
                 room.memberCount(),
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -47,6 +57,11 @@ public record RoomDomainEvent(
                 null,
                 null,
                 room.memberCount(),
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -77,6 +92,11 @@ public record RoomDomainEvent(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }
@@ -90,6 +110,11 @@ public record RoomDomainEvent(
                 null,
                 null,
                 room.memberCount(),
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -119,6 +144,11 @@ public record RoomDomainEvent(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }
@@ -138,6 +168,64 @@ public record RoomDomainEvent(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                occurredAt
+        );
+    }
+
+    public static RoomDomainEvent questionStarted(Long roomId, RoomGameQuestion question, LocalDateTime occurredAt) {
+        return new RoomDomainEvent(
+                RoomDomainEventType.QUESTION_STARTED,
+                roomId,
+                null,
+                null,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                question.questionNumber(),
+                question.questionId(),
+                question.promptText(),
+                question.mediaUrl(),
+                question.mediaSourceType(),
+                null,
+                occurredAt
+        );
+    }
+
+    public static RoomDomainEvent hintRevealed(
+            Long roomId,
+            Integer questionNumber,
+            String hint,
+            LocalDateTime occurredAt
+    ) {
+        return new RoomDomainEvent(
+                RoomDomainEventType.HINT_REVEALED,
+                roomId,
+                null,
+                null,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                questionNumber,
+                null,
+                null,
+                null,
+                null,
+                hint,
                 occurredAt
         );
     }
@@ -161,6 +249,11 @@ public record RoomDomainEvent(
                 null,
                 content,
                 nickname,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 occurredAt
@@ -188,6 +281,11 @@ public record RoomDomainEvent(
                 nickname,
                 null,
                 questionNumber,
+                null,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }
@@ -213,6 +311,11 @@ public record RoomDomainEvent(
                 nickname,
                 score,
                 null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }
@@ -236,6 +339,11 @@ public record RoomDomainEvent(
                 null,
                 null,
                 questionNumber,
+                null,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }
@@ -255,6 +363,11 @@ public record RoomDomainEvent(
                 room.memberCount(),
                 null,
                 reason,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,

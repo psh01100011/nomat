@@ -7,6 +7,8 @@ public enum RoomDomainEventType {
     MEMBER_KICKED,
     ROOM_CLOSED,
     GAME_STARTED,
+    QUESTION_STARTED,
+    HINT_REVEALED,
     CHAT_MESSAGE,
     CORRECT_ANSWER,
     SCORE_UPDATED,

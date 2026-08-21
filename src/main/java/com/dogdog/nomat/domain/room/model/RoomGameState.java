@@ -10,6 +10,8 @@ public record RoomGameState(
         List<RoomGameQuestion> questions,
         int currentQuestionIndex,
         LocalDateTime currentQuestionStartedAt,
+        LocalDateTime currentQuestionEndedAt,
+        boolean hintRevealed,
         Long currentQuestionWinnerUserId,
         String currentQuestionWinnerAnswer,
         Map<Long, Integer> scores,
@@ -29,7 +31,7 @@ public record RoomGameState(
             Map<Long, Integer> scores,
             LocalDateTime startedAt
     ) {
-        return new RoomGameState(roomId, randomSeed, questions, -1, null, null, null, scores, startedAt, null);
+        return new RoomGameState(roomId, randomSeed, questions, -1, null, null, false, null, null, scores, startedAt, null);
     }
 
     public boolean hasCurrentQuestion() {
@@ -48,6 +50,61 @@ public record RoomGameState(
         return currentQuestionWinnerUserId != null;
     }
 
+    public boolean hasCurrentQuestionEnded() {
+        return currentQuestionEndedAt != null;
+    }
+
+    public RoomGameState withStartedQuestion(int nextQuestionIndex, LocalDateTime startedAt) {
+        return new RoomGameState(
+                roomId,
+                randomSeed,
+                questions,
+                nextQuestionIndex,
+                startedAt,
+                null,
+                false,
+                null,
+                null,
+                scores,
+                this.startedAt,
+                endedAt
+        );
+    }
+
+    public RoomGameState withHintRevealed() {
+        return new RoomGameState(
+                roomId,
+                randomSeed,
+                questions,
+                currentQuestionIndex,
+                currentQuestionStartedAt,
+                currentQuestionEndedAt,
+                true,
+                currentQuestionWinnerUserId,
+                currentQuestionWinnerAnswer,
+                scores,
+                startedAt,
+                endedAt
+        );
+    }
+
+    public RoomGameState withQuestionEnded(LocalDateTime endedAt) {
+        return new RoomGameState(
+                roomId,
+                randomSeed,
+                questions,
+                currentQuestionIndex,
+                currentQuestionStartedAt,
+                endedAt,
+                hintRevealed,
+                currentQuestionWinnerUserId,
+                currentQuestionWinnerAnswer,
+                scores,
+                startedAt,
+                this.endedAt
+        );
+    }
+
     public RoomGameState withCorrectAnswer(Long userId, String answer, int scoreToAdd) {
         Map<Long, Integer> nextScores = new java.util.HashMap<>(scores);
         nextScores.merge(userId, scoreToAdd, Integer::sum);
@@ -57,6 +114,8 @@ public record RoomGameState(
                 questions,
                 currentQuestionIndex,
                 currentQuestionStartedAt,
+                LocalDateTime.now(),
+                hintRevealed,
                 userId,
                 answer,
                 nextScores,

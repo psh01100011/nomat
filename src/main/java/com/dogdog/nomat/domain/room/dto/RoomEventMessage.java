@@ -17,6 +17,11 @@ public record RoomEventMessage(
         String nickname,
         Integer score,
         Integer questionNumber,
+        Long questionId,
+        String promptText,
+        String mediaUrl,
+        String mediaSourceType,
+        String hint,
         LocalDateTime occurredAt
 ) {
 
@@ -35,6 +40,11 @@ public record RoomEventMessage(
                 event.nickname(),
                 event.score(),
                 event.questionNumber(),
+                event.questionId(),
+                event.promptText(),
+                event.mediaUrl(),
+                event.mediaSourceType(),
+                event.hint(),
                 event.occurredAt()
         );
     }

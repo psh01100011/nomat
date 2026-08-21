@@ -65,6 +65,7 @@ public class RoomService {
     private final RoomRedisRepository roomRedisRepository;
     private final RoomStateMachine roomStateMachine;
     private final RoomEventPublisher roomEventPublisher;
+    private final RoomGameProgressService roomGameProgressService;
     private final PasswordEncoder passwordEncoder;
 
     @Transactional
@@ -262,6 +263,7 @@ public class RoomService {
 
         roomRedisRepository.saveStartedRoom(result.room(), gameState);
         roomEventPublisher.publish(result.events());
+        roomGameProgressService.startFirstQuestion(result.room());
         return RoomDetailResponse.from(result.room());
     }
 

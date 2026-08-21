@@ -66,7 +66,9 @@ public class RoomMessageService {
     }
 
     private boolean isCorrectAnswer(RoomGameState gameState, String content) {
-        if (!gameState.hasCurrentQuestion() || gameState.hasCurrentQuestionWinner()) {
+        if (!gameState.hasCurrentQuestion()
+                || gameState.hasCurrentQuestionWinner()
+                || gameState.hasCurrentQuestionEnded()) {
             return false;
         }
 

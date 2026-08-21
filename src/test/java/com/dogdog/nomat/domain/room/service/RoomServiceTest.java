@@ -76,6 +76,9 @@ class RoomServiceTest {
     private RoomEventPublisher roomEventPublisher;
 
     @Mock
+    private RoomGameProgressService roomGameProgressService;
+
+    @Mock
     private PasswordEncoder passwordEncoder;
 
     @InjectMocks
@@ -666,6 +669,7 @@ class RoomServiceTest {
                         && events.getFirst().type() == RoomDomainEventType.GAME_STARTED
                         && events.getFirst().memberCount() == 1
         ));
+        verify(roomGameProgressService).startFirstQuestion(savedRoom);
     }
 
     @Test
