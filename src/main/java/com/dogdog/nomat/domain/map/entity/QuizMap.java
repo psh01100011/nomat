@@ -257,6 +257,10 @@ public class QuizMap {
         }
     }
 
+    public void increasePlayCount() {
+        this.playCount++;
+    }
+
     public void increaseCommentCount() {
         this.commentCount++;
     }

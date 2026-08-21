@@ -38,6 +38,9 @@ class RoomGameProgressServiceTest {
     @Mock
     private TaskScheduler taskScheduler;
 
+    @Mock
+    private RoomGameResultService roomGameResultService;
+
     @InjectMocks
     private RoomGameProgressService roomGameProgressService;
 

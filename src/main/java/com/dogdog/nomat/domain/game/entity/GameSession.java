@@ -95,4 +95,88 @@ public class GameSession {
 
     @Column(name = "ended_at")
     private LocalDateTime endedAt;
+
+    private GameSession(
+            QuizMap map,
+            int mapVersion,
+            String roomTitle,
+            boolean roomHasPassword,
+            int maxPlayers,
+            int playerCount,
+            int selectedQuestionCount,
+            String randomSeed,
+            int answerTimeLimitSeconds,
+            TimeLimitMode timeLimitMode,
+            boolean audioRepeatEnabled,
+            boolean initialHintEnabled,
+            int initialHintTriggerSeconds,
+            GameSessionStatus status,
+            GameSessionEndedReason endedReason,
+            User endedByUser,
+            LocalDateTime startedAt,
+            LocalDateTime endedAt
+    ) {
+        this.map = map;
+        this.mapVersion = mapVersion;
+        this.roomTitle = roomTitle;
+        this.roomHasPassword = roomHasPassword;
+        this.maxPlayers = maxPlayers;
+        this.playerCount = playerCount;
+        this.selectedQuestionCount = selectedQuestionCount;
+        this.randomSeed = randomSeed;
+        this.answerTimeLimitSeconds = answerTimeLimitSeconds;
+        this.timeLimitMode = timeLimitMode;
+        this.audioRepeatEnabled = audioRepeatEnabled;
+        this.initialHintEnabled = initialHintEnabled;
+        this.initialHintTriggerSeconds = initialHintTriggerSeconds;
+        this.status = status;
+        this.endedReason = endedReason;
+        this.endedByUser = endedByUser;
+        this.startedAt = startedAt;
+        this.endedAt = endedAt;
+    }
+
+    public static GameSession complete(
+            QuizMap map,
+            int mapVersion,
+            String roomTitle,
+            boolean roomHasPassword,
+            int maxPlayers,
+            int playerCount,
+            int selectedQuestionCount,
+            String randomSeed,
+            int answerTimeLimitSeconds,
+            TimeLimitMode timeLimitMode,
+            boolean audioRepeatEnabled,
+            boolean initialHintEnabled,
+            int initialHintTriggerSeconds,
+            GameSessionEndedReason endedReason,
+            User endedByUser,
+            LocalDateTime startedAt,
+            LocalDateTime endedAt
+    ) {
+        GameSessionStatus status = endedReason == GameSessionEndedReason.COMPLETED
+                ? GameSessionStatus.COMPLETED
+                : GameSessionStatus.ABORTED;
+        return new GameSession(
+                map,
+                mapVersion,
+                roomTitle,
+                roomHasPassword,
+                maxPlayers,
+                playerCount,
+                selectedQuestionCount,
+                randomSeed,
+                answerTimeLimitSeconds,
+                timeLimitMode,
+                audioRepeatEnabled,
+                initialHintEnabled,
+                initialHintTriggerSeconds,
+                status,
+                endedReason,
+                endedByUser,
+                startedAt,
+                endedAt
+        );
+    }
 }

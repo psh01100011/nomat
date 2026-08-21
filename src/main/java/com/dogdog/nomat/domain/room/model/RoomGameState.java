@@ -15,6 +15,7 @@ public record RoomGameState(
         Long currentQuestionWinnerUserId,
         String currentQuestionWinnerAnswer,
         Map<Long, Integer> scores,
+        Map<Integer, RoomGameQuestionOutcome> questionOutcomes,
         LocalDateTime startedAt,
         LocalDateTime endedAt
 ) {
@@ -22,6 +23,7 @@ public record RoomGameState(
     public RoomGameState {
         questions = questions == null ? List.of() : List.copyOf(questions);
         scores = scores == null ? Map.of() : Map.copyOf(scores);
+        questionOutcomes = questionOutcomes == null ? Map.of() : Map.copyOf(questionOutcomes);
     }
 
     public static RoomGameState started(
@@ -31,7 +33,21 @@ public record RoomGameState(
             Map<Long, Integer> scores,
             LocalDateTime startedAt
     ) {
-        return new RoomGameState(roomId, randomSeed, questions, -1, null, null, false, null, null, scores, startedAt, null);
+        return new RoomGameState(
+                roomId,
+                randomSeed,
+                questions,
+                -1,
+                null,
+                null,
+                false,
+                null,
+                null,
+                scores,
+                Map.of(),
+                startedAt,
+                null
+        );
     }
 
     public boolean hasCurrentQuestion() {
@@ -66,6 +82,7 @@ public record RoomGameState(
                 null,
                 null,
                 scores,
+                questionOutcomes,
                 this.startedAt,
                 endedAt
         );
@@ -83,12 +100,29 @@ public record RoomGameState(
                 currentQuestionWinnerUserId,
                 currentQuestionWinnerAnswer,
                 scores,
+                questionOutcomes,
                 startedAt,
                 endedAt
         );
     }
 
     public RoomGameState withQuestionEnded(LocalDateTime endedAt) {
+        RoomGameQuestion question = currentQuestion();
+        Map<Integer, RoomGameQuestionOutcome> nextOutcomes = new java.util.HashMap<>(questionOutcomes);
+        if (question != null) {
+            nextOutcomes.put(question.questionNumber(), new RoomGameQuestionOutcome(
+                    question.questionId(),
+                    question.questionNumber(),
+                    currentQuestionWinnerUserId,
+                    currentQuestionWinnerAnswer,
+                    0,
+                    null,
+                    "TIME_OVER",
+                    currentQuestionStartedAt,
+                    endedAt
+            ));
+        }
+
         return new RoomGameState(
                 roomId,
                 randomSeed,
@@ -100,6 +134,7 @@ public record RoomGameState(
                 currentQuestionWinnerUserId,
                 currentQuestionWinnerAnswer,
                 scores,
+                nextOutcomes,
                 startedAt,
                 this.endedAt
         );
@@ -108,19 +143,45 @@ public record RoomGameState(
     public RoomGameState withCorrectAnswer(Long userId, String answer, int scoreToAdd) {
         Map<Long, Integer> nextScores = new java.util.HashMap<>(scores);
         nextScores.merge(userId, scoreToAdd, Integer::sum);
+        LocalDateTime endedAt = LocalDateTime.now();
+        RoomGameQuestion question = currentQuestion();
+        Map<Integer, RoomGameQuestionOutcome> nextOutcomes = new java.util.HashMap<>(questionOutcomes);
+        if (question != null) {
+            nextOutcomes.put(question.questionNumber(), new RoomGameQuestionOutcome(
+                    question.questionId(),
+                    question.questionNumber(),
+                    userId,
+                    answer,
+                    scoreToAdd,
+                    answeredMs(endedAt),
+                    "CORRECT_ANSWER",
+                    currentQuestionStartedAt,
+                    endedAt
+            ));
+        }
+
         return new RoomGameState(
                 roomId,
                 randomSeed,
                 questions,
                 currentQuestionIndex,
                 currentQuestionStartedAt,
-                LocalDateTime.now(),
+                endedAt,
                 hintRevealed,
                 userId,
                 answer,
                 nextScores,
+                nextOutcomes,
                 startedAt,
-                endedAt
+                this.endedAt
         );
+    }
+
+    private Integer answeredMs(LocalDateTime endedAt) {
+        if (currentQuestionStartedAt == null || endedAt == null) {
+            return null;
+        }
+
+        return Math.toIntExact(java.time.Duration.between(currentQuestionStartedAt, endedAt).toMillis());
     }
 }

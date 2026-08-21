@@ -147,6 +147,7 @@ class RoomMessageServiceTest {
                 null,
                 null,
                 Map.of(3L, 0),
+                Map.of(),
                 now(),
                 null
         );
@@ -164,6 +165,7 @@ class RoomMessageServiceTest {
                 null,
                 null,
                 Map.of(3L, 0),
+                Map.of(),
                 now(),
                 null
         );
@@ -181,6 +183,7 @@ class RoomMessageServiceTest {
                 3L,
                 "정답",
                 Map.of(3L, 100),
+                Map.of(),
                 now(),
                 null
         );

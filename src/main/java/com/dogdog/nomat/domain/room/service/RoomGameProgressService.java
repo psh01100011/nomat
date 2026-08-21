@@ -21,6 +21,7 @@ public class RoomGameProgressService {
     private final RoomRedisRepository roomRedisRepository;
     private final RoomEventPublisher roomEventPublisher;
     private final TaskScheduler taskScheduler;
+    private final RoomGameResultService roomGameResultService;
 
     public void startFirstQuestion(RoomState room) {
         startQuestion(room, 0);
@@ -78,6 +79,9 @@ public class RoomGameProgressService {
     private void startQuestion(RoomState room, int questionIndex) {
         RoomGameState gameState = roomRedisRepository.findGameState(room.roomId()).orElse(null);
         if (gameState == null || questionIndex >= gameState.questions().size()) {
+            if (gameState != null) {
+                roomGameResultService.endGame(room.roomId(), null, com.dogdog.nomat.domain.room.model.RoomEndedReason.COMPLETED);
+            }
             return;
         }
 
