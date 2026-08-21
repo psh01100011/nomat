@@ -16,6 +16,9 @@ import com.dogdog.nomat.domain.map.dto.ModifyMapResponse;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
 import com.dogdog.nomat.domain.map.service.MapService;
+import com.dogdog.nomat.domain.report.dto.ReportMapRequest;
+import com.dogdog.nomat.domain.report.dto.ReportMapResponse;
+import com.dogdog.nomat.domain.report.service.ReportService;
 import com.dogdog.nomat.global.dto.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +43,7 @@ public class MapController {
 
     private final MapService mapService;
     private final CommentService commentService;
+    private final ReportService reportService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -95,6 +99,20 @@ public class MapController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_unfavorite_map", mapService.unfavoriteMap(userId, mapId));
+    }
+
+    @PostMapping("/{mapId}/report")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<ReportMapResponse> reportMap(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId,
+            @Valid @RequestBody ReportMapRequest request
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of(
+                "success_report_map",
+                reportService.reportMap(userId, mapId, request)
+        );
     }
 
     @PatchMapping("/{mapId}")
