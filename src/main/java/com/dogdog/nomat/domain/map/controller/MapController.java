@@ -1,5 +1,7 @@
 package com.dogdog.nomat.domain.map.controller;
 
+import com.dogdog.nomat.domain.comment.dto.CreateMapCommentRequest;
+import com.dogdog.nomat.domain.comment.dto.CreateMapCommentResponse;
 import com.dogdog.nomat.domain.comment.dto.MapCommentListResponse;
 import com.dogdog.nomat.domain.comment.service.CommentService;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
@@ -163,6 +165,20 @@ public class MapController {
         return ApiResponse.of(
                 "success_get_map_comments",
                 commentService.getMapComments(userId, mapId, page, size, sort)
+        );
+    }
+
+    @PostMapping("/{mapId}/comments")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<CreateMapCommentResponse> createMapComment(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId,
+            @Valid @RequestBody CreateMapCommentRequest request
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of(
+                "success_create_comment",
+                commentService.createMapComment(userId, mapId, request)
         );
     }
 

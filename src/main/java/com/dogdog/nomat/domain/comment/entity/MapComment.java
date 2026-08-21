@@ -73,6 +73,22 @@ public class MapComment {
         return new MapComment(map, writer, content);
     }
 
+    public void modify(String content) {
+        this.content = content;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public void delete() {
+        if (status == MapCommentStatus.DELETED) {
+            return;
+        }
+
+        this.status = MapCommentStatus.DELETED;
+        LocalDateTime now = LocalDateTime.now();
+        this.updatedAt = now;
+        this.deletedAt = now;
+    }
+
     @PrePersist
     void prePersist() {
         LocalDateTime now = LocalDateTime.now();

@@ -8,7 +8,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.asset.entity.Asset;
+import com.dogdog.nomat.domain.comment.dto.CreateMapCommentRequest;
+import com.dogdog.nomat.domain.comment.dto.CreateMapCommentResponse;
 import com.dogdog.nomat.domain.comment.dto.MapCommentListResponse;
+import com.dogdog.nomat.domain.comment.dto.ModifyMapCommentRequest;
+import com.dogdog.nomat.domain.comment.dto.ModifyMapCommentResponse;
 import com.dogdog.nomat.domain.comment.entity.MapComment;
 import com.dogdog.nomat.domain.comment.entity.MapCommentStatus;
 import com.dogdog.nomat.domain.comment.repository.MapCommentRepository;
@@ -48,6 +52,241 @@ class CommentServiceTest {
 
     @InjectMocks
     private CommentService commentService;
+
+    @Test
+    void createMapCommentCreatesCommentAndIncreasesCommentCount() {
+        User writer = activeUser(1L);
+        Asset profileImage = profileImage(writer);
+        ReflectionTestUtils.setField(writer, "profileImageAsset", profileImage);
+        User creator = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category);
+        ReflectionTestUtils.setField(map, "commentCount", 5L);
+        CreateMapCommentRequest request = new CreateMapCommentRequest("재미있는 맵이네요!");
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(writer));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+        given(mapCommentRepository.save(any(MapComment.class))).willAnswer(invocation -> {
+            MapComment comment = invocation.getArgument(0);
+            ReflectionTestUtils.setField(comment, "id", 200L);
+            ReflectionTestUtils.setField(comment, "createdAt", LocalDateTime.of(2026, 8, 21, 10, 0));
+            ReflectionTestUtils.setField(comment, "updatedAt", LocalDateTime.of(2026, 8, 21, 10, 0));
+            return comment;
+        });
+
+        CreateMapCommentResponse response = commentService.createMapComment(1L, 100L, request);
+
+        assertThat(response.commentId()).isEqualTo(200L);
+        assertThat(response.content()).isEqualTo("재미있는 맵이네요!");
+        assertThat(response.writer().userId()).isEqualTo(1L);
+        assertThat(response.writer().nickname()).isEqualTo("tester1");
+        assertThat(response.writer().profileImageUrl()).isEqualTo(profileImage.getUrl());
+        assertThat(response.createdAt()).isEqualTo(LocalDateTime.of(2026, 8, 21, 10, 0));
+        assertThat(map.getCommentCount()).isEqualTo(6L);
+
+        ArgumentCaptor<MapComment> commentCaptor = ArgumentCaptor.forClass(MapComment.class);
+        verify(mapCommentRepository).save(commentCaptor.capture());
+        MapComment savedComment = commentCaptor.getValue();
+        assertThat(savedComment.getMap()).isEqualTo(map);
+        assertThat(savedComment.getWriter()).isEqualTo(writer);
+        assertThat(savedComment.getContent()).isEqualTo("재미있는 맵이네요!");
+        assertThat(savedComment.getStatus()).isEqualTo(MapCommentStatus.ACTIVE);
+    }
+
+    @Test
+    void createMapCommentRejectsUnknownUser() {
+        CreateMapCommentRequest request = new CreateMapCommentRequest("댓글");
+        given(userRepository.findById(1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> commentService.createMapComment(1L, 100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+
+        verify(quizMapRepository, never()).findByIdAndStatusAndVisibility(any(), any(), any());
+        verify(mapCommentRepository, never()).save(any());
+    }
+
+    @Test
+    void createMapCommentRejectsBlankContent() {
+        User writer = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(writer));
+
+        assertThatThrownBy(() -> commentService.createMapComment(
+                1L,
+                100L,
+                new CreateMapCommentRequest("   ")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+
+        verify(quizMapRepository, never()).findByIdAndStatusAndVisibility(any(), any(), any());
+        verify(mapCommentRepository, never()).save(any());
+    }
+
+    @Test
+    void createMapCommentRejectsTooLongContent() {
+        User writer = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(writer));
+
+        assertThatThrownBy(() -> commentService.createMapComment(
+                1L,
+                100L,
+                new CreateMapCommentRequest("a".repeat(501))
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+
+        verify(quizMapRepository, never()).findByIdAndStatusAndVisibility(any(), any(), any());
+        verify(mapCommentRepository, never()).save(any());
+    }
+
+    @Test
+    void createMapCommentRejectsUnknownOrPrivateMap() {
+        User writer = activeUser(1L);
+        CreateMapCommentRequest request = new CreateMapCommentRequest("댓글");
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(writer));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> commentService.createMapComment(1L, 100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("map_not_found");
+
+        verify(mapCommentRepository, never()).save(any());
+    }
+
+    @Test
+    void modifyMapCommentUpdatesOwnComment() {
+        User writer = activeUser(1L);
+        User creator = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category);
+        LocalDateTime beforeUpdatedAt = LocalDateTime.of(2026, 1, 1, 10, 0);
+        MapComment comment = comment(200L, map, writer, "수정 전 댓글", beforeUpdatedAt);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(writer));
+        given(mapCommentRepository.findByIdAndStatus(200L, MapCommentStatus.ACTIVE)).willReturn(Optional.of(comment));
+
+        ModifyMapCommentResponse response = commentService.modifyMapComment(
+                1L,
+                200L,
+                new ModifyMapCommentRequest("수정된 댓글")
+        );
+
+        assertThat(response.commentId()).isEqualTo(200L);
+        assertThat(response.content()).isEqualTo("수정된 댓글");
+        assertThat(response.updatedAt()).isAfter(beforeUpdatedAt);
+        assertThat(comment.getContent()).isEqualTo("수정된 댓글");
+        assertThat(comment.getUpdatedAt()).isEqualTo(response.updatedAt());
+    }
+
+    @Test
+    void modifyMapCommentRejectsOtherWriter() {
+        User user = activeUser(1L);
+        User writer = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, writer, category);
+        MapComment comment = comment(200L, map, writer, "원본 댓글", LocalDateTime.of(2026, 8, 21, 10, 0));
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(mapCommentRepository.findByIdAndStatus(200L, MapCommentStatus.ACTIVE)).willReturn(Optional.of(comment));
+
+        assertThatThrownBy(() -> commentService.modifyMapComment(
+                1L,
+                200L,
+                new ModifyMapCommentRequest("수정 시도")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("forbidden_comment_access");
+
+        assertThat(comment.getContent()).isEqualTo("원본 댓글");
+    }
+
+    @Test
+    void modifyMapCommentRejectsUnknownOrDeletedComment() {
+        User writer = activeUser(1L);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(writer));
+        given(mapCommentRepository.findByIdAndStatus(200L, MapCommentStatus.ACTIVE)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> commentService.modifyMapComment(
+                1L,
+                200L,
+                new ModifyMapCommentRequest("수정된 댓글")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("comment_not_found");
+    }
+
+    @Test
+    void modifyMapCommentRejectsBlankContent() {
+        User writer = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(writer));
+
+        assertThatThrownBy(() -> commentService.modifyMapComment(
+                1L,
+                200L,
+                new ModifyMapCommentRequest(" ")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+
+        verify(mapCommentRepository, never()).findByIdAndStatus(any(), any());
+    }
+
+    @Test
+    void deleteMapCommentDeletesOwnCommentAndDecreasesCommentCount() {
+        User writer = activeUser(1L);
+        User creator = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category);
+        ReflectionTestUtils.setField(map, "commentCount", 3L);
+        MapComment comment = comment(200L, map, writer, "삭제할 댓글", LocalDateTime.of(2026, 1, 1, 10, 0));
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(writer));
+        given(mapCommentRepository.findByIdAndStatus(200L, MapCommentStatus.ACTIVE)).willReturn(Optional.of(comment));
+
+        commentService.deleteMapComment(1L, 200L);
+
+        assertThat(comment.getStatus()).isEqualTo(MapCommentStatus.DELETED);
+        assertThat(comment.getDeletedAt()).isNotNull();
+        assertThat(comment.getUpdatedAt()).isEqualTo(comment.getDeletedAt());
+        assertThat(map.getCommentCount()).isEqualTo(2L);
+    }
+
+    @Test
+    void deleteMapCommentRejectsOtherWriter() {
+        User user = activeUser(1L);
+        User writer = activeUser(2L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, writer, category);
+        ReflectionTestUtils.setField(map, "commentCount", 3L);
+        MapComment comment = comment(200L, map, writer, "다른 유저 댓글", LocalDateTime.of(2026, 8, 21, 10, 0));
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+        given(mapCommentRepository.findByIdAndStatus(200L, MapCommentStatus.ACTIVE)).willReturn(Optional.of(comment));
+
+        assertThatThrownBy(() -> commentService.deleteMapComment(1L, 200L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("forbidden_comment_access");
+
+        assertThat(comment.getStatus()).isEqualTo(MapCommentStatus.ACTIVE);
+        assertThat(map.getCommentCount()).isEqualTo(3L);
+    }
+
+    @Test
+    void deleteMapCommentRejectsUnknownOrDeletedComment() {
+        User writer = activeUser(1L);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(writer));
+        given(mapCommentRepository.findByIdAndStatus(200L, MapCommentStatus.ACTIVE)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> commentService.deleteMapComment(1L, 200L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("comment_not_found");
+    }
 
     @Test
     void getMapCommentsReturnsCommentsWithMineStatus() {

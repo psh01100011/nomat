@@ -257,6 +257,16 @@ public class QuizMap {
         }
     }
 
+    public void increaseCommentCount() {
+        this.commentCount++;
+    }
+
+    public void decreaseCommentCount() {
+        if (commentCount > 0) {
+            this.commentCount--;
+        }
+    }
+
     private void changeStatus(MapStatus status) {
         this.status = status;
         if (status == MapStatus.PUBLISHED && this.publishedAt == null) {
