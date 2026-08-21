@@ -5,6 +5,10 @@ spring:
     multipart:
       max-file-size: 10MB
       max-request-size: 11MB
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
+      timeout: 2s
 
 server:
   servlet:
