@@ -9,11 +9,14 @@ import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
+import com.dogdog.nomat.domain.room.model.RoomCommand;
 import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.model.RoomStatus;
+import com.dogdog.nomat.domain.room.model.RoomTransitionResult;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
@@ -41,6 +44,8 @@ public class RoomService {
     private final UserRepository userRepository;
     private final QuizMapRepository quizMapRepository;
     private final RoomRedisRepository roomRedisRepository;
+    private final RoomStateMachine roomStateMachine;
+    private final RoomEventPublisher roomEventPublisher;
     private final PasswordEncoder passwordEncoder;
 
     @Transactional
@@ -127,6 +132,33 @@ public class RoomService {
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
 
         return RoomDetailResponse.from(room);
+    }
+
+    @Transactional
+    public RoomDetailResponse joinRoom(Long userId, Long roomId, JoinRoomRequest request) {
+        User user = getAuthenticatedUser(userId);
+
+        if (roomRedisRepository.findJoinedRoomId(userId).isPresent()) {
+            throw new BusinessException(HttpStatus.CONFLICT, "already_joined_room");
+        }
+
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+
+        validateRoomPassword(room, request);
+
+        LocalDateTime now = LocalDateTime.now();
+        RoomTransitionResult result = roomStateMachine.transition(
+                room,
+                RoomCommand.join(roomMember(user, false, now), now)
+        );
+
+        if (!roomRedisRepository.saveJoinedRoom(result.room(), userId)) {
+            throw new BusinessException(HttpStatus.CONFLICT, "already_joined_room");
+        }
+
+        roomEventPublisher.publish(result.events());
+        return RoomDetailResponse.from(result.room());
     }
 
     private User getAuthenticatedUser(Long userId) {
@@ -228,9 +260,24 @@ public class RoomService {
     }
 
     private RoomMember hostMember(User host, LocalDateTime joinedAt) {
-        Asset profileImageAsset = host.getProfileImageAsset();
+        return roomMember(host, true, joinedAt);
+    }
+
+    private RoomMember roomMember(User user, boolean host, LocalDateTime joinedAt) {
+        Asset profileImageAsset = user.getProfileImageAsset();
         String profileImageUrl = profileImageAsset == null ? null : profileImageAsset.getUrl();
-        return new RoomMember(host.getId(), host.getNickname(), profileImageUrl, true, joinedAt);
+        return new RoomMember(user.getId(), user.getNickname(), profileImageUrl, host, joinedAt);
+    }
+
+    private void validateRoomPassword(RoomState room, JoinRoomRequest request) {
+        if (!room.hasPassword()) {
+            return;
+        }
+
+        String password = request == null ? null : request.password();
+        if (!StringUtils.hasText(password) || !passwordEncoder.matches(password, room.passwordHash())) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_room_password");
+        }
     }
 
     private String thumbnailUrl(QuizMap map) {

@@ -83,6 +83,31 @@ public class RoomRedisRepository {
         return true;
     }
 
+    public boolean saveJoinedRoom(RoomState room, Long joinedUserId) {
+        Boolean reserved = redisTemplate.opsForValue()
+                .setIfAbsent(userRoomKey(joinedUserId), String.valueOf(room.roomId()), ROOM_TTL);
+        if (!Boolean.TRUE.equals(reserved)) {
+            return false;
+        }
+
+        try {
+            saveRoom(room);
+            return true;
+        } catch (RuntimeException exception) {
+            redisTemplate.delete(userRoomKey(joinedUserId));
+            throw exception;
+        }
+    }
+
+    public void saveRoom(RoomState room) {
+        redisTemplate.opsForValue().set(roomKey(room.roomId()), serialize(room), ROOM_TTL);
+        redisTemplate.opsForZSet().add(
+                ROOM_MEMBER_COUNT_INDEX_KEY,
+                String.valueOf(room.roomId()),
+                room.memberCount()
+        );
+    }
+
     private String serialize(RoomState room) {
         try {
             return objectMapper.writeValueAsString(room);

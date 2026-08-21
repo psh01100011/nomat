@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.room.controller;
 
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.service.RoomService;
@@ -57,6 +58,16 @@ public class RoomController {
     @GetMapping("/{roomId}")
     public ApiResponse<RoomDetailResponse> getRoom(@PathVariable Long roomId) {
         return ApiResponse.of("success_get_room", roomService.getRoom(roomId));
+    }
+
+    @PostMapping("/{roomId}/join")
+    public ApiResponse<RoomDetailResponse> joinRoom(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long roomId,
+            @Valid @RequestBody(required = false) JoinRoomRequest request
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_join_room", roomService.joinRoom(userId, roomId, request));
     }
 
     private Long getUserId(Jwt jwt) {

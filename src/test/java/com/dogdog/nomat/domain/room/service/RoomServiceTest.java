@@ -2,6 +2,8 @@ package com.dogdog.nomat.domain.room.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,8 +17,10 @@ import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
+import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.model.RoomStatus;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
@@ -31,6 +35,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -46,6 +51,12 @@ class RoomServiceTest {
 
     @Mock
     private RoomRedisRepository roomRedisRepository;
+
+    @Spy
+    private RoomStateMachine roomStateMachine = new RoomStateMachine();
+
+    @Mock
+    private RoomEventPublisher roomEventPublisher;
 
     @Mock
     private PasswordEncoder passwordEncoder;
@@ -307,6 +318,122 @@ class RoomServiceTest {
                 .hasMessageContaining("room_not_found");
     }
 
+    @Test
+    void joinRoomAddsMemberAndPublishesEvent() {
+        User member = user(4L);
+        RoomState room = room(25L, "아이돌 노래 맞히기", 15L, 10);
+        given(userRepository.findById(4L)).willReturn(Optional.of(member));
+        given(roomRedisRepository.findJoinedRoomId(4L)).willReturn(Optional.empty());
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.saveJoinedRoom(any(RoomState.class), eq(4L))).willReturn(true);
+
+        RoomDetailResponse response = roomService.joinRoom(4L, 25L, new JoinRoomRequest(null));
+
+        assertThat(response.roomId()).isEqualTo(25L);
+        assertThat(response.memberCount()).isEqualTo(2);
+        assertThat(response.members())
+                .extracting(RoomDetailResponse.MemberResponse::userId)
+                .containsExactly(3L, 4L);
+
+        ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
+        verify(roomRedisRepository).saveJoinedRoom(roomCaptor.capture(), eq(4L));
+        assertThat(roomCaptor.getValue().hasMember(4L)).isTrue();
+        assertThat(roomCaptor.getValue().findMember(4L).orElseThrow().host()).isFalse();
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 1
+                        && events.getFirst().type() == RoomDomainEventType.MEMBER_JOINED
+                        && events.getFirst().roomId().equals(25L)
+                        && events.getFirst().userId().equals(4L)
+                        && events.getFirst().memberCount() == 2
+        ));
+    }
+
+    @Test
+    void joinRoomRejectsAlreadyJoinedUser() {
+        User member = user(4L);
+        given(userRepository.findById(4L)).willReturn(Optional.of(member));
+        given(roomRedisRepository.findJoinedRoomId(4L)).willReturn(Optional.of(99L));
+
+        assertThatThrownBy(() -> roomService.joinRoom(4L, 25L, new JoinRoomRequest(null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("already_joined_room");
+
+        verify(roomRedisRepository, never()).findById(25L);
+        verify(roomRedisRepository, never()).saveJoinedRoom(any(RoomState.class), eq(4L));
+        verify(roomEventPublisher, never()).publish(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void joinRoomVerifiesPasswordRoomPassword() {
+        User member = user(4L);
+        RoomState room = passwordRoom(25L, "encoded-secret");
+        given(userRepository.findById(4L)).willReturn(Optional.of(member));
+        given(roomRedisRepository.findJoinedRoomId(4L)).willReturn(Optional.empty());
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(passwordEncoder.matches("secret", "encoded-secret")).willReturn(true);
+        given(roomRedisRepository.saveJoinedRoom(any(RoomState.class), eq(4L))).willReturn(true);
+
+        RoomDetailResponse response = roomService.joinRoom(4L, 25L, new JoinRoomRequest("secret"));
+
+        assertThat(response.memberCount()).isEqualTo(2);
+        verify(roomRedisRepository).saveJoinedRoom(any(RoomState.class), eq(4L));
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void joinRoomRejectsInvalidPassword() {
+        User member = user(4L);
+        RoomState room = passwordRoom(25L, "encoded-secret");
+        given(userRepository.findById(4L)).willReturn(Optional.of(member));
+        given(roomRedisRepository.findJoinedRoomId(4L)).willReturn(Optional.empty());
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(passwordEncoder.matches("wrong", "encoded-secret")).willReturn(false);
+
+        assertThatThrownBy(() -> roomService.joinRoom(4L, 25L, new JoinRoomRequest("wrong")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_room_password");
+
+        verify(roomRedisRepository, never()).saveJoinedRoom(any(RoomState.class), eq(4L));
+        verify(roomEventPublisher, never()).publish(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void joinRoomRejectsNotWaitingFullOrKickedRoom() {
+        User member = user(4L);
+        given(userRepository.findById(4L)).willReturn(Optional.of(member));
+        given(roomRedisRepository.findJoinedRoomId(4L)).willReturn(Optional.empty());
+        given(roomRedisRepository.findById(25L))
+                .willReturn(Optional.of(room(25L, "게임 중인 방", 15L, 10).started("seed", now())));
+
+        assertThatThrownBy(() -> roomService.joinRoom(4L, 25L, new JoinRoomRequest(null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("cannot_join_room");
+
+        given(roomRedisRepository.findById(26L)).willReturn(Optional.of(room(26L, "가득 찬 방", 15L, 1)));
+        assertThatThrownBy(() -> roomService.joinRoom(4L, 26L, new JoinRoomRequest(null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("cannot_join_room");
+
+        RoomState kickedRoom = roomStateMachine.transition(
+                room(27L, "강퇴된 방", 15L, 10)
+                        .withJoinedMember(new com.dogdog.nomat.domain.room.model.RoomMember(
+                                4L,
+                                "tester4",
+                                null,
+                                false,
+                                now()
+                        )),
+                com.dogdog.nomat.domain.room.model.RoomCommand.kick(3L, 4L, now())
+        ).room();
+        given(roomRedisRepository.findById(27L)).willReturn(Optional.of(kickedRoom));
+        assertThatThrownBy(() -> roomService.joinRoom(4L, 27L, new JoinRoomRequest(null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("room_access_denied");
+
+        verify(roomRedisRepository, never()).saveJoinedRoom(any(RoomState.class), eq(4L));
+    }
+
     private CreateRoomRequest request(Long mapId, String password, int selectedQuestionCount) {
         return new CreateRoomRequest(
                 mapId,
@@ -374,6 +501,31 @@ class RoomServiceTest {
                 false,
                 null,
                 maxPlayers,
+                10,
+                30,
+                TimeLimitMode.FIXED,
+                true,
+                true,
+                10,
+                new com.dogdog.nomat.domain.room.model.RoomMember(3L, "tester3", null, true, now()),
+                now()
+        );
+    }
+
+    private RoomState passwordRoom(Long roomId, String passwordHash) {
+        return RoomState.waiting(
+                roomId,
+                "비밀번호 방",
+                15L,
+                "20년대 아이돌 노래 맞히기",
+                null,
+                7L,
+                "음악",
+                20,
+                3,
+                true,
+                passwordHash,
+                10,
                 10,
                 30,
                 TimeLimitMode.FIXED,
