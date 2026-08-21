@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.room.controller;
 
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.service.RoomService;
 import com.dogdog.nomat.global.dto.ApiResponse;
 import jakarta.validation.Valid;
@@ -9,9 +10,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -30,6 +33,23 @@ public class RoomController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_create_room", roomService.createRoom(userId, request));
+    }
+
+    @GetMapping
+    public ApiResponse<RoomListResponse> getRooms(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) Long mapId,
+            @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "true") boolean joinableOnly,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "latest") String sort
+    ) {
+        return ApiResponse.of(
+                "success_get_rooms",
+                roomService.getRooms(keyword, mapId, categoryId, status, joinableOnly, page, size, sort)
+        );
     }
 
     private Long getUserId(Jwt jwt) {

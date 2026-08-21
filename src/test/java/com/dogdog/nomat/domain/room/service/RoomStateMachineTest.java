@@ -153,6 +153,8 @@ class RoomStateMachineTest {
                 15L,
                 "20년대 아이돌 노래 맞히기",
                 null,
+                7L,
+                "음악",
                 300,
                 3,
                 false,

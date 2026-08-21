@@ -3,7 +3,9 @@ package com.dogdog.nomat.domain.room.repository;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import java.time.Duration;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
@@ -37,6 +39,29 @@ public class RoomRedisRepository {
         return redisTemplate.opsForValue().increment(ROOM_ID_SEQUENCE_KEY);
     }
 
+    public List<RoomState> findRooms(String sort) {
+        String indexKey = "players".equals(sort) ? ROOM_MEMBER_COUNT_INDEX_KEY : ROOM_CREATED_AT_INDEX_KEY;
+        Set<String> roomIds = redisTemplate.opsForZSet().reverseRange(indexKey, 0, -1);
+        if (roomIds == null || roomIds.isEmpty()) {
+            return List.of();
+        }
+
+        return roomIds.stream()
+                .map(Long::valueOf)
+                .map(this::findById)
+                .flatMap(Optional::stream)
+                .toList();
+    }
+
+    public Optional<RoomState> findById(Long roomId) {
+        String room = redisTemplate.opsForValue().get(roomKey(roomId));
+        if (room == null) {
+            return Optional.empty();
+        }
+
+        return Optional.of(deserialize(room));
+    }
+
     public boolean createRoom(RoomState room) {
         Boolean reserved = redisTemplate.opsForValue()
                 .setIfAbsent(userRoomKey(room.hostUserId()), String.valueOf(room.roomId()), ROOM_TTL);
@@ -63,6 +88,14 @@ public class RoomRedisRepository {
             return objectMapper.writeValueAsString(room);
         } catch (JacksonException exception) {
             throw new IllegalStateException("Failed to serialize room state.", exception);
+        }
+    }
+
+    private RoomState deserialize(String room) {
+        try {
+            return objectMapper.readValue(room, RoomState.class);
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("Failed to deserialize room state.", exception);
         }
     }
 

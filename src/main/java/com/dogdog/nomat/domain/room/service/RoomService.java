@@ -2,20 +2,24 @@ package com.dogdog.nomat.domain.room.service;
 
 import com.dogdog.nomat.domain.asset.entity.Asset;
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
+import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
+import com.dogdog.nomat.domain.room.model.RoomStatus;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -56,6 +60,8 @@ public class RoomService {
                 map.getId(),
                 map.getTitle(),
                 thumbnailUrl(map),
+                categoryId(map),
+                categoryName(map),
                 map.getQuestionCount(),
                 map.getVersion(),
                 hasPassword(request.password()),
@@ -78,6 +84,41 @@ public class RoomService {
         return CreateRoomResponse.from(room);
     }
 
+    @Transactional(readOnly = true)
+    public RoomListResponse getRooms(
+            String keyword,
+            Long mapId,
+            Long categoryId,
+            String statusValue,
+            boolean joinableOnly,
+            int page,
+            int size,
+            String sort
+    ) {
+        validatePage(page, size);
+        validateSort(sort);
+        RoomStatus status = parseRoomStatusOrNull(statusValue);
+        String normalizedKeyword = normalizeKeyword(keyword);
+
+        List<RoomState> filteredRooms = roomRedisRepository.findRooms(sort).stream()
+                .filter(room -> isListableStatus(room.status()))
+                .filter(room -> status == null || room.status() == status)
+                .filter(room -> mapId == null || room.mapId().equals(mapId))
+                .filter(room -> categoryId == null || categoryId.equals(room.categoryId()))
+                .filter(room -> normalizedKeyword == null || matchesKeyword(room, normalizedKeyword))
+                .filter(room -> !joinableOnly || isJoinable(room))
+                .toList();
+
+        int fromIndex = Math.min(page * size, filteredRooms.size());
+        int toIndex = Math.min(fromIndex + size, filteredRooms.size());
+        return RoomListResponse.of(
+                filteredRooms.subList(fromIndex, toIndex),
+                page,
+                size,
+                filteredRooms.size()
+        );
+    }
+
     private User getAuthenticatedUser(Long userId) {
         return userRepository.findById(userId)
                 .filter(user -> user.getStatus() == UserStatus.ACTIVE)
@@ -97,6 +138,59 @@ public class RoomService {
         if (selectedQuestionCount > map.getQuestionCount()) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
         }
+    }
+
+    private void validatePage(int page, int size) {
+        if (page < 0 || size < 1 || size > 100) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+    }
+
+    private void validateSort(String sort) {
+        if (!"latest".equals(sort) && !"players".equals(sort)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+    }
+
+    private RoomStatus parseRoomStatusOrNull(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+
+        try {
+            RoomStatus status = RoomStatus.valueOf(value.trim().toUpperCase(Locale.ROOT));
+            if (!isListableStatus(status)) {
+                throw new IllegalArgumentException();
+            }
+            return status;
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+    }
+
+    private boolean isListableStatus(RoomStatus status) {
+        return status == RoomStatus.WAITING || status == RoomStatus.PLAYING;
+    }
+
+    private boolean isJoinable(RoomState room) {
+        return room.status() == RoomStatus.WAITING && !room.isFull();
+    }
+
+    private String normalizeKeyword(String keyword) {
+        if (!StringUtils.hasText(keyword)) {
+            return null;
+        }
+
+        return keyword.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private boolean matchesKeyword(RoomState room, String normalizedKeyword) {
+        return containsKeyword(room.title(), normalizedKeyword)
+                || containsKeyword(room.mapTitle(), normalizedKeyword);
+    }
+
+    private boolean containsKeyword(String value, String normalizedKeyword) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(normalizedKeyword);
     }
 
     private TimeLimitMode timeLimitMode(String value) {
@@ -132,6 +226,16 @@ public class RoomService {
     private String thumbnailUrl(QuizMap map) {
         Asset thumbnailAsset = map.getThumbnailAsset();
         return thumbnailAsset == null ? null : thumbnailAsset.getUrl();
+    }
+
+    private Long categoryId(QuizMap map) {
+        Category category = map.getCategory();
+        return category == null ? null : category.getId();
+    }
+
+    private String categoryName(QuizMap map) {
+        Category category = map.getCategory();
+        return category == null ? null : category.getName();
     }
 
     private boolean valueOrDefault(Boolean value, boolean defaultValue) {

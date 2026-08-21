@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
+import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
@@ -14,12 +15,15 @@ import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.model.RoomStatus;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -72,6 +76,8 @@ class RoomServiceTest {
         assertThat(room.roomId()).isEqualTo(25L);
         assertThat(room.status()).isEqualTo(RoomStatus.WAITING);
         assertThat(room.mapId()).isEqualTo(15L);
+        assertThat(room.categoryId()).isEqualTo(7L);
+        assertThat(room.categoryName()).isEqualTo("음악");
         assertThat(room.mapQuestionCount()).isEqualTo(20);
         assertThat(room.hasPassword()).isFalse();
         assertThat(room.passwordHash()).isNull();
@@ -153,6 +159,97 @@ class RoomServiceTest {
         verify(roomRedisRepository, never()).findJoinedRoomId(3L);
     }
 
+    @Test
+    void getRoomsReturnsJoinableWaitingRoomsByDefault() {
+        RoomState joinableRoom = room(25L, "아이돌 노래 맞히기", 15L, 10);
+        RoomState fullRoom = room(26L, "가득 찬 방", 15L, 1);
+        RoomState playingRoom = room(27L, "게임 중인 방", 16L, 10).started("seed", now());
+        given(roomRedisRepository.findRooms("latest"))
+                .willReturn(List.of(playingRoom, fullRoom, joinableRoom));
+
+        RoomListResponse response = roomService.getRooms(null, null, null, null, true, 0, 20, "latest");
+
+        assertThat(response.rooms()).hasSize(1);
+        assertThat(response.rooms().getFirst().roomId()).isEqualTo(25L);
+        assertThat(response.rooms().getFirst().status()).isEqualTo("WAITING");
+        assertThat(response.totalElements()).isEqualTo(1);
+        assertThat(response.totalPages()).isEqualTo(1);
+        assertThat(response.hasNext()).isFalse();
+    }
+
+    @Test
+    void getRoomsFiltersByKeywordMapIdCategoryIdAndStatus() {
+        RoomState targetRoom = room(25L, "아이돌 노래 맞히기", 15L, 10).started("seed", now());
+        RoomState otherKeywordRoom = room(26L, "드라마 퀴즈", 15L, 10, 7L, "음악", "드라마 명장면 맞히기")
+                .started("seed", now());
+        RoomState otherMapRoom = room(27L, "아이돌 다른 맵", 99L, 10).started("seed", now());
+        RoomState otherCategoryRoom = room(28L, "아이돌 카테고리 다름", 15L, 10, 9L, "상식")
+                .started("seed", now());
+        given(roomRedisRepository.findRooms("players"))
+                .willReturn(List.of(targetRoom, otherKeywordRoom, otherMapRoom, otherCategoryRoom));
+
+        RoomListResponse response = roomService.getRooms("아이돌", 15L, 7L, "PLAYING", false, 0, 20, "players");
+
+        assertThat(response.rooms()).hasSize(1);
+        assertThat(response.rooms().getFirst().roomId()).isEqualTo(25L);
+        assertThat(response.rooms().getFirst().mapId()).isEqualTo(15L);
+        assertThat(response.rooms().getFirst().status()).isEqualTo("PLAYING");
+    }
+
+    @Test
+    void getRoomsMatchesKeywordAgainstMapTitle() {
+        RoomState targetRoom = room(25L, "같이 하실 분", 15L, 10);
+        RoomState otherRoom = room(26L, "드라마 퀴즈", 15L, 10, 7L, "음악", "드라마 명장면 맞히기");
+        given(roomRedisRepository.findRooms("latest"))
+                .willReturn(List.of(targetRoom, otherRoom));
+
+        RoomListResponse response = roomService.getRooms("아이돌", null, null, null, false, 0, 20, "latest");
+
+        assertThat(response.rooms()).hasSize(1);
+        assertThat(response.rooms().getFirst().roomId()).isEqualTo(25L);
+    }
+
+    @Test
+    void getRoomsPaginatesFilteredRooms() {
+        RoomState firstRoom = room(25L, "첫 번째 방", 15L, 10);
+        RoomState secondRoom = room(26L, "두 번째 방", 15L, 10);
+        RoomState thirdRoom = room(27L, "세 번째 방", 15L, 10);
+        given(roomRedisRepository.findRooms("latest"))
+                .willReturn(List.of(firstRoom, secondRoom, thirdRoom));
+
+        RoomListResponse response = roomService.getRooms(null, null, null, null, false, 1, 2, "latest");
+
+        assertThat(response.rooms()).hasSize(1);
+        assertThat(response.rooms().getFirst().roomId()).isEqualTo(27L);
+        assertThat(response.page()).isEqualTo(1);
+        assertThat(response.size()).isEqualTo(2);
+        assertThat(response.totalElements()).isEqualTo(3);
+        assertThat(response.totalPages()).isEqualTo(2);
+        assertThat(response.hasNext()).isFalse();
+    }
+
+    @Test
+    void getRoomsRejectsInvalidStatus() {
+        assertThatThrownBy(() -> roomService.getRooms(null, null, null, "CLOSED", true, 0, 20, "latest"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+    }
+
+    @Test
+    void getRoomsRejectsInvalidPageSizeAndSort() {
+        assertThatThrownBy(() -> roomService.getRooms(null, null, null, null, true, -1, 20, "latest"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+
+        assertThatThrownBy(() -> roomService.getRooms(null, null, null, null, true, 0, 101, "latest"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+
+        assertThatThrownBy(() -> roomService.getRooms(null, null, null, null, true, 0, 20, "unknown"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+    }
+
     private CreateRoomRequest request(Long mapId, String password, int selectedQuestionCount) {
         return new CreateRoomRequest(
                 mapId,
@@ -177,7 +274,7 @@ class RoomServiceTest {
     private QuizMap publishedPublicMap(Long id, int questionCount) {
         QuizMap map = QuizMap.publish(
                 user(1L),
-                null,
+                category(7L, "음악"),
                 null,
                 QuestionType.AUDIO,
                 "20년대 아이돌 노래 맞히기",
@@ -188,5 +285,56 @@ class RoomServiceTest {
         ReflectionTestUtils.setField(map, "id", id);
         ReflectionTestUtils.setField(map, "version", 3);
         return map;
+    }
+
+    private RoomState room(Long roomId, String title, Long mapId, int maxPlayers) {
+        return room(roomId, title, mapId, maxPlayers, 7L, "음악");
+    }
+
+    private RoomState room(Long roomId, String title, Long mapId, int maxPlayers, Long categoryId, String categoryName) {
+        return room(roomId, title, mapId, maxPlayers, categoryId, categoryName, "20년대 아이돌 노래 맞히기");
+    }
+
+    private RoomState room(
+            Long roomId,
+            String title,
+            Long mapId,
+            int maxPlayers,
+            Long categoryId,
+            String categoryName,
+            String mapTitle
+    ) {
+        return RoomState.waiting(
+                roomId,
+                title,
+                mapId,
+                mapTitle,
+                null,
+                categoryId,
+                categoryName,
+                20,
+                3,
+                false,
+                null,
+                maxPlayers,
+                10,
+                30,
+                TimeLimitMode.FIXED,
+                true,
+                true,
+                10,
+                new com.dogdog.nomat.domain.room.model.RoomMember(3L, "tester3", null, true, now()),
+                now()
+        );
+    }
+
+    private Category category(Long id, String name) {
+        Category category = Category.create(name);
+        ReflectionTestUtils.setField(category, "id", id);
+        return category;
+    }
+
+    private LocalDateTime now() {
+        return LocalDateTime.of(2026, 8, 21, 20, 0);
     }
 }
