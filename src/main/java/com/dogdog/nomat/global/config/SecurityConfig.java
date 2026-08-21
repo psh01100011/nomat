@@ -59,6 +59,7 @@ public class SecurityConfig {
                         .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/maps/\\d+$")).permitAll()
                         .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/maps/\\d+/comments$")).permitAll()
                         .requestMatchers(HttpMethod.GET, "/rooms").permitAll()
+                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/rooms/\\d+$")).permitAll()
                         .requestMatchers("/ws").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()

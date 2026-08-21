@@ -9,6 +9,7 @@ import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
@@ -117,6 +118,15 @@ public class RoomService {
                 size,
                 filteredRooms.size()
         );
+    }
+
+    @Transactional(readOnly = true)
+    public RoomDetailResponse getRoom(Long roomId) {
+        RoomState room = roomRedisRepository.findById(roomId)
+                .filter(foundRoom -> isListableStatus(foundRoom.status()))
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+
+        return RoomDetailResponse.from(room);
     }
 
     private User getAuthenticatedUser(Long userId) {

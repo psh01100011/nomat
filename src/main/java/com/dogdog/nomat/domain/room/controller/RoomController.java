@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.room.controller;
 
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.service.RoomService;
 import com.dogdog.nomat.global.dto.ApiResponse;
@@ -11,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -50,6 +52,11 @@ public class RoomController {
                 "success_get_rooms",
                 roomService.getRooms(keyword, mapId, categoryId, status, joinableOnly, page, size, sort)
         );
+    }
+
+    @GetMapping("/{roomId}")
+    public ApiResponse<RoomDetailResponse> getRoom(@PathVariable Long roomId) {
+        return ApiResponse.of("success_get_room", roomService.getRoom(roomId));
     }
 
     private Long getUserId(Jwt jwt) {

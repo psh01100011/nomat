@@ -15,6 +15,7 @@ import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.model.RoomStatus;
@@ -248,6 +249,62 @@ class RoomServiceTest {
         assertThatThrownBy(() -> roomService.getRooms(null, null, null, null, true, 0, 20, "unknown"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_request");
+    }
+
+    @Test
+    void getRoomReturnsRoomDetail() {
+        RoomState room = room(25L, "아이돌 노래 맞히기", 15L, 10);
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        RoomDetailResponse response = roomService.getRoom(25L);
+
+        assertThat(response.roomId()).isEqualTo(25L);
+        assertThat(response.title()).isEqualTo("아이돌 노래 맞히기");
+        assertThat(response.status()).isEqualTo("WAITING");
+        assertThat(response.hasPassword()).isFalse();
+        assertThat(response.maxPlayers()).isEqualTo(10);
+        assertThat(response.selectedQuestionCount()).isEqualTo(10);
+        assertThat(response.answerTimeLimitSeconds()).isEqualTo(30);
+        assertThat(response.timeLimitMode()).isEqualTo("FIXED");
+        assertThat(response.audioRepeatEnabled()).isTrue();
+        assertThat(response.initialHintEnabled()).isTrue();
+        assertThat(response.initialHintTriggerSeconds()).isEqualTo(10);
+        assertThat(response.map().mapId()).isEqualTo(15L);
+        assertThat(response.map().title()).isEqualTo("20년대 아이돌 노래 맞히기");
+        assertThat(response.map().categoryId()).isEqualTo(7L);
+        assertThat(response.map().categoryName()).isEqualTo("음악");
+        assertThat(response.map().thumbnailUrl()).isNull();
+        assertThat(response.map().questionCount()).isEqualTo(20);
+        assertThat(response.hostUserId()).isEqualTo(3L);
+        assertThat(response.memberCount()).isEqualTo(1);
+        assertThat(response.members()).hasSize(1);
+        assertThat(response.members().getFirst().userId()).isEqualTo(3L);
+        assertThat(response.members().getFirst().nickname()).isEqualTo("tester3");
+        assertThat(response.members().getFirst().host()).isTrue();
+        assertThat(response.createdAt()).isEqualTo(now());
+    }
+
+    @Test
+    void getRoomReturnsPlayingRoomDetail() {
+        RoomState room = room(25L, "아이돌 노래 맞히기", 15L, 10).started("seed", now());
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        RoomDetailResponse response = roomService.getRoom(25L);
+
+        assertThat(response.status()).isEqualTo("PLAYING");
+    }
+
+    @Test
+    void getRoomRejectsUnknownOrClosedRoom() {
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.empty());
+        assertThatThrownBy(() -> roomService.getRoom(25L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("room_not_found");
+
+        given(roomRedisRepository.findById(26L)).willReturn(Optional.of(room(26L, "닫힌 방", 15L, 10).closed(now())));
+        assertThatThrownBy(() -> roomService.getRoom(26L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("room_not_found");
     }
 
     private CreateRoomRequest request(Long mapId, String password, int selectedQuestionCount) {
