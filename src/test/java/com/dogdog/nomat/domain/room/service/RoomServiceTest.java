@@ -21,6 +21,7 @@ import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
+import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.model.RoomStatus;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
@@ -434,6 +435,180 @@ class RoomServiceTest {
         verify(roomRedisRepository, never()).saveJoinedRoom(any(RoomState.class), eq(4L));
     }
 
+    @Test
+    void leaveRoomRemovesMemberAndPublishesMemberLeftEvent() {
+        User member = user(4L);
+        RoomState room = roomWithMember(25L, member(4L));
+        given(userRepository.findById(4L)).willReturn(Optional.of(member));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        roomService.leaveRoom(4L, 25L);
+
+        ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
+        verify(roomRedisRepository).saveLeftRoom(roomCaptor.capture(), eq(4L));
+        RoomState savedRoom = roomCaptor.getValue();
+        assertThat(savedRoom.hasMember(4L)).isFalse();
+        assertThat(savedRoom.hostUserId()).isEqualTo(3L);
+        assertThat(savedRoom.status()).isEqualTo(RoomStatus.WAITING);
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 1
+                        && events.getFirst().type() == RoomDomainEventType.MEMBER_LEFT
+                        && events.getFirst().userId().equals(4L)
+                        && events.getFirst().memberCount() == 1
+        ));
+    }
+
+    @Test
+    void leaveRoomTransfersHostWhenHostLeaves() {
+        User host = user(3L);
+        RoomState room = roomWithMember(25L, member(4L));
+        given(userRepository.findById(3L)).willReturn(Optional.of(host));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        roomService.leaveRoom(3L, 25L);
+
+        ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
+        verify(roomRedisRepository).saveLeftRoom(roomCaptor.capture(), eq(3L));
+        RoomState savedRoom = roomCaptor.getValue();
+        assertThat(savedRoom.hasMember(3L)).isFalse();
+        assertThat(savedRoom.hostUserId()).isEqualTo(4L);
+        assertThat(savedRoom.findMember(4L).orElseThrow().host()).isTrue();
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 2
+                        && events.get(0).type() == RoomDomainEventType.MEMBER_LEFT
+                        && events.get(1).type() == RoomDomainEventType.HOST_CHANGED
+                        && events.get(1).previousHostUserId().equals(3L)
+                        && events.get(1).newHostUserId().equals(4L)
+        ));
+    }
+
+    @Test
+    void leaveRoomClosesRoomWhenLastMemberLeaves() {
+        User host = user(3L);
+        RoomState room = room(25L, "혼자 하는 방", 15L, 1);
+        given(userRepository.findById(3L)).willReturn(Optional.of(host));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        roomService.leaveRoom(3L, 25L);
+
+        ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
+        verify(roomRedisRepository).saveLeftRoom(roomCaptor.capture(), eq(3L));
+        assertThat(roomCaptor.getValue().status()).isEqualTo(RoomStatus.CLOSED);
+        assertThat(roomCaptor.getValue().members()).isEmpty();
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 2
+                        && events.get(0).type() == RoomDomainEventType.MEMBER_LEFT
+                        && events.get(1).type() == RoomDomainEventType.ROOM_CLOSED
+        ));
+    }
+
+    @Test
+    void leaveCurrentRoomByDisconnectLeavesJoinedRoomOnlyWhenRoomStillExists() {
+        RoomState room = roomWithMember(25L, member(4L));
+        given(roomRedisRepository.findJoinedRoomId(4L)).willReturn(Optional.of(25L));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        roomService.leaveCurrentRoomByDisconnect(4L);
+
+        verify(roomRedisRepository).saveLeftRoom(any(RoomState.class), eq(4L));
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void closeRoomDeletesWaitingRoomAndPublishesRoomClosedEvent() {
+        User host = user(3L);
+        RoomState room = roomWithMember(25L, member(4L));
+        given(userRepository.findById(3L)).willReturn(Optional.of(host));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        roomService.closeRoom(3L, 25L);
+
+        ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
+        verify(roomRedisRepository).deleteRoom(roomCaptor.capture());
+        assertThat(roomCaptor.getValue().status()).isEqualTo(RoomStatus.CLOSED);
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 1
+                        && events.getFirst().type() == RoomDomainEventType.ROOM_CLOSED
+        ));
+    }
+
+    @Test
+    void closeRoomRejectsNonHostOrStartedRoom() {
+        User member = user(4L);
+        RoomState room = roomWithMember(25L, member(4L));
+        given(userRepository.findById(4L)).willReturn(Optional.of(member));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        assertThatThrownBy(() -> roomService.closeRoom(4L, 25L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("forbidden_room_access");
+
+        User host = user(3L);
+        given(userRepository.findById(3L)).willReturn(Optional.of(host));
+        given(roomRedisRepository.findById(26L)).willReturn(Optional.of(room(26L, "시작된 방", 15L, 10)
+                .started("seed", now())));
+
+        assertThatThrownBy(() -> roomService.closeRoom(3L, 26L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("room_already_started");
+
+        verify(roomRedisRepository, never()).deleteRoom(any(RoomState.class));
+    }
+
+    @Test
+    void kickRoomMemberRemovesTargetAndPublishesMemberKickedEvent() {
+        User host = user(3L);
+        RoomState room = roomWithMember(25L, member(4L));
+        given(userRepository.findById(3L)).willReturn(Optional.of(host));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        roomService.kickRoomMember(3L, 25L, 4L);
+
+        ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
+        verify(roomRedisRepository).saveKickedRoom(roomCaptor.capture(), eq(4L));
+        RoomState savedRoom = roomCaptor.getValue();
+        assertThat(savedRoom.hasMember(4L)).isFalse();
+        assertThat(savedRoom.isKicked(4L)).isTrue();
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 1
+                        && events.getFirst().type() == RoomDomainEventType.MEMBER_KICKED
+                        && events.getFirst().targetUserId().equals(4L)
+                        && events.getFirst().memberCount() == 1
+        ));
+    }
+
+    @Test
+    void kickRoomMemberRejectsHostSelfKickNonHostAndStartedRoom() {
+        User host = user(3L);
+        RoomState room = roomWithMember(25L, member(4L));
+        given(userRepository.findById(3L)).willReturn(Optional.of(host));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        assertThatThrownBy(() -> roomService.kickRoomMember(3L, 25L, 3L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("cannot_kick_room_member");
+
+        User member = user(4L);
+        given(userRepository.findById(4L)).willReturn(Optional.of(member));
+        given(roomRedisRepository.findById(26L)).willReturn(Optional.of(roomWithMember(26L, member(4L))));
+        assertThatThrownBy(() -> roomService.kickRoomMember(4L, 26L, 3L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("forbidden_room_access");
+
+        given(roomRedisRepository.findById(27L)).willReturn(Optional.of(roomWithMember(27L, member(4L))
+                .started("seed", now())));
+        assertThatThrownBy(() -> roomService.kickRoomMember(3L, 27L, 4L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("cannot_kick_room_member");
+
+        verify(roomRedisRepository, never()).saveKickedRoom(any(RoomState.class), eq(4L));
+    }
+
     private CreateRoomRequest request(Long mapId, String password, int selectedQuestionCount) {
         return new CreateRoomRequest(
                 mapId,
@@ -473,6 +648,14 @@ class RoomServiceTest {
 
     private RoomState room(Long roomId, String title, Long mapId, int maxPlayers) {
         return room(roomId, title, mapId, maxPlayers, 7L, "음악");
+    }
+
+    private RoomState roomWithMember(Long roomId, RoomMember member) {
+        return room(roomId, "아이돌 노래 맞히기", 15L, 10).withJoinedMember(member);
+    }
+
+    private RoomMember member(Long userId) {
+        return new RoomMember(userId, "tester" + userId, null, false, now().plusSeconds(userId));
     }
 
     private RoomState room(Long roomId, String title, Long mapId, int maxPlayers, Long categoryId, String categoryName) {
