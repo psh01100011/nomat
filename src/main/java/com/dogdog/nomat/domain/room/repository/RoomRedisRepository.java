@@ -139,6 +139,10 @@ public class RoomRedisRepository {
         return Optional.of(deserialize(gameState, RoomGameState.class));
     }
 
+    public void saveGameState(RoomGameState gameState) {
+        redisTemplate.opsForValue().set(roomGameKey(gameState.roomId()), serialize(gameState), ROOM_TTL);
+    }
+
     public void deleteRoom(RoomState room) {
         redisTemplate.delete(roomKey(room.roomId()));
         redisTemplate.delete(roomGameKey(room.roomId()));

@@ -9,6 +9,9 @@ public record RoomGameState(
         String randomSeed,
         List<RoomGameQuestion> questions,
         int currentQuestionIndex,
+        LocalDateTime currentQuestionStartedAt,
+        Long currentQuestionWinnerUserId,
+        String currentQuestionWinnerAnswer,
         Map<Long, Integer> scores,
         LocalDateTime startedAt,
         LocalDateTime endedAt
@@ -26,6 +29,39 @@ public record RoomGameState(
             Map<Long, Integer> scores,
             LocalDateTime startedAt
     ) {
-        return new RoomGameState(roomId, randomSeed, questions, -1, scores, startedAt, null);
+        return new RoomGameState(roomId, randomSeed, questions, -1, null, null, null, scores, startedAt, null);
+    }
+
+    public boolean hasCurrentQuestion() {
+        return currentQuestionIndex >= 0 && currentQuestionIndex < questions.size();
+    }
+
+    public RoomGameQuestion currentQuestion() {
+        if (!hasCurrentQuestion()) {
+            return null;
+        }
+
+        return questions.get(currentQuestionIndex);
+    }
+
+    public boolean hasCurrentQuestionWinner() {
+        return currentQuestionWinnerUserId != null;
+    }
+
+    public RoomGameState withCorrectAnswer(Long userId, String answer, int scoreToAdd) {
+        Map<Long, Integer> nextScores = new java.util.HashMap<>(scores);
+        nextScores.merge(userId, scoreToAdd, Integer::sum);
+        return new RoomGameState(
+                roomId,
+                randomSeed,
+                questions,
+                currentQuestionIndex,
+                currentQuestionStartedAt,
+                userId,
+                answer,
+                nextScores,
+                startedAt,
+                endedAt
+        );
     }
 }

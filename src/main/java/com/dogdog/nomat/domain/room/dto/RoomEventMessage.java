@@ -13,6 +13,10 @@ public record RoomEventMessage(
         int memberCount,
         String closedReason,
         String endedReason,
+        String content,
+        String nickname,
+        Integer score,
+        Integer questionNumber,
         LocalDateTime occurredAt
 ) {
 
@@ -27,6 +31,10 @@ public record RoomEventMessage(
                 event.memberCount(),
                 event.closedReason() == null ? null : event.closedReason().name(),
                 event.endedReason() == null ? null : event.endedReason().name(),
+                event.content(),
+                event.nickname(),
+                event.score(),
+                event.questionNumber(),
                 event.occurredAt()
         );
     }

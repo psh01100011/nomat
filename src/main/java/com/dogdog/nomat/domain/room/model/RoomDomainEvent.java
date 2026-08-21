@@ -12,6 +12,10 @@ public record RoomDomainEvent(
         int memberCount,
         RoomClosedReason closedReason,
         RoomEndedReason endedReason,
+        String content,
+        String nickname,
+        Integer score,
+        Integer questionNumber,
         LocalDateTime occurredAt
 ) {
 
@@ -24,6 +28,10 @@ public record RoomDomainEvent(
                 null,
                 null,
                 room.memberCount(),
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 occurredAt
@@ -39,6 +47,10 @@ public record RoomDomainEvent(
                 null,
                 null,
                 room.memberCount(),
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 occurredAt
@@ -61,6 +73,10 @@ public record RoomDomainEvent(
                 0,
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }
@@ -74,6 +90,10 @@ public record RoomDomainEvent(
                 null,
                 null,
                 room.memberCount(),
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 occurredAt
@@ -95,6 +115,10 @@ public record RoomDomainEvent(
                 0,
                 reason,
                 null,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }
@@ -110,6 +134,108 @@ public record RoomDomainEvent(
                 room.memberCount(),
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
+                occurredAt
+        );
+    }
+
+    public static RoomDomainEvent chatMessage(
+            Long roomId,
+            Long userId,
+            String nickname,
+            String content,
+            LocalDateTime occurredAt
+    ) {
+        return new RoomDomainEvent(
+                RoomDomainEventType.CHAT_MESSAGE,
+                roomId,
+                userId,
+                null,
+                null,
+                null,
+                0,
+                null,
+                null,
+                content,
+                nickname,
+                null,
+                null,
+                occurredAt
+        );
+    }
+
+    public static RoomDomainEvent correctAnswer(
+            Long roomId,
+            Long userId,
+            String nickname,
+            Integer questionNumber,
+            LocalDateTime occurredAt
+    ) {
+        return new RoomDomainEvent(
+                RoomDomainEventType.CORRECT_ANSWER,
+                roomId,
+                userId,
+                null,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                nickname,
+                null,
+                questionNumber,
+                occurredAt
+        );
+    }
+
+    public static RoomDomainEvent scoreUpdated(
+            Long roomId,
+            Long userId,
+            String nickname,
+            int score,
+            LocalDateTime occurredAt
+    ) {
+        return new RoomDomainEvent(
+                RoomDomainEventType.SCORE_UPDATED,
+                roomId,
+                userId,
+                null,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                nickname,
+                score,
+                null,
+                occurredAt
+        );
+    }
+
+    public static RoomDomainEvent questionEnded(
+            Long roomId,
+            Integer questionNumber,
+            LocalDateTime occurredAt
+    ) {
+        return new RoomDomainEvent(
+                RoomDomainEventType.QUESTION_ENDED,
+                roomId,
+                null,
+                null,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                questionNumber,
                 occurredAt
         );
     }
@@ -129,6 +255,10 @@ public record RoomDomainEvent(
                 room.memberCount(),
                 null,
                 reason,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }

@@ -1,0 +1,92 @@
+package com.dogdog.nomat.domain.room.service;
+
+import com.dogdog.nomat.domain.room.dto.RoomChatMessageRequest;
+import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
+import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
+import com.dogdog.nomat.domain.room.model.RoomGameState;
+import com.dogdog.nomat.domain.room.model.RoomMember;
+import com.dogdog.nomat.domain.room.model.RoomState;
+import com.dogdog.nomat.domain.room.model.RoomStatus;
+import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
+import com.dogdog.nomat.global.exception.BusinessException;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+@Service
+@RequiredArgsConstructor
+public class RoomMessageService {
+
+    private static final int CORRECT_ANSWER_SCORE = 100;
+
+    private final RoomRedisRepository roomRedisRepository;
+    private final RoomEventPublisher roomEventPublisher;
+
+    public void sendMessage(Long userId, Long roomId, RoomChatMessageRequest request) {
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        RoomMember member = room.findMember(userId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access"));
+
+        String content = normalizeContent(request.content());
+        LocalDateTime now = LocalDateTime.now();
+        List<RoomDomainEvent> events = new ArrayList<>();
+        events.add(RoomDomainEvent.chatMessage(roomId, userId, member.nickname(), content, now));
+
+        if (room.status() == RoomStatus.PLAYING) {
+            roomRedisRepository.findGameState(roomId)
+                    .filter(gameState -> isCorrectAnswer(gameState, content))
+                    .ifPresent(gameState -> recordCorrectAnswer(gameState, userId, member.nickname(), content, now, events));
+        }
+
+        roomEventPublisher.publish(events);
+    }
+
+    private void recordCorrectAnswer(
+            RoomGameState gameState,
+            Long userId,
+            String nickname,
+            String content,
+            LocalDateTime now,
+            List<RoomDomainEvent> events
+    ) {
+        RoomGameQuestion question = gameState.currentQuestion();
+        RoomGameState nextGameState = gameState.withCorrectAnswer(userId, content, CORRECT_ANSWER_SCORE);
+        roomRedisRepository.saveGameState(nextGameState);
+        int score = nextGameState.scores().getOrDefault(userId, 0);
+
+        events.add(RoomDomainEvent.correctAnswer(gameState.roomId(), userId, nickname, question.questionNumber(), now));
+        events.add(RoomDomainEvent.scoreUpdated(gameState.roomId(), userId, nickname, score, now));
+        events.add(RoomDomainEvent.questionEnded(gameState.roomId(), question.questionNumber(), now));
+    }
+
+    private boolean isCorrectAnswer(RoomGameState gameState, String content) {
+        if (!gameState.hasCurrentQuestion() || gameState.hasCurrentQuestionWinner()) {
+            return false;
+        }
+
+        String answerKey = answerKey(content);
+        return gameState.currentQuestion().answerKeys().contains(answerKey);
+    }
+
+    private String normalizeContent(String content) {
+        if (!StringUtils.hasText(content)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+
+        String normalizedContent = content.trim();
+        if (normalizedContent.length() > 300) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+        return normalizedContent;
+    }
+
+    private String answerKey(String answer) {
+        return answer.replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
+    }
+}
