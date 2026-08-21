@@ -1,11 +1,17 @@
 package com.dogdog.nomat.domain.report.service;
 
+import com.dogdog.nomat.domain.comment.entity.MapComment;
+import com.dogdog.nomat.domain.comment.entity.MapCommentStatus;
+import com.dogdog.nomat.domain.comment.repository.MapCommentRepository;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
+import com.dogdog.nomat.domain.report.dto.ReportCommentRequest;
+import com.dogdog.nomat.domain.report.dto.ReportCommentResponse;
 import com.dogdog.nomat.domain.report.dto.ReportMapRequest;
 import com.dogdog.nomat.domain.report.dto.ReportMapResponse;
+import com.dogdog.nomat.domain.report.entity.CommentReportReason;
 import com.dogdog.nomat.domain.report.entity.MapReportReason;
 import com.dogdog.nomat.domain.report.entity.Report;
 import com.dogdog.nomat.domain.report.entity.ReportTargetType;
@@ -30,6 +36,7 @@ public class ReportService {
 
     private final UserRepository userRepository;
     private final QuizMapRepository quizMapRepository;
+    private final MapCommentRepository mapCommentRepository;
     private final ReportRepository reportRepository;
 
     @Transactional
@@ -41,7 +48,7 @@ public class ReportService {
 
         MapReportReason reason = parseMapReportReason(request.reason());
         String description = normalizeDescription(request.description());
-        validateDescription(reason, description);
+        validateDescription(reason == MapReportReason.OTHER, description);
 
         QuizMap map = getPublicPublishedMap(mapId);
         if (reportRepository.existsByReporterIdAndTargetTypeAndTargetId(
@@ -65,6 +72,39 @@ public class ReportService {
         }
     }
 
+    @Transactional
+    public ReportCommentResponse reportComment(Long userId, Long commentId, ReportCommentRequest request) {
+        User reporter = getAuthenticatedUser(userId);
+        if (request == null) {
+            throw invalidRequest();
+        }
+
+        CommentReportReason reason = parseCommentReportReason(request.reason());
+        String description = normalizeDescription(request.description());
+        validateDescription(reason == CommentReportReason.OTHER, description);
+
+        MapComment comment = getReportableComment(commentId);
+        if (reportRepository.existsByReporterIdAndTargetTypeAndTargetId(
+                reporter.getId(),
+                ReportTargetType.MAP_COMMENT,
+                comment.getId()
+        )) {
+            throw alreadyReportedComment();
+        }
+
+        try {
+            Report report = reportRepository.saveAndFlush(Report.createCommentReport(
+                    comment.getId(),
+                    reporter,
+                    reason.name(),
+                    description
+            ));
+            return ReportCommentResponse.from(report);
+        } catch (DataIntegrityViolationException exception) {
+            throw alreadyReportedComment();
+        }
+    }
+
     private User getAuthenticatedUser(Long userId) {
         return userRepository.findById(userId)
                 .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
@@ -80,6 +120,17 @@ public class ReportService {
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "map_not_found"));
     }
 
+    private MapComment getReportableComment(Long commentId) {
+        MapComment comment = mapCommentRepository.findByIdAndStatus(commentId, MapCommentStatus.ACTIVE)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "comment_not_found"));
+        QuizMap map = comment.getMap();
+        if (map.getStatus() != MapStatus.PUBLISHED || map.getVisibility() != MapVisibility.PUBLIC) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "comment_not_found");
+        }
+
+        return comment;
+    }
+
     private MapReportReason parseMapReportReason(String reason) {
         if (!StringUtils.hasText(reason)) {
             throw invalidRequest();
@@ -87,6 +138,18 @@ public class ReportService {
 
         try {
             return MapReportReason.valueOf(reason.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException exception) {
+            throw invalidRequest();
+        }
+    }
+
+    private CommentReportReason parseCommentReportReason(String reason) {
+        if (!StringUtils.hasText(reason)) {
+            throw invalidRequest();
+        }
+
+        try {
+            return CommentReportReason.valueOf(reason.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException exception) {
             throw invalidRequest();
         }
@@ -100,8 +163,8 @@ public class ReportService {
         return description.trim();
     }
 
-    private void validateDescription(MapReportReason reason, String description) {
-        if (reason == MapReportReason.OTHER && !StringUtils.hasText(description)) {
+    private void validateDescription(boolean otherReason, String description) {
+        if (otherReason && !StringUtils.hasText(description)) {
             throw invalidRequest();
         }
 
@@ -116,5 +179,9 @@ public class ReportService {
 
     private BusinessException alreadyReportedMap() {
         return new BusinessException(HttpStatus.CONFLICT, "already_reported_map");
+    }
+
+    private BusinessException alreadyReportedComment() {
+        return new BusinessException(HttpStatus.CONFLICT, "already_reported_comment");
     }
 }

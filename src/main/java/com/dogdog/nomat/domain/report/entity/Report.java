@@ -94,6 +94,15 @@ public class Report {
         return new Report(ReportTargetType.MAP, mapId, reporter, reason, description);
     }
 
+    public static Report createCommentReport(
+            Long commentId,
+            User reporter,
+            String reason,
+            String description
+    ) {
+        return new Report(ReportTargetType.MAP_COMMENT, commentId, reporter, reason, description);
+    }
+
     @PrePersist
     void prePersist() {
         this.createdAt = LocalDateTime.now();
