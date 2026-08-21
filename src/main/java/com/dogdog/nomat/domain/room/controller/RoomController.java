@@ -91,6 +91,17 @@ public class RoomController {
         return ApiResponse.success("success_delete_room");
     }
 
+    @DeleteMapping("/{roomId}/members/{targetUserId}")
+    public ApiResponse<Void> kickRoomMember(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long roomId,
+            @PathVariable Long targetUserId
+    ) {
+        Long userId = getUserId(jwt);
+        roomService.kickRoomMember(userId, roomId, targetUserId);
+        return ApiResponse.success("success_kick_room_member");
+    }
+
     private Long getUserId(Jwt jwt) {
         Number userId = jwt.getClaim("userId");
         return userId.longValue();

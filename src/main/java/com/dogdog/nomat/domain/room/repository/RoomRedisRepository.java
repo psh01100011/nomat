@@ -118,6 +118,11 @@ public class RoomRedisRepository {
         saveRoom(room);
     }
 
+    public void saveKickedRoom(RoomState room, Long targetUserId) {
+        redisTemplate.delete(userRoomKey(targetUserId));
+        saveRoom(room);
+    }
+
     public void deleteRoom(RoomState room) {
         redisTemplate.delete(roomKey(room.roomId()));
         redisTemplate.opsForZSet().remove(ROOM_CREATED_AT_INDEX_KEY, String.valueOf(room.roomId()));

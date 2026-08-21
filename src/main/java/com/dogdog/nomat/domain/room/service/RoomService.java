@@ -199,6 +199,22 @@ public class RoomService {
         roomEventPublisher.publish(result.events());
     }
 
+    @Transactional
+    public void kickRoomMember(Long hostUserId, Long roomId, Long targetUserId) {
+        getAuthenticatedUser(hostUserId);
+
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+
+        RoomTransitionResult result = roomStateMachine.transition(
+                room,
+                RoomCommand.kick(hostUserId, targetUserId, LocalDateTime.now())
+        );
+
+        roomRedisRepository.saveKickedRoom(result.room(), targetUserId);
+        roomEventPublisher.publish(result.events());
+    }
+
     private void leaveRoomByDisconnect(Long userId, Long roomId) {
         RoomState room = roomRedisRepository.findById(roomId).orElse(null);
         if (room == null || !room.hasMember(userId)) {
