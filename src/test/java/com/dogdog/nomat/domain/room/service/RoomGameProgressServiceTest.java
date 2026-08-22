@@ -7,6 +7,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
+import com.dogdog.nomat.domain.room.dto.RoomSkipVoteRequest;
 import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
 import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
@@ -14,6 +15,7 @@ import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
+import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -162,6 +164,76 @@ class RoomGameProgressServiceTest {
     }
 
     @Test
+    void voteToSkipSavesVoteAndPublishesVoteStatusBeforeThreshold() {
+        RoomState room = room(4);
+        RoomGameState gameState = gameState().withStartedQuestion(0, now(), 30);
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+
+        roomGameProgressService.voteToSkip(4L, 25L, skipVoteRequest(1L, 1));
+
+        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
+        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
+        RoomGameState savedGameState = gameStateCaptor.getValue();
+        assertThat(savedGameState.currentQuestionSkipVoterUserIds()).containsExactly(4L);
+        assertThat(savedGameState.currentQuestionEndedAt()).isNull();
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 1
+                        && events.getFirst().type() == RoomDomainEventType.SKIP_VOTE_UPDATED
+                        && events.getFirst().userId().equals(4L)
+                        && events.getFirst().questionNumber() == 1
+                        && events.getFirst().memberCount() == 4
+                        && events.getFirst().skipVoteCount() == 1
+                        && events.getFirst().skipVoteThreshold() == 3
+        ));
+    }
+
+    @Test
+    void voteToSkipEndsQuestionAsSkippedWhenVotesReachThreshold() {
+        RoomState room = room(4);
+        RoomGameState gameState = gameState()
+                .withStartedQuestion(0, now(), 30)
+                .withSkipVote(3L)
+                .withSkipVote(4L);
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+
+        roomGameProgressService.voteToSkip(5L, 25L, skipVoteRequest(1L, 1));
+
+        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
+        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
+        RoomGameState savedGameState = gameStateCaptor.getValue();
+        assertThat(savedGameState.currentQuestionSkipVoterUserIds()).containsExactlyInAnyOrder(3L, 4L, 5L);
+        assertThat(savedGameState.currentQuestionEndedAt()).isNotNull();
+        assertThat(savedGameState.questionOutcomes().get(1).endedReason()).isEqualTo("SKIPPED");
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 2
+                        && events.get(0).type() == RoomDomainEventType.SKIP_VOTE_UPDATED
+                        && events.get(0).skipVoteCount() == 3
+                        && events.get(0).skipVoteThreshold() == 3
+                        && events.get(1).type() == RoomDomainEventType.QUESTION_ENDED
+                        && events.get(1).questionNumber() == 1
+        ));
+        verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
+    }
+
+    @Test
+    void voteToSkipRejectsStaleQuestionVote() {
+        RoomState room = room(4);
+        RoomGameState gameState = twoQuestionGameState().withStartedQuestion(1, now(), 30);
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        roomGameProgressService.voteToSkip(4L, 25L, skipVoteRequest(1L, 1))
+                )
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("stale_question");
+    }
+
+    @Test
     void continueAfterQuestionEndedStartsNextQuestion() {
         RoomState room = room();
         RoomGameState endedGameState = twoQuestionGameState()
@@ -201,7 +273,11 @@ class RoomGameProgressServiceTest {
     }
 
     private RoomState room() {
-        return RoomState.waiting(
+        return room(1);
+    }
+
+    private RoomState room(int memberCount) {
+        RoomState room = RoomState.waiting(
                 25L,
                 "방",
                 15L,
@@ -222,7 +298,13 @@ class RoomGameProgressServiceTest {
                 10,
                 new RoomMember(3L, "tester3", null, true, now()),
                 now()
-        ).started("seed", now());
+        );
+
+        for (long userId = 4L; userId < 3L + memberCount; userId++) {
+            room = room.withJoinedMember(new RoomMember(userId, "tester" + userId, null, false, now()));
+        }
+
+        return room.started("seed", now());
     }
 
     private RoomGameState gameState() {
@@ -284,6 +366,10 @@ class RoomGameProgressServiceTest {
                 null,
                 null
         );
+    }
+
+    private RoomSkipVoteRequest skipVoteRequest(Long questionId, Integer questionNumber) {
+        return new RoomSkipVoteRequest(questionId, questionNumber);
     }
 
     private LocalDateTime now() {

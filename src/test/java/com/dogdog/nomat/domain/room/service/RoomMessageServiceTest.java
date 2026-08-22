@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -156,6 +157,7 @@ class RoomMessageServiceTest {
                 false,
                 null,
                 null,
+                Set.of(),
                 Map.of(3L, 0),
                 Map.of(),
                 now(),
@@ -176,6 +178,7 @@ class RoomMessageServiceTest {
                 false,
                 null,
                 null,
+                Set.of(),
                 Map.of(3L, 0),
                 Map.of(),
                 now(),
@@ -196,6 +199,7 @@ class RoomMessageServiceTest {
                 false,
                 3L,
                 "정답",
+                Set.of(),
                 Map.of(3L, 100),
                 Map.of(),
                 now(),

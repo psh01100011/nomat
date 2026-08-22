@@ -12,6 +12,7 @@ public enum RoomDomainEventType {
     CHAT_MESSAGE,
     CORRECT_ANSWER,
     SCORE_UPDATED,
+    SKIP_VOTE_UPDATED,
     QUESTION_ENDED,
     GAME_ENDED
 }

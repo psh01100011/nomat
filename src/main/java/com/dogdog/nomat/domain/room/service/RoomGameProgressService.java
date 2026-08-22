@@ -1,5 +1,6 @@
 package com.dogdog.nomat.domain.room.service;
 
+import com.dogdog.nomat.domain.room.dto.RoomSkipVoteRequest;
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
 import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
@@ -7,11 +8,13 @@ import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.model.RoomStatus;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
+import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 
@@ -59,6 +62,60 @@ public class RoomGameProgressService {
         }
 
         startQuestion(room, questionIndex + 1);
+    }
+
+    public void voteToSkip(Long userId, Long roomId, RoomSkipVoteRequest request) {
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        if (!room.hasMember(userId)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access");
+        }
+        if (room.status() != RoomStatus.PLAYING) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "cannot_skip_question");
+        }
+
+        RoomGameState gameState = roomRedisRepository.findGameState(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        if (!gameState.hasCurrentQuestion() || gameState.hasCurrentQuestionEnded()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "cannot_skip_question");
+        }
+
+        RoomGameQuestion question = gameState.currentQuestion();
+        if (!question.questionId().equals(request.questionId())
+                || question.questionNumber() != request.questionNumber()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "stale_question");
+        }
+
+        RoomGameState votedGameState = gameState.hasSkipVote(userId)
+                ? gameState
+                : gameState.withSkipVote(userId);
+        int skipVoteThreshold = skipVoteThreshold(room.memberCount());
+        LocalDateTime now = LocalDateTime.now();
+        RoomDomainEvent skipVoteUpdated = RoomDomainEvent.skipVoteUpdated(
+                roomId,
+                userId,
+                question.questionNumber(),
+                room.memberCount(),
+                votedGameState.skipVoteCount(),
+                skipVoteThreshold,
+                now
+        );
+
+        if (votedGameState.skipVoteCount() >= skipVoteThreshold) {
+            RoomGameState skippedGameState = votedGameState.withSkippedQuestion(now);
+            roomRedisRepository.saveGameState(skippedGameState);
+            roomEventPublisher.publish(List.of(
+                    skipVoteUpdated,
+                    RoomDomainEvent.questionEnded(roomId, question.questionNumber(), now)
+            ));
+            scheduleQuestionAdvance(roomId, votedGameState.currentQuestionIndex());
+            return;
+        }
+
+        if (!gameState.hasSkipVote(userId)) {
+            roomRedisRepository.saveGameState(votedGameState);
+        }
+        roomEventPublisher.publish(List.of(skipVoteUpdated));
     }
 
     public void revealHint(Long roomId, int questionIndex) {
@@ -154,6 +211,10 @@ public class RoomGameProgressService {
 
         int mediaDurationSeconds = (int) Math.ceil(mediaDurationMs / 1000.0);
         return Math.max(room.answerTimeLimitSeconds(), mediaDurationSeconds);
+    }
+
+    private int skipVoteThreshold(int memberCount) {
+        return memberCount / 2 + 1;
     }
 
     private String hint(String primaryAnswer) {

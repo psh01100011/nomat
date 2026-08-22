@@ -30,7 +30,9 @@ public record RoomEventMessage(
         Boolean initialHintEnabled,
         Integer initialHintTriggerSeconds,
         String hint,
-        LocalDateTime occurredAt
+        LocalDateTime occurredAt,
+        Integer skipVoteCount,
+        Integer skipVoteThreshold
 ) {
 
     public static RoomEventMessage from(RoomDomainEvent event) {
@@ -61,7 +63,9 @@ public record RoomEventMessage(
                 event.initialHintEnabled(),
                 event.initialHintTriggerSeconds(),
                 event.hint(),
-                event.occurredAt()
+                event.occurredAt(),
+                event.skipVoteCount(),
+                event.skipVoteThreshold()
         );
     }
 }

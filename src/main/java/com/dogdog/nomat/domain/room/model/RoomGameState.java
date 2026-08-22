@@ -1,8 +1,10 @@
 package com.dogdog.nomat.domain.room.model;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public record RoomGameState(
         Long roomId,
@@ -16,6 +18,7 @@ public record RoomGameState(
         boolean hintRevealed,
         Long currentQuestionWinnerUserId,
         String currentQuestionWinnerAnswer,
+        Set<Long> currentQuestionSkipVoterUserIds,
         Map<Long, Integer> scores,
         Map<Integer, RoomGameQuestionOutcome> questionOutcomes,
         LocalDateTime startedAt,
@@ -24,6 +27,9 @@ public record RoomGameState(
 
     public RoomGameState {
         questions = questions == null ? List.of() : List.copyOf(questions);
+        currentQuestionSkipVoterUserIds = currentQuestionSkipVoterUserIds == null
+                ? Set.of()
+                : Set.copyOf(currentQuestionSkipVoterUserIds);
         scores = scores == null ? Map.of() : Map.copyOf(scores);
         questionOutcomes = questionOutcomes == null ? Map.of() : Map.copyOf(questionOutcomes);
     }
@@ -47,6 +53,7 @@ public record RoomGameState(
                 false,
                 null,
                 null,
+                Set.of(),
                 scores,
                 Map.of(),
                 startedAt,
@@ -91,6 +98,7 @@ public record RoomGameState(
                 false,
                 null,
                 null,
+                Set.of(),
                 scores,
                 questionOutcomes,
                 this.startedAt,
@@ -111,6 +119,7 @@ public record RoomGameState(
                 true,
                 currentQuestionWinnerUserId,
                 currentQuestionWinnerAnswer,
+                currentQuestionSkipVoterUserIds,
                 scores,
                 questionOutcomes,
                 startedAt,
@@ -147,6 +156,7 @@ public record RoomGameState(
                 hintRevealed,
                 currentQuestionWinnerUserId,
                 currentQuestionWinnerAnswer,
+                currentQuestionSkipVoterUserIds,
                 scores,
                 nextOutcomes,
                 startedAt,
@@ -186,7 +196,77 @@ public record RoomGameState(
                 hintRevealed,
                 userId,
                 answer,
+                currentQuestionSkipVoterUserIds,
                 nextScores,
+                nextOutcomes,
+                startedAt,
+                this.endedAt
+        );
+    }
+
+    public boolean hasSkipVote(Long userId) {
+        return currentQuestionSkipVoterUserIds.contains(userId);
+    }
+
+    public int skipVoteCount() {
+        return currentQuestionSkipVoterUserIds.size();
+    }
+
+    public RoomGameState withSkipVote(Long userId) {
+        Set<Long> nextSkipVoterUserIds = new HashSet<>(currentQuestionSkipVoterUserIds);
+        nextSkipVoterUserIds.add(userId);
+
+        return new RoomGameState(
+                roomId,
+                randomSeed,
+                questions,
+                currentQuestionIndex,
+                currentQuestionStartedAt,
+                currentQuestionDurationSeconds,
+                currentQuestionEndsAt,
+                currentQuestionEndedAt,
+                hintRevealed,
+                currentQuestionWinnerUserId,
+                currentQuestionWinnerAnswer,
+                nextSkipVoterUserIds,
+                scores,
+                questionOutcomes,
+                startedAt,
+                endedAt
+        );
+    }
+
+    public RoomGameState withSkippedQuestion(LocalDateTime endedAt) {
+        RoomGameQuestion question = currentQuestion();
+        Map<Integer, RoomGameQuestionOutcome> nextOutcomes = new java.util.HashMap<>(questionOutcomes);
+        if (question != null) {
+            nextOutcomes.put(question.questionNumber(), new RoomGameQuestionOutcome(
+                    question.questionId(),
+                    question.questionNumber(),
+                    null,
+                    null,
+                    0,
+                    null,
+                    "SKIPPED",
+                    currentQuestionStartedAt,
+                    endedAt
+            ));
+        }
+
+        return new RoomGameState(
+                roomId,
+                randomSeed,
+                questions,
+                currentQuestionIndex,
+                currentQuestionStartedAt,
+                currentQuestionDurationSeconds,
+                currentQuestionEndsAt,
+                endedAt,
+                hintRevealed,
+                null,
+                null,
+                currentQuestionSkipVoterUserIds,
+                scores,
                 nextOutcomes,
                 startedAt,
                 this.endedAt

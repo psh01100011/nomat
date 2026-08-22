@@ -29,8 +29,72 @@ public record RoomDomainEvent(
         Boolean initialHintEnabled,
         Integer initialHintTriggerSeconds,
         String hint,
-        LocalDateTime occurredAt
+        LocalDateTime occurredAt,
+        Integer skipVoteCount,
+        Integer skipVoteThreshold
 ) {
+
+    private RoomDomainEvent(
+            RoomDomainEventType type,
+            Long roomId,
+            Long userId,
+            Long targetUserId,
+            Long previousHostUserId,
+            Long newHostUserId,
+            int memberCount,
+            RoomClosedReason closedReason,
+            RoomEndedReason endedReason,
+            String content,
+            String nickname,
+            Integer score,
+            Integer questionNumber,
+            Long questionId,
+            String promptText,
+            String mediaUrl,
+            String mediaSourceType,
+            Integer mediaDurationMs,
+            Integer durationSeconds,
+            LocalDateTime startedAt,
+            LocalDateTime endsAt,
+            Boolean audioRepeatEnabled,
+            Integer answerTimeLimitSeconds,
+            Boolean initialHintEnabled,
+            Integer initialHintTriggerSeconds,
+            String hint,
+            LocalDateTime occurredAt
+    ) {
+        this(
+                type,
+                roomId,
+                userId,
+                targetUserId,
+                previousHostUserId,
+                newHostUserId,
+                memberCount,
+                closedReason,
+                endedReason,
+                content,
+                nickname,
+                score,
+                questionNumber,
+                questionId,
+                promptText,
+                mediaUrl,
+                mediaSourceType,
+                mediaDurationMs,
+                durationSeconds,
+                startedAt,
+                endsAt,
+                audioRepeatEnabled,
+                answerTimeLimitSeconds,
+                initialHintEnabled,
+                initialHintTriggerSeconds,
+                hint,
+                occurredAt,
+                null,
+                null
+        );
+    }
 
     public static RoomDomainEvent memberJoined(RoomState room, Long userId, LocalDateTime occurredAt) {
         return base(RoomDomainEventType.MEMBER_JOINED, room.roomId(), userId, null, room.memberCount(), occurredAt);
@@ -307,6 +371,48 @@ public record RoomDomainEvent(
                 null,
                 null,
                 occurredAt
+        );
+    }
+
+    public static RoomDomainEvent skipVoteUpdated(
+            Long roomId,
+            Long userId,
+            Integer questionNumber,
+            int memberCount,
+            int skipVoteCount,
+            int skipVoteThreshold,
+            LocalDateTime occurredAt
+    ) {
+        return new RoomDomainEvent(
+                RoomDomainEventType.SKIP_VOTE_UPDATED,
+                roomId,
+                userId,
+                null,
+                null,
+                null,
+                memberCount,
+                null,
+                null,
+                null,
+                null,
+                null,
+                questionNumber,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                occurredAt,
+                skipVoteCount,
+                skipVoteThreshold
         );
     }
 
