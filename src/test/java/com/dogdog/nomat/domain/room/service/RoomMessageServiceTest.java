@@ -35,6 +35,9 @@ class RoomMessageServiceTest {
     @Mock
     private RoomEventPublisher roomEventPublisher;
 
+    @Mock
+    private RoomGameProgressService roomGameProgressService;
+
     @InjectMocks
     private RoomMessageService roomMessageService;
 
@@ -91,6 +94,7 @@ class RoomMessageServiceTest {
                         && events.get(2).score() == 100
                         && events.get(3).type() == RoomDomainEventType.QUESTION_ENDED
         ));
+        verify(roomGameProgressService).scheduleQuestionAdvance(25L, 0);
     }
 
     @Test
@@ -108,6 +112,10 @@ class RoomMessageServiceTest {
         roomMessageService.sendMessage(3L, 26L, new RoomChatMessageRequest("정답"));
 
         verify(roomRedisRepository, never()).saveGameState(org.mockito.ArgumentMatchers.any(RoomGameState.class));
+        verify(roomGameProgressService, never()).scheduleQuestionAdvance(
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyInt()
+        );
     }
 
     private RoomState room() {

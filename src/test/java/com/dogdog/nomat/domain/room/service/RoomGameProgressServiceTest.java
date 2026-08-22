@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
 import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
+import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomMember;
@@ -157,6 +158,46 @@ class RoomGameProgressServiceTest {
                         && events.getFirst().type() == RoomDomainEventType.QUESTION_ENDED
                         && events.getFirst().questionNumber() == 1
         ));
+        verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
+    }
+
+    @Test
+    void continueAfterQuestionEndedStartsNextQuestion() {
+        RoomState room = room();
+        RoomGameState endedGameState = twoQuestionGameState()
+                .withStartedQuestion(0, now(), 30)
+                .withQuestionEnded(now().plusSeconds(30));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(endedGameState));
+
+        roomGameProgressService.continueAfterQuestionEnded(25L, 0);
+
+        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
+        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
+        RoomGameState savedGameState = gameStateCaptor.getValue();
+        assertThat(savedGameState.currentQuestionIndex()).isEqualTo(1);
+        assertThat(savedGameState.currentQuestion().questionNumber()).isEqualTo(2);
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 1
+                        && events.getFirst().type() == RoomDomainEventType.QUESTION_STARTED
+                        && events.getFirst().questionNumber() == 2
+        ));
+        verify(taskScheduler, times(2)).schedule(any(Runnable.class), any(Instant.class));
+    }
+
+    @Test
+    void continueAfterLastQuestionEndedEndsGame() {
+        RoomState room = room();
+        RoomGameState endedGameState = gameState()
+                .withStartedQuestion(0, now(), 30)
+                .withQuestionEnded(now().plusSeconds(30));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(endedGameState));
+
+        roomGameProgressService.continueAfterQuestionEnded(25L, 0);
+
+        verify(roomGameResultService).endGame(25L, null, RoomEndedReason.COMPLETED);
     }
 
     private RoomState room() {
@@ -192,6 +233,10 @@ class RoomGameProgressServiceTest {
         return RoomGameState.started(25L, "seed", List.of(question), Map.of(3L, 0), now());
     }
 
+    private RoomGameState twoQuestionGameState() {
+        return RoomGameState.started(25L, "seed", List.of(question(), secondQuestion()), Map.of(3L, 0), now());
+    }
+
     private RoomGameQuestion question() {
         return textQuestion();
     }
@@ -223,6 +268,21 @@ class RoomGameProgressServiceTest {
                 null,
                 null,
                 mediaDurationMs
+        );
+    }
+
+    private RoomGameQuestion secondQuestion() {
+        return new RoomGameQuestion(
+                2L,
+                2,
+                "두 번째 문제",
+                List.of("정답2"),
+                "정답2",
+                null,
+                null,
+                null,
+                null,
+                null
         );
     }
 

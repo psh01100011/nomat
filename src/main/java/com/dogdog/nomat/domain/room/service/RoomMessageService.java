@@ -26,6 +26,7 @@ public class RoomMessageService {
 
     private final RoomRedisRepository roomRedisRepository;
     private final RoomEventPublisher roomEventPublisher;
+    private final RoomGameProgressService roomGameProgressService;
 
     public void sendMessage(Long userId, Long roomId, RoomChatMessageRequest request) {
         RoomState room = roomRedisRepository.findById(roomId)
@@ -37,14 +38,22 @@ public class RoomMessageService {
         LocalDateTime now = LocalDateTime.now();
         List<RoomDomainEvent> events = new ArrayList<>();
         events.add(RoomDomainEvent.chatMessage(roomId, userId, member.nickname(), content, now));
+        Integer endedQuestionIndex = null;
 
         if (room.status() == RoomStatus.PLAYING) {
-            roomRedisRepository.findGameState(roomId)
+            RoomGameState correctGameState = roomRedisRepository.findGameState(roomId)
                     .filter(gameState -> isCorrectAnswer(gameState, content))
-                    .ifPresent(gameState -> recordCorrectAnswer(gameState, userId, member.nickname(), content, now, events));
+                    .orElse(null);
+            if (correctGameState != null) {
+                endedQuestionIndex = correctGameState.currentQuestionIndex();
+                recordCorrectAnswer(correctGameState, userId, member.nickname(), content, now, events);
+            }
         }
 
         roomEventPublisher.publish(events);
+        if (endedQuestionIndex != null) {
+            roomGameProgressService.scheduleQuestionAdvance(roomId, endedQuestionIndex);
+        }
     }
 
     private void recordCorrectAnswer(

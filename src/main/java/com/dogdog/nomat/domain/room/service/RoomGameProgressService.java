@@ -1,6 +1,7 @@
 package com.dogdog.nomat.domain.room.service;
 
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
+import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomState;
@@ -17,6 +18,8 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class RoomGameProgressService {
+
+    private static final long NEXT_QUESTION_DELAY_SECONDS = 3;
 
     private final RoomRedisRepository roomRedisRepository;
     private final RoomEventPublisher roomEventPublisher;
@@ -35,6 +38,27 @@ public class RoomGameProgressService {
         }
 
         startQuestion(room, gameState.currentQuestionIndex() + 1);
+    }
+
+    public void scheduleQuestionAdvance(Long roomId, int questionIndex) {
+        taskScheduler.schedule(
+                () -> continueAfterQuestionEnded(roomId, questionIndex),
+                Instant.now().plus(Duration.ofSeconds(NEXT_QUESTION_DELAY_SECONDS))
+        );
+    }
+
+    public void continueAfterQuestionEnded(Long roomId, int questionIndex) {
+        RoomState room = roomRedisRepository.findById(roomId).orElse(null);
+        RoomGameState gameState = roomRedisRepository.findGameState(roomId).orElse(null);
+        if (room == null
+                || gameState == null
+                || room.status() != RoomStatus.PLAYING
+                || gameState.currentQuestionIndex() != questionIndex
+                || !gameState.hasCurrentQuestionEnded()) {
+            return;
+        }
+
+        startQuestion(room, questionIndex + 1);
     }
 
     public void revealHint(Long roomId, int questionIndex) {
@@ -74,13 +98,14 @@ public class RoomGameProgressService {
                 question.questionNumber(),
                 LocalDateTime.now()
         )));
+        scheduleQuestionAdvance(roomId, questionIndex);
     }
 
     private void startQuestion(RoomState room, int questionIndex) {
         RoomGameState gameState = roomRedisRepository.findGameState(room.roomId()).orElse(null);
         if (gameState == null || questionIndex >= gameState.questions().size()) {
             if (gameState != null) {
-                roomGameResultService.endGame(room.roomId(), null, com.dogdog.nomat.domain.room.model.RoomEndedReason.COMPLETED);
+                roomGameResultService.endGame(room.roomId(), null, RoomEndedReason.COMPLETED);
             }
             return;
         }
