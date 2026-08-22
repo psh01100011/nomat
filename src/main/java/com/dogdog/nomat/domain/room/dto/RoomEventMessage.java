@@ -21,6 +21,14 @@ public record RoomEventMessage(
         String promptText,
         String mediaUrl,
         String mediaSourceType,
+        Integer mediaDurationMs,
+        Integer durationSeconds,
+        LocalDateTime startedAt,
+        LocalDateTime endsAt,
+        Boolean audioRepeatEnabled,
+        Integer answerTimeLimitSeconds,
+        Boolean initialHintEnabled,
+        Integer initialHintTriggerSeconds,
         String hint,
         LocalDateTime occurredAt
 ) {
@@ -44,6 +52,14 @@ public record RoomEventMessage(
                 event.promptText(),
                 event.mediaUrl(),
                 event.mediaSourceType(),
+                event.mediaDurationMs(),
+                event.durationSeconds(),
+                event.startedAt(),
+                event.endsAt(),
+                event.audioRepeatEnabled(),
+                event.answerTimeLimitSeconds(),
+                event.initialHintEnabled(),
+                event.initialHintTriggerSeconds(),
                 event.hint(),
                 event.occurredAt()
         );

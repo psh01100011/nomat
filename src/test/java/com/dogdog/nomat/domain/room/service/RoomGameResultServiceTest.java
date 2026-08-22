@@ -168,6 +168,8 @@ class RoomGameResultServiceTest {
                 List.of(new RoomGameQuestion(1L, 1, "문제", List.of("정답"), "정답", null, null, null, null, null)),
                 0,
                 now(),
+                30,
+                now().plusSeconds(30),
                 now().plusSeconds(3),
                 false,
                 3L,

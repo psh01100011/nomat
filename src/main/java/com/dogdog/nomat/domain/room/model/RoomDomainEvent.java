@@ -20,56 +20,24 @@ public record RoomDomainEvent(
         String promptText,
         String mediaUrl,
         String mediaSourceType,
+        Integer mediaDurationMs,
+        Integer durationSeconds,
+        LocalDateTime startedAt,
+        LocalDateTime endsAt,
+        Boolean audioRepeatEnabled,
+        Integer answerTimeLimitSeconds,
+        Boolean initialHintEnabled,
+        Integer initialHintTriggerSeconds,
         String hint,
         LocalDateTime occurredAt
 ) {
 
     public static RoomDomainEvent memberJoined(RoomState room, Long userId, LocalDateTime occurredAt) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.MEMBER_JOINED,
-                room.roomId(),
-                userId,
-                null,
-                null,
-                null,
-                room.memberCount(),
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return base(RoomDomainEventType.MEMBER_JOINED, room.roomId(), userId, null, room.memberCount(), occurredAt);
     }
 
     public static RoomDomainEvent memberLeft(RoomState room, Long userId, LocalDateTime occurredAt) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.MEMBER_LEFT,
-                room.roomId(),
-                userId,
-                null,
-                null,
-                null,
-                room.memberCount(),
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return base(RoomDomainEventType.MEMBER_LEFT, room.roomId(), userId, null, room.memberCount(), occurredAt);
     }
 
     public static RoomDomainEvent hostChanged(
@@ -97,32 +65,20 @@ public record RoomDomainEvent(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }
 
     public static RoomDomainEvent memberKicked(RoomState room, Long targetUserId, LocalDateTime occurredAt) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.MEMBER_KICKED,
-                room.roomId(),
-                null,
-                targetUserId,
-                null,
-                null,
-                room.memberCount(),
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return base(RoomDomainEventType.MEMBER_KICKED, room.roomId(), null, targetUserId, room.memberCount(), occurredAt);
     }
 
     public static RoomDomainEvent roomClosed(
@@ -149,38 +105,32 @@ public record RoomDomainEvent(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }
 
     public static RoomDomainEvent gameStarted(RoomState room, LocalDateTime occurredAt) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.GAME_STARTED,
-                room.roomId(),
-                null,
-                null,
-                null,
-                null,
-                room.memberCount(),
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return base(RoomDomainEventType.GAME_STARTED, room.roomId(), null, null, room.memberCount(), occurredAt);
     }
 
-    public static RoomDomainEvent questionStarted(Long roomId, RoomGameQuestion question, LocalDateTime occurredAt) {
+    public static RoomDomainEvent questionStarted(
+            RoomState room,
+            RoomGameQuestion question,
+            int durationSeconds,
+            LocalDateTime endsAt,
+            LocalDateTime occurredAt
+    ) {
         return new RoomDomainEvent(
                 RoomDomainEventType.QUESTION_STARTED,
-                roomId,
+                room.roomId(),
                 null,
                 null,
                 null,
@@ -196,6 +146,14 @@ public record RoomDomainEvent(
                 question.promptText(),
                 question.mediaUrl(),
                 question.mediaSourceType(),
+                question.mediaDurationMs(),
+                durationSeconds,
+                occurredAt,
+                endsAt,
+                true,
+                room.answerTimeLimitSeconds(),
+                room.initialHintEnabled(),
+                room.initialHintTriggerSeconds(),
                 null,
                 occurredAt
         );
@@ -225,6 +183,14 @@ public record RoomDomainEvent(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 hint,
                 occurredAt
         );
@@ -249,6 +215,14 @@ public record RoomDomainEvent(
                 null,
                 content,
                 nickname,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -286,6 +260,14 @@ public record RoomDomainEvent(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }
@@ -310,6 +292,14 @@ public record RoomDomainEvent(
                 null,
                 nickname,
                 score,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -344,6 +334,14 @@ public record RoomDomainEvent(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 occurredAt
         );
     }
@@ -363,6 +361,53 @@ public record RoomDomainEvent(
                 room.memberCount(),
                 null,
                 reason,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                occurredAt
+        );
+    }
+
+    private static RoomDomainEvent base(
+            RoomDomainEventType type,
+            Long roomId,
+            Long userId,
+            Long targetUserId,
+            int memberCount,
+            LocalDateTime occurredAt
+    ) {
+        return new RoomDomainEvent(
+                type,
+                roomId,
+                userId,
+                targetUserId,
+                null,
+                null,
+                memberCount,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,

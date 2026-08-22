@@ -56,6 +56,8 @@ class RoomGameProgressServiceTest {
         RoomGameState savedGameState = gameStateCaptor.getValue();
         assertThat(savedGameState.currentQuestionIndex()).isEqualTo(0);
         assertThat(savedGameState.currentQuestionStartedAt()).isNotNull();
+        assertThat(savedGameState.currentQuestionDurationSeconds()).isEqualTo(30);
+        assertThat(savedGameState.currentQuestionEndsAt()).isEqualTo(savedGameState.currentQuestionStartedAt().plusSeconds(30));
         assertThat(savedGameState.hintRevealed()).isFalse();
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
@@ -63,13 +65,67 @@ class RoomGameProgressServiceTest {
                         && events.getFirst().type() == RoomDomainEventType.QUESTION_STARTED
                         && events.getFirst().questionNumber() == 1
                         && events.getFirst().questionId().equals(1L)
+                        && events.getFirst().durationSeconds() == 30
+                        && events.getFirst().endsAt() != null
+                        && events.getFirst().audioRepeatEnabled()
+                        && events.getFirst().answerTimeLimitSeconds() == 30
         ));
         verify(taskScheduler, times(2)).schedule(any(Runnable.class), any(Instant.class));
     }
 
     @Test
+    void startFirstQuestionUsesAnswerTimeLimitForTextQuestion() {
+        RoomState room = room();
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState(textQuestion())));
+
+        roomGameProgressService.startFirstQuestion(room);
+
+        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
+        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
+        assertThat(gameStateCaptor.getValue().currentQuestionDurationSeconds()).isEqualTo(30);
+    }
+
+    @Test
+    void startFirstQuestionUsesAnswerTimeLimitWhenAudioIsShorterThanLimit() {
+        RoomState room = room();
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState(audioQuestion(12_000))));
+
+        roomGameProgressService.startFirstQuestion(room);
+
+        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
+        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
+        assertThat(gameStateCaptor.getValue().currentQuestionDurationSeconds()).isEqualTo(30);
+    }
+
+    @Test
+    void startFirstQuestionUsesAudioDurationWhenAudioIsLongerThanLimit() {
+        RoomState room = room();
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState(audioQuestion(45_000))));
+
+        roomGameProgressService.startFirstQuestion(room);
+
+        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
+        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
+        RoomGameState savedGameState = gameStateCaptor.getValue();
+        assertThat(savedGameState.currentQuestionDurationSeconds()).isEqualTo(45);
+        assertThat(savedGameState.currentQuestionEndsAt()).isEqualTo(savedGameState.currentQuestionStartedAt().plusSeconds(45));
+    }
+
+    @Test
+    void startFirstQuestionRoundsUpAudioDurationSeconds() {
+        RoomState room = room();
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState(audioQuestion(30_500))));
+
+        roomGameProgressService.startFirstQuestion(room);
+
+        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
+        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
+        assertThat(gameStateCaptor.getValue().currentQuestionDurationSeconds()).isEqualTo(31);
+    }
+
+    @Test
     void revealHintSavesGameStateAndPublishesHint() {
-        RoomGameState gameState = gameState().withStartedQuestion(0, now());
+        RoomGameState gameState = gameState().withStartedQuestion(0, now(), 30);
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
 
         roomGameProgressService.revealHint(25L, 0);
@@ -87,7 +143,7 @@ class RoomGameProgressServiceTest {
 
     @Test
     void endQuestionByTimeoutSavesGameStateAndPublishesQuestionEnded() {
-        RoomGameState gameState = gameState().withStartedQuestion(0, now());
+        RoomGameState gameState = gameState().withStartedQuestion(0, now(), 30);
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
 
         roomGameProgressService.endQuestionByTimeout(25L, 0);
@@ -132,7 +188,15 @@ class RoomGameProgressServiceTest {
         return RoomGameState.started(25L, "seed", List.of(question()), Map.of(3L, 0), now());
     }
 
+    private RoomGameState gameState(RoomGameQuestion question) {
+        return RoomGameState.started(25L, "seed", List.of(question), Map.of(3L, 0), now());
+    }
+
     private RoomGameQuestion question() {
+        return textQuestion();
+    }
+
+    private RoomGameQuestion textQuestion() {
         return new RoomGameQuestion(
                 1L,
                 1,
@@ -144,6 +208,21 @@ class RoomGameProgressServiceTest {
                 null,
                 null,
                 null
+        );
+    }
+
+    private RoomGameQuestion audioQuestion(Integer mediaDurationMs) {
+        return new RoomGameQuestion(
+                1L,
+                1,
+                "문제",
+                List.of("정답"),
+                "정답",
+                "https://example.com/audio.mp3",
+                "YOUTUBE",
+                null,
+                null,
+                mediaDurationMs
         );
     }
 

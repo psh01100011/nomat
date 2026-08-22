@@ -10,6 +10,8 @@ public record RoomGameState(
         List<RoomGameQuestion> questions,
         int currentQuestionIndex,
         LocalDateTime currentQuestionStartedAt,
+        Integer currentQuestionDurationSeconds,
+        LocalDateTime currentQuestionEndsAt,
         LocalDateTime currentQuestionEndedAt,
         boolean hintRevealed,
         Long currentQuestionWinnerUserId,
@@ -38,6 +40,8 @@ public record RoomGameState(
                 randomSeed,
                 questions,
                 -1,
+                null,
+                null,
                 null,
                 null,
                 false,
@@ -70,13 +74,19 @@ public record RoomGameState(
         return currentQuestionEndedAt != null;
     }
 
-    public RoomGameState withStartedQuestion(int nextQuestionIndex, LocalDateTime startedAt) {
+    public RoomGameState withStartedQuestion(
+            int nextQuestionIndex,
+            LocalDateTime startedAt,
+            int durationSeconds
+    ) {
         return new RoomGameState(
                 roomId,
                 randomSeed,
                 questions,
                 nextQuestionIndex,
                 startedAt,
+                durationSeconds,
+                startedAt.plusSeconds(durationSeconds),
                 null,
                 false,
                 null,
@@ -95,6 +105,8 @@ public record RoomGameState(
                 questions,
                 currentQuestionIndex,
                 currentQuestionStartedAt,
+                currentQuestionDurationSeconds,
+                currentQuestionEndsAt,
                 currentQuestionEndedAt,
                 true,
                 currentQuestionWinnerUserId,
@@ -129,6 +141,8 @@ public record RoomGameState(
                 questions,
                 currentQuestionIndex,
                 currentQuestionStartedAt,
+                currentQuestionDurationSeconds,
+                currentQuestionEndsAt,
                 endedAt,
                 hintRevealed,
                 currentQuestionWinnerUserId,
@@ -166,6 +180,8 @@ public record RoomGameState(
                 questions,
                 currentQuestionIndex,
                 currentQuestionStartedAt,
+                currentQuestionDurationSeconds,
+                currentQuestionEndsAt,
                 endedAt,
                 hintRevealed,
                 userId,

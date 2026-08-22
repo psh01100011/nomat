@@ -85,31 +85,50 @@ public class RoomGameProgressService {
             return;
         }
 
-        RoomGameState nextGameState = gameState.withStartedQuestion(questionIndex, LocalDateTime.now());
+        RoomGameQuestion questionToStart = gameState.questions().get(questionIndex);
+        int durationSeconds = actualDurationSeconds(room, questionToStart);
+        LocalDateTime startedAt = LocalDateTime.now();
+        RoomGameState nextGameState = gameState.withStartedQuestion(questionIndex, startedAt, durationSeconds);
         RoomGameQuestion question = nextGameState.currentQuestion();
         roomRedisRepository.saveGameState(nextGameState);
-        roomEventPublisher.publish(List.of(RoomDomainEvent.questionStarted(room.roomId(), question, LocalDateTime.now())));
-        scheduleHint(room, questionIndex);
-        scheduleQuestionTimeout(room, questionIndex);
+        roomEventPublisher.publish(List.of(RoomDomainEvent.questionStarted(
+                room,
+                question,
+                durationSeconds,
+                nextGameState.currentQuestionEndsAt(),
+                startedAt
+        )));
+        scheduleHint(room, questionIndex, durationSeconds);
+        scheduleQuestionTimeout(room, questionIndex, durationSeconds);
     }
 
-    private void scheduleHint(RoomState room, int questionIndex) {
+    private void scheduleHint(RoomState room, int questionIndex, int durationSeconds) {
         if (!room.initialHintEnabled()) {
             return;
         }
 
-        long delaySeconds = Math.max(0, room.answerTimeLimitSeconds() - room.initialHintTriggerSeconds());
+        long delaySeconds = Math.max(0, durationSeconds - room.initialHintTriggerSeconds());
         taskScheduler.schedule(
                 () -> revealHint(room.roomId(), questionIndex),
                 Instant.now().plus(Duration.ofSeconds(delaySeconds))
         );
     }
 
-    private void scheduleQuestionTimeout(RoomState room, int questionIndex) {
+    private void scheduleQuestionTimeout(RoomState room, int questionIndex, int durationSeconds) {
         taskScheduler.schedule(
                 () -> endQuestionByTimeout(room.roomId(), questionIndex),
-                Instant.now().plus(Duration.ofSeconds(room.answerTimeLimitSeconds()))
+                Instant.now().plus(Duration.ofSeconds(durationSeconds))
         );
+    }
+
+    private int actualDurationSeconds(RoomState room, RoomGameQuestion question) {
+        Integer mediaDurationMs = question.mediaDurationMs();
+        if (mediaDurationMs == null) {
+            return room.answerTimeLimitSeconds();
+        }
+
+        int mediaDurationSeconds = (int) Math.ceil(mediaDurationMs / 1000.0);
+        return Math.max(room.answerTimeLimitSeconds(), mediaDurationSeconds);
     }
 
     private String hint(String primaryAnswer) {
