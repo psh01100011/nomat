@@ -8,6 +8,7 @@ import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
 import com.dogdog.nomat.domain.room.service.RoomWebSocketSessionRegistry;
+import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -48,11 +49,16 @@ class JwtStompChannelInterceptorTest {
         assertThatThrownBy(() -> interceptor.preSend(subscribeMessage(4L, "/topic/rooms/25"), null))
                 .isInstanceOf(AccessDeniedException.class)
                 .hasMessageContaining("forbidden_room_access");
+    }
+
+    @Test
+    void subscribeRoomTopicRejectsUnknownRoom() {
+        JwtStompChannelInterceptor interceptor = interceptor();
 
         given(roomRedisRepository.findById(26L)).willReturn(Optional.empty());
         assertThatThrownBy(() -> interceptor.preSend(subscribeMessage(4L, "/topic/rooms/26"), null))
-                .isInstanceOf(AccessDeniedException.class)
-                .hasMessageContaining("forbidden_room_access");
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("room_not_found");
     }
 
     private JwtStompChannelInterceptor interceptor() {

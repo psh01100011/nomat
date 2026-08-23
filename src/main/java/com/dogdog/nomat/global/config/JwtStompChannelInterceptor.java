@@ -2,6 +2,7 @@ package com.dogdog.nomat.global.config;
 
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
 import com.dogdog.nomat.domain.room.service.RoomWebSocketSessionRegistry;
+import com.dogdog.nomat.global.exception.BusinessException;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Matcher;
@@ -19,6 +20,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Component;
+import org.springframework.http.HttpStatus;
 import org.springframework.util.StringUtils;
 
 @Component
@@ -97,8 +99,8 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
         }
 
         boolean member = roomRedisRepository.findById(roomId.get())
-                .filter(room -> room.hasMember(userId))
-                .isPresent();
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"))
+                .hasMember(userId);
         if (!member) {
             throw new AccessDeniedException("forbidden_room_access");
         }

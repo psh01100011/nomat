@@ -14,9 +14,11 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final JwtStompChannelInterceptor jwtStompChannelInterceptor;
+    private final StompErrorHandler stompErrorHandler;
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
+        registry.setErrorHandler(stompErrorHandler);
         registry.addEndpoint("/ws")
                 .setAllowedOriginPatterns("*");
     }
