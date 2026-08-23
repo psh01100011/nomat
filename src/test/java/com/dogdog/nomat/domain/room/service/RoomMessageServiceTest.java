@@ -3,6 +3,7 @@ package com.dogdog.nomat.domain.room.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -39,6 +40,9 @@ class RoomMessageServiceTest {
     @Mock
     private RoomGameProgressService roomGameProgressService;
 
+    @Mock
+    private RoomMessageRateLimiter roomMessageRateLimiter;
+
     @InjectMocks
     private RoomMessageService roomMessageService;
 
@@ -46,7 +50,7 @@ class RoomMessageServiceTest {
     void sendMessagePublishesChatMessageInWaitingRoom() {
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room()));
 
-        roomMessageService.sendMessage(3L, 25L, new RoomChatMessageRequest(" 안녕 "));
+        roomMessageService.sendMessage(3L, 25L, new RoomChatMessageRequest(" 안녕 ", " message-1 "));
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
@@ -54,6 +58,7 @@ class RoomMessageServiceTest {
                         && events.getFirst().userId().equals(3L)
                         && events.getFirst().nickname().equals("tester3")
                         && events.getFirst().content().equals("안녕")
+                        && events.getFirst().clientMessageId().equals("message-1")
         ));
         verify(roomRedisRepository, never()).saveGameState(org.mockito.ArgumentMatchers.any(RoomGameState.class));
     }
@@ -69,6 +74,23 @@ class RoomMessageServiceTest {
         assertThatThrownBy(() -> roomMessageService.sendMessage(3L, 25L, new RoomChatMessageRequest(" ")))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_request");
+    }
+
+    @Test
+    void sendMessageRejectsRateLimitedMessageBeforePublishing() {
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room()));
+        doThrow(new BusinessException(
+                org.springframework.http.HttpStatus.TOO_MANY_REQUESTS,
+                "message_rate_limited",
+                new RoomMessageRateLimiter.RateLimitData(1, "message-1")
+        )).when(roomMessageRateLimiter).checkAllowed(25L, 3L, "message-1");
+
+        assertThatThrownBy(() -> roomMessageService.sendMessage(3L, 25L, new RoomChatMessageRequest("정답", "message-1")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("message_rate_limited");
+
+        verify(roomEventPublisher, never()).publish(org.mockito.ArgumentMatchers.anyList());
+        verify(roomRedisRepository, never()).saveGameState(org.mockito.ArgumentMatchers.any(RoomGameState.class));
     }
 
     @Test

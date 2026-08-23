@@ -27,6 +27,7 @@ public class RoomMessageService {
     private final RoomRedisRepository roomRedisRepository;
     private final RoomEventPublisher roomEventPublisher;
     private final RoomGameProgressService roomGameProgressService;
+    private final RoomMessageRateLimiter roomMessageRateLimiter;
 
     public void sendMessage(Long userId, Long roomId, RoomChatMessageRequest request) {
         RoomState room = roomRedisRepository.findById(roomId)
@@ -35,9 +36,11 @@ public class RoomMessageService {
                 .orElseThrow(() -> new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access"));
 
         String content = normalizeContent(request.content());
+        String clientMessageId = normalizeClientMessageId(request.clientMessageId());
+        roomMessageRateLimiter.checkAllowed(roomId, userId, clientMessageId);
         LocalDateTime now = LocalDateTime.now();
         List<RoomDomainEvent> events = new ArrayList<>();
-        events.add(RoomDomainEvent.chatMessage(roomId, userId, member.nickname(), content, now));
+        events.add(RoomDomainEvent.chatMessage(roomId, userId, member.nickname(), content, clientMessageId, now));
         Integer endedQuestionIndex = null;
 
         if (room.status() == RoomStatus.PLAYING) {
@@ -95,6 +98,18 @@ public class RoomMessageService {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
         }
         return normalizedContent;
+    }
+
+    private String normalizeClientMessageId(String clientMessageId) {
+        if (!StringUtils.hasText(clientMessageId)) {
+            return null;
+        }
+
+        String normalizedClientMessageId = clientMessageId.trim();
+        if (normalizedClientMessageId.length() > 100) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+        return normalizedClientMessageId;
     }
 
     private String answerKey(String answer) {

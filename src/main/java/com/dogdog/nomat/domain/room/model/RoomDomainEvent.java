@@ -1,7 +1,9 @@
 package com.dogdog.nomat.domain.room.model;
 
 import java.time.LocalDateTime;
+import lombok.Builder;
 
+@Builder
 public record RoomDomainEvent(
         RoomDomainEventType type,
         Long roomId,
@@ -13,6 +15,7 @@ public record RoomDomainEvent(
         RoomClosedReason closedReason,
         RoomEndedReason endedReason,
         String content,
+        String clientMessageId,
         String nickname,
         Integer score,
         Integer questionNumber,
@@ -34,68 +37,6 @@ public record RoomDomainEvent(
         Integer skipVoteThreshold
 ) {
 
-    private RoomDomainEvent(
-            RoomDomainEventType type,
-            Long roomId,
-            Long userId,
-            Long targetUserId,
-            Long previousHostUserId,
-            Long newHostUserId,
-            int memberCount,
-            RoomClosedReason closedReason,
-            RoomEndedReason endedReason,
-            String content,
-            String nickname,
-            Integer score,
-            Integer questionNumber,
-            Long questionId,
-            String promptText,
-            String mediaUrl,
-            String mediaSourceType,
-            Integer mediaDurationMs,
-            Integer durationSeconds,
-            LocalDateTime startedAt,
-            LocalDateTime endsAt,
-            Boolean audioRepeatEnabled,
-            Integer answerTimeLimitSeconds,
-            Boolean initialHintEnabled,
-            Integer initialHintTriggerSeconds,
-            String hint,
-            LocalDateTime occurredAt
-    ) {
-        this(
-                type,
-                roomId,
-                userId,
-                targetUserId,
-                previousHostUserId,
-                newHostUserId,
-                memberCount,
-                closedReason,
-                endedReason,
-                content,
-                nickname,
-                score,
-                questionNumber,
-                questionId,
-                promptText,
-                mediaUrl,
-                mediaSourceType,
-                mediaDurationMs,
-                durationSeconds,
-                startedAt,
-                endsAt,
-                audioRepeatEnabled,
-                answerTimeLimitSeconds,
-                initialHintEnabled,
-                initialHintTriggerSeconds,
-                hint,
-                occurredAt,
-                null,
-                null
-        );
-    }
-
     public static RoomDomainEvent memberJoined(RoomState room, Long userId, LocalDateTime occurredAt) {
         return base(RoomDomainEventType.MEMBER_JOINED, room.roomId(), userId, null, room.memberCount(), occurredAt);
     }
@@ -110,35 +51,13 @@ public record RoomDomainEvent(
             Long newHostUserId,
             LocalDateTime occurredAt
     ) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.HOST_CHANGED,
-                roomId,
-                null,
-                null,
-                previousHostUserId,
-                newHostUserId,
-                0,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.HOST_CHANGED)
+                .roomId(roomId)
+                .previousHostUserId(previousHostUserId)
+                .newHostUserId(newHostUserId)
+                .occurredAt(occurredAt)
+                .build();
     }
 
     public static RoomDomainEvent memberKicked(RoomState room, Long targetUserId, LocalDateTime occurredAt) {
@@ -150,35 +69,12 @@ public record RoomDomainEvent(
             RoomClosedReason reason,
             LocalDateTime occurredAt
     ) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.ROOM_CLOSED,
-                roomId,
-                null,
-                null,
-                null,
-                null,
-                0,
-                reason,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.ROOM_CLOSED)
+                .roomId(roomId)
+                .closedReason(reason)
+                .occurredAt(occurredAt)
+                .build();
     }
 
     public static RoomDomainEvent gameStarted(RoomState room, LocalDateTime occurredAt) {
@@ -192,35 +88,24 @@ public record RoomDomainEvent(
             LocalDateTime endsAt,
             LocalDateTime occurredAt
     ) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.QUESTION_STARTED,
-                room.roomId(),
-                null,
-                null,
-                null,
-                null,
-                0,
-                null,
-                null,
-                null,
-                null,
-                null,
-                question.questionNumber(),
-                question.questionId(),
-                question.promptText(),
-                question.mediaUrl(),
-                question.mediaSourceType(),
-                question.mediaDurationMs(),
-                durationSeconds,
-                occurredAt,
-                endsAt,
-                true,
-                room.answerTimeLimitSeconds(),
-                room.initialHintEnabled(),
-                room.initialHintTriggerSeconds(),
-                null,
-                occurredAt
-        );
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.QUESTION_STARTED)
+                .roomId(room.roomId())
+                .questionNumber(question.questionNumber())
+                .questionId(question.questionId())
+                .promptText(question.promptText())
+                .mediaUrl(question.mediaUrl())
+                .mediaSourceType(question.mediaSourceType())
+                .mediaDurationMs(question.mediaDurationMs())
+                .durationSeconds(durationSeconds)
+                .startedAt(occurredAt)
+                .endsAt(endsAt)
+                .audioRepeatEnabled(true)
+                .answerTimeLimitSeconds(room.answerTimeLimitSeconds())
+                .initialHintEnabled(room.initialHintEnabled())
+                .initialHintTriggerSeconds(room.initialHintTriggerSeconds())
+                .occurredAt(occurredAt)
+                .build();
     }
 
     public static RoomDomainEvent hintRevealed(
@@ -229,35 +114,13 @@ public record RoomDomainEvent(
             String hint,
             LocalDateTime occurredAt
     ) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.HINT_REVEALED,
-                roomId,
-                null,
-                null,
-                null,
-                null,
-                0,
-                null,
-                null,
-                null,
-                null,
-                null,
-                questionNumber,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                hint,
-                occurredAt
-        );
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.HINT_REVEALED)
+                .roomId(roomId)
+                .questionNumber(questionNumber)
+                .hint(hint)
+                .occurredAt(occurredAt)
+                .build();
     }
 
     public static RoomDomainEvent chatMessage(
@@ -265,37 +128,18 @@ public record RoomDomainEvent(
             Long userId,
             String nickname,
             String content,
+            String clientMessageId,
             LocalDateTime occurredAt
     ) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.CHAT_MESSAGE,
-                roomId,
-                userId,
-                null,
-                null,
-                null,
-                0,
-                null,
-                null,
-                content,
-                nickname,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.CHAT_MESSAGE)
+                .roomId(roomId)
+                .userId(userId)
+                .content(content)
+                .clientMessageId(clientMessageId)
+                .nickname(nickname)
+                .occurredAt(occurredAt)
+                .build();
     }
 
     public static RoomDomainEvent correctAnswer(
@@ -305,35 +149,14 @@ public record RoomDomainEvent(
             Integer questionNumber,
             LocalDateTime occurredAt
     ) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.CORRECT_ANSWER,
-                roomId,
-                userId,
-                null,
-                null,
-                null,
-                0,
-                null,
-                null,
-                null,
-                nickname,
-                null,
-                questionNumber,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.CORRECT_ANSWER)
+                .roomId(roomId)
+                .userId(userId)
+                .nickname(nickname)
+                .questionNumber(questionNumber)
+                .occurredAt(occurredAt)
+                .build();
     }
 
     public static RoomDomainEvent scoreUpdated(
@@ -343,35 +166,14 @@ public record RoomDomainEvent(
             int score,
             LocalDateTime occurredAt
     ) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.SCORE_UPDATED,
-                roomId,
-                userId,
-                null,
-                null,
-                null,
-                0,
-                null,
-                null,
-                null,
-                nickname,
-                score,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.SCORE_UPDATED)
+                .roomId(roomId)
+                .userId(userId)
+                .nickname(nickname)
+                .score(score)
+                .occurredAt(occurredAt)
+                .build();
     }
 
     public static RoomDomainEvent skipVoteUpdated(
@@ -383,37 +185,16 @@ public record RoomDomainEvent(
             int skipVoteThreshold,
             LocalDateTime occurredAt
     ) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.SKIP_VOTE_UPDATED,
-                roomId,
-                userId,
-                null,
-                null,
-                null,
-                memberCount,
-                null,
-                null,
-                null,
-                null,
-                null,
-                questionNumber,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt,
-                skipVoteCount,
-                skipVoteThreshold
-        );
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.SKIP_VOTE_UPDATED)
+                .roomId(roomId)
+                .userId(userId)
+                .memberCount(memberCount)
+                .questionNumber(questionNumber)
+                .skipVoteCount(skipVoteCount)
+                .skipVoteThreshold(skipVoteThreshold)
+                .occurredAt(occurredAt)
+                .build();
     }
 
     public static RoomDomainEvent questionEnded(
@@ -421,35 +202,12 @@ public record RoomDomainEvent(
             Integer questionNumber,
             LocalDateTime occurredAt
     ) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.QUESTION_ENDED,
-                roomId,
-                null,
-                null,
-                null,
-                null,
-                0,
-                null,
-                null,
-                null,
-                null,
-                null,
-                questionNumber,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.QUESTION_ENDED)
+                .roomId(roomId)
+                .questionNumber(questionNumber)
+                .occurredAt(occurredAt)
+                .build();
     }
 
     public static RoomDomainEvent gameEnded(
@@ -457,35 +215,13 @@ public record RoomDomainEvent(
             RoomEndedReason reason,
             LocalDateTime occurredAt
     ) {
-        return new RoomDomainEvent(
-                RoomDomainEventType.GAME_ENDED,
-                room.roomId(),
-                null,
-                null,
-                null,
-                null,
-                room.memberCount(),
-                null,
-                reason,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.GAME_ENDED)
+                .roomId(room.roomId())
+                .memberCount(room.memberCount())
+                .endedReason(reason)
+                .occurredAt(occurredAt)
+                .build();
     }
 
     private static RoomDomainEvent base(
@@ -496,34 +232,13 @@ public record RoomDomainEvent(
             int memberCount,
             LocalDateTime occurredAt
     ) {
-        return new RoomDomainEvent(
-                type,
-                roomId,
-                userId,
-                targetUserId,
-                null,
-                null,
-                memberCount,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                occurredAt
-        );
+        return RoomDomainEvent.builder()
+                .type(type)
+                .roomId(roomId)
+                .userId(userId)
+                .targetUserId(targetUserId)
+                .memberCount(memberCount)
+                .occurredAt(occurredAt)
+                .build();
     }
 }
