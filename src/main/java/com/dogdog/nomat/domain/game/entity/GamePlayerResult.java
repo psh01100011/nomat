@@ -57,4 +57,31 @@ public class GamePlayerResult {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    private GamePlayerResult(
+            GameSession gameSession,
+            User user,
+            int score,
+            Integer rank,
+            int correctCount,
+            LocalDateTime createdAt
+    ) {
+        this.gameSession = gameSession;
+        this.user = user;
+        this.score = score;
+        this.rank = rank;
+        this.correctCount = correctCount;
+        this.createdAt = createdAt;
+    }
+
+    public static GamePlayerResult create(
+            GameSession gameSession,
+            User user,
+            int score,
+            Integer rank,
+            int correctCount,
+            LocalDateTime createdAt
+    ) {
+        return new GamePlayerResult(gameSession, user, score, rank, correctCount, createdAt);
+    }
 }

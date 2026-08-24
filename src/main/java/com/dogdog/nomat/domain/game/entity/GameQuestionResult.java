@@ -70,4 +70,54 @@ public class GameQuestionResult {
 
     @Column(name = "ended_at", nullable = false)
     private LocalDateTime endedAt;
+
+    private GameQuestionResult(
+            GameSession gameSession,
+            Question question,
+            int questionNumber,
+            User winnerUser,
+            String winnerAnswer,
+            int earnedScore,
+            Integer answeredMs,
+            GameQuestionEndedReason endedReason,
+            LocalDateTime startedAt,
+            LocalDateTime endedAt
+    ) {
+        this.gameSession = gameSession;
+        this.question = question;
+        this.questionNumber = questionNumber;
+        this.winnerUser = winnerUser;
+        this.winnerAnswer = winnerAnswer;
+        this.earnedScore = earnedScore;
+        this.answeredMs = answeredMs;
+        this.endedReason = endedReason;
+        this.startedAt = startedAt;
+        this.endedAt = endedAt;
+    }
+
+    public static GameQuestionResult create(
+            GameSession gameSession,
+            Question question,
+            int questionNumber,
+            User winnerUser,
+            String winnerAnswer,
+            int earnedScore,
+            Integer answeredMs,
+            GameQuestionEndedReason endedReason,
+            LocalDateTime startedAt,
+            LocalDateTime endedAt
+    ) {
+        return new GameQuestionResult(
+                gameSession,
+                question,
+                questionNumber,
+                winnerUser,
+                winnerAnswer,
+                earnedScore,
+                answeredMs,
+                endedReason,
+                startedAt,
+                endedAt
+        );
+    }
 }

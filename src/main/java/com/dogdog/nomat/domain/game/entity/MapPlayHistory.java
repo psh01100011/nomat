@@ -58,4 +58,28 @@ public class MapPlayHistory {
 
     @Column(name = "last_played_at")
     private LocalDateTime lastPlayedAt;
+
+    private MapPlayHistory(User user, QuizMap map, int score, LocalDateTime playedAt) {
+        this.user = user;
+        this.map = map;
+        this.playCount = 1;
+        this.bestScore = score;
+        this.lastScore = score;
+        this.firstPlayedAt = playedAt;
+        this.lastPlayedAt = playedAt;
+    }
+
+    public static MapPlayHistory create(User user, QuizMap map, int score, LocalDateTime playedAt) {
+        return new MapPlayHistory(user, map, score, playedAt);
+    }
+
+    public void recordPlay(int score, LocalDateTime playedAt) {
+        this.playCount++;
+        this.lastScore = score;
+        this.bestScore = Math.max(bestScore, score);
+        if (firstPlayedAt == null) {
+            this.firstPlayedAt = playedAt;
+        }
+        this.lastPlayedAt = playedAt;
+    }
 }
