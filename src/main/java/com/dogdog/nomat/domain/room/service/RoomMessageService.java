@@ -48,8 +48,15 @@ public class RoomMessageService {
                     .filter(gameState -> isCorrectAnswer(gameState, content))
                     .orElse(null);
             if (correctGameState != null) {
-                endedQuestionIndex = correctGameState.currentQuestionIndex();
-                recordCorrectAnswer(correctGameState, userId, member.nickname(), content, now, events);
+                endedQuestionIndex = recordCorrectAnswer(
+                        correctGameState,
+                        userId,
+                        member.nickname(),
+                        content,
+                        answerKey(content),
+                        now,
+                        events
+                );
             }
         }
 
@@ -59,22 +66,35 @@ public class RoomMessageService {
         }
     }
 
-    private void recordCorrectAnswer(
+    private Integer recordCorrectAnswer(
             RoomGameState gameState,
             Long userId,
             String nickname,
             String content,
+            String answerKey,
             LocalDateTime now,
             List<RoomDomainEvent> events
     ) {
-        RoomGameQuestion question = gameState.currentQuestion();
-        RoomGameState nextGameState = gameState.withCorrectAnswer(userId, content, CORRECT_ANSWER_SCORE);
-        roomRedisRepository.saveGameState(nextGameState);
+        RoomGameState nextGameState = roomRedisRepository.tryRecordCorrectAnswer(
+                        gameState.roomId(),
+                        gameState.currentQuestionIndex(),
+                        answerKey,
+                        userId,
+                        content,
+                        CORRECT_ANSWER_SCORE
+                )
+                .orElse(null);
+        if (nextGameState == null) {
+            return null;
+        }
+
+        RoomGameQuestion question = nextGameState.currentQuestion();
         int score = nextGameState.scores().getOrDefault(userId, 0);
 
-        events.add(RoomDomainEvent.correctAnswer(gameState.roomId(), userId, nickname, question.questionNumber(), now));
-        events.add(RoomDomainEvent.scoreUpdated(gameState.roomId(), userId, nickname, score, now));
-        events.add(RoomDomainEvent.questionEnded(gameState.roomId(), question.questionNumber(), now));
+        events.add(RoomDomainEvent.correctAnswer(nextGameState.roomId(), userId, nickname, question.questionNumber(), now));
+        events.add(RoomDomainEvent.scoreUpdated(nextGameState.roomId(), userId, nickname, score, now));
+        events.add(RoomDomainEvent.questionEnded(nextGameState.roomId(), question.questionNumber(), now));
+        return nextGameState.currentQuestionIndex();
     }
 
     private boolean isCorrectAnswer(RoomGameState gameState, String content) {

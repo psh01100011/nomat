@@ -23,7 +23,6 @@ import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -97,14 +96,14 @@ class RoomMessageServiceTest {
     void sendMessageRecordsCorrectAnswerInPlayingRoom() {
         RoomState playingRoom = room().started("seed", now());
         RoomGameState gameState = gameState();
+        RoomGameState savedGameState = gameState.withCorrectAnswer(3L, "정 답", 100);
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(playingRoom));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        given(roomRedisRepository.tryRecordCorrectAnswer(25L, 0, "정답", 3L, "정 답", 100))
+                .willReturn(Optional.of(savedGameState));
 
         roomMessageService.sendMessage(3L, 25L, new RoomChatMessageRequest("정 답"));
 
-        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
-        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
-        RoomGameState savedGameState = gameStateCaptor.getValue();
         assertThat(savedGameState.currentQuestionWinnerUserId()).isEqualTo(3L);
         assertThat(savedGameState.currentQuestionWinnerAnswer()).isEqualTo("정 답");
         assertThat(savedGameState.scores()).containsEntry(3L, 100);
@@ -118,6 +117,29 @@ class RoomMessageServiceTest {
                         && events.get(3).type() == RoomDomainEventType.QUESTION_ENDED
         ));
         verify(roomGameProgressService).scheduleQuestionAdvance(25L, 0);
+    }
+
+    @Test
+    void sendMessagePublishesOnlyChatMessageWhenCorrectAnswerRaceLost() {
+        RoomState playingRoom = room().started("seed", now());
+        RoomGameState gameState = gameState();
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(playingRoom));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        given(roomRedisRepository.tryRecordCorrectAnswer(25L, 0, "정답", 3L, "정답", 100))
+                .willReturn(Optional.empty());
+
+        roomMessageService.sendMessage(3L, 25L, new RoomChatMessageRequest("정답"));
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 1
+                        && events.getFirst().type() == RoomDomainEventType.CHAT_MESSAGE
+                        && events.getFirst().content().equals("정답")
+        ));
+        verify(roomRedisRepository, never()).saveGameState(org.mockito.ArgumentMatchers.any(RoomGameState.class));
+        verify(roomGameProgressService, never()).scheduleQuestionAdvance(
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyInt()
+        );
     }
 
     @Test
@@ -135,6 +157,14 @@ class RoomMessageServiceTest {
         roomMessageService.sendMessage(3L, 26L, new RoomChatMessageRequest("정답"));
 
         verify(roomRedisRepository, never()).saveGameState(org.mockito.ArgumentMatchers.any(RoomGameState.class));
+        verify(roomRedisRepository, never()).tryRecordCorrectAnswer(
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyInt()
+        );
         verify(roomGameProgressService, never()).scheduleQuestionAdvance(
                 org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.anyInt()
