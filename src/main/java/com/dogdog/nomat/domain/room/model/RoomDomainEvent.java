@@ -24,6 +24,7 @@ public record RoomDomainEvent(
         String mediaUrl,
         String mediaSourceType,
         Integer mediaDurationMs,
+        String answerText,
         Integer durationSeconds,
         LocalDateTime startedAt,
         LocalDateTime endsAt,
@@ -200,12 +201,14 @@ public record RoomDomainEvent(
     public static RoomDomainEvent questionEnded(
             Long roomId,
             Integer questionNumber,
+            String answerText,
             LocalDateTime occurredAt
     ) {
         return RoomDomainEvent.builder()
                 .type(RoomDomainEventType.QUESTION_ENDED)
                 .roomId(roomId)
                 .questionNumber(questionNumber)
+                .answerText(answerText)
                 .occurredAt(occurredAt)
                 .build();
     }

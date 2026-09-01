@@ -93,7 +93,7 @@ public class RoomMessageService {
 
         events.add(RoomDomainEvent.correctAnswer(nextGameState.roomId(), userId, nickname, question.questionNumber(), now));
         events.add(RoomDomainEvent.scoreUpdated(nextGameState.roomId(), userId, nickname, score, now));
-        events.add(RoomDomainEvent.questionEnded(nextGameState.roomId(), question.questionNumber(), now));
+        events.add(RoomDomainEvent.questionEnded(nextGameState.roomId(), question.questionNumber(), question.primaryAnswer(), now));
         return nextGameState.currentQuestionIndex();
     }
 

@@ -106,7 +106,7 @@ public class RoomGameProgressService {
             roomRedisRepository.saveGameState(skippedGameState);
             roomEventPublisher.publish(List.of(
                     skipVoteUpdated,
-                    RoomDomainEvent.questionEnded(roomId, question.questionNumber(), now)
+                    RoomDomainEvent.questionEnded(roomId, question.questionNumber(), question.primaryAnswer(), now)
             ));
             scheduleQuestionAdvance(roomId, votedGameState.currentQuestionIndex());
             return;
@@ -153,6 +153,7 @@ public class RoomGameProgressService {
         roomEventPublisher.publish(List.of(RoomDomainEvent.questionEnded(
                 roomId,
                 question.questionNumber(),
+                question.primaryAnswer(),
                 LocalDateTime.now()
         )));
         scheduleQuestionAdvance(roomId, questionIndex);
