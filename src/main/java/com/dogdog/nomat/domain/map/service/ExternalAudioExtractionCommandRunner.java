@@ -48,6 +48,8 @@ public class ExternalAudioExtractionCommandRunner implements AudioExtractionComm
                 "-vn",
                 "-acodec",
                 "libmp3lame",
+                "-b:a",
+                properties.getOutputBitrate(),
                 "-ar",
                 "44100",
                 "-ac",

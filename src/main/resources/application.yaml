@@ -37,6 +37,7 @@ app:
     command-timeout-seconds: 300
     yt-dlp-path: ${YT_DLP_PATH:yt-dlp}
     ffmpeg-path: ${FFMPEG_PATH:ffmpeg}
+    output-bitrate: ${AUDIO_OUTPUT_BITRATE:128k}
   auth:
     cookie:
       secure: ${AUTH_COOKIE_SECURE:false}

@@ -31,4 +31,6 @@ public class AudioProcessingProperties {
     private String ytDlpPath = "yt-dlp";
 
     private String ffmpegPath = "ffmpeg";
+
+    private String outputBitrate = "128k";
 }
