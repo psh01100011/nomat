@@ -1,5 +1,6 @@
 package com.dogdog.nomat.domain.room.dto;
 
+import com.dogdog.nomat.domain.room.model.RoomAnswerHint;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestionOutcome;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
@@ -42,7 +43,7 @@ public record RoomGameSnapshotResponse(
                 room.status().name(),
                 CurrentQuestionResponse.of(currentQuestion, gameState, questionEnded),
                 hintRevealed,
-                hintRevealed ? hint(currentQuestion) : null,
+                hintRevealed && currentQuestion != null ? RoomAnswerHint.from(currentQuestion.primaryAnswer()) : null,
                 questionEnded,
                 gameState == null ? null : gameState.currentQuestionWinnerUserId(),
                 gameState == null ? null : gameState.currentQuestionWinnerAnswer(),
@@ -73,14 +74,6 @@ public record RoomGameSnapshotResponse(
                 .sorted(Comparator.comparing(RoomGameQuestionOutcome::questionNumber))
                 .map(QuestionOutcomeResponse::from)
                 .toList();
-    }
-
-    private static String hint(RoomGameQuestion question) {
-        if (question == null || question.primaryAnswer() == null || question.primaryAnswer().isBlank()) {
-            return null;
-        }
-
-        return question.primaryAnswer().substring(0, 1);
     }
 
     public record CurrentQuestionResponse(

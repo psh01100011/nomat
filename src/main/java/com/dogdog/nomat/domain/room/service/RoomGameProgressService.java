@@ -1,6 +1,7 @@
 package com.dogdog.nomat.domain.room.service;
 
 import com.dogdog.nomat.domain.room.dto.RoomSkipVoteRequest;
+import com.dogdog.nomat.domain.room.model.RoomAnswerHint;
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
 import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
@@ -133,7 +134,7 @@ public class RoomGameProgressService {
         roomEventPublisher.publish(List.of(RoomDomainEvent.hintRevealed(
                 roomId,
                 question.questionNumber(),
-                hint(question.primaryAnswer()),
+                RoomAnswerHint.from(question.primaryAnswer()),
                 LocalDateTime.now()
         )));
     }
@@ -218,11 +219,4 @@ public class RoomGameProgressService {
         return memberCount / 2 + 1;
     }
 
-    private String hint(String primaryAnswer) {
-        if (primaryAnswer == null || primaryAnswer.isBlank()) {
-            return null;
-        }
-
-        return primaryAnswer.substring(0, 1);
-    }
 }

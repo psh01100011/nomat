@@ -370,7 +370,7 @@ class RoomServiceTest {
         assertThat(response.currentQuestion().questionId()).isEqualTo(100L);
         assertThat(response.currentQuestion().answerText()).isNull();
         assertThat(response.hintRevealed()).isTrue();
-        assertThat(response.hintText()).isEqualTo("정");
+        assertThat(response.hintText()).isEqualTo("ㅈㄷ");
         assertThat(response.skipVoteCount()).isEqualTo(1);
         assertThat(response.skipVoteThreshold()).isEqualTo(2);
         assertThat(response.currentUserSkipVoted()).isTrue();
