@@ -19,10 +19,12 @@ import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
 import com.dogdog.nomat.domain.room.dto.CurrentRoomResponse;
 import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
+import com.dogdog.nomat.domain.room.dto.ModifyRoomSettingsRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomCommand;
+import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomMember;
@@ -261,6 +263,35 @@ public class RoomService {
     }
 
     @Transactional
+    public RoomDetailResponse modifyRoomSettings(Long userId, Long roomId, ModifyRoomSettingsRequest request) {
+        getAuthenticatedUser(userId);
+        if (request == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        if (!room.isHost(userId)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access");
+        }
+        if (room.status() != RoomStatus.WAITING) {
+            throw new BusinessException(HttpStatus.CONFLICT, "cannot_modify_room_settings");
+        }
+
+        RoomState updatedRoom = room.withSettings(
+                hasPasswordToUpdate(room, request.password()),
+                passwordHashToUpdate(room, request.password()),
+                maxPlayersToUpdate(room, request.maxPlayers()),
+                selectedQuestionCountToUpdate(room, request.selectedQuestionCount()),
+                answerTimeLimitSecondsToUpdate(room, request.answerTimeLimitSeconds())
+        );
+
+        roomRedisRepository.saveRoom(updatedRoom);
+        roomEventPublisher.publish(List.of(RoomDomainEvent.roomSettingsUpdated(updatedRoom, LocalDateTime.now())));
+        return RoomDetailResponse.from(updatedRoom);
+    }
+
+    @Transactional
     public void leaveCurrentRoomByDisconnect(Long userId) {
         roomRedisRepository.findJoinedRoomId(userId)
                 .ifPresent(roomId -> leaveRoomByDisconnect(userId, roomId));
@@ -465,6 +496,54 @@ public class RoomService {
         if (selectedQuestionCount > map.getQuestionCount()) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
         }
+    }
+
+    private boolean hasPasswordToUpdate(RoomState room, String password) {
+        if (password == null) {
+            return room.hasPassword();
+        }
+
+        return StringUtils.hasText(password);
+    }
+
+    private String passwordHashToUpdate(RoomState room, String password) {
+        if (password == null) {
+            return room.passwordHash();
+        }
+
+        if (!StringUtils.hasText(password)) {
+            return null;
+        }
+
+        return passwordHash(normalizeRoomPassword(password));
+    }
+
+    private int maxPlayersToUpdate(RoomState room, Integer maxPlayers) {
+        if (maxPlayers == null) {
+            return room.maxPlayers();
+        }
+
+        if (maxPlayers < room.memberCount()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+
+        return maxPlayers;
+    }
+
+    private int selectedQuestionCountToUpdate(RoomState room, Integer selectedQuestionCount) {
+        if (selectedQuestionCount == null) {
+            return room.selectedQuestionCount();
+        }
+
+        if (selectedQuestionCount > room.mapQuestionCount()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+
+        return selectedQuestionCount;
+    }
+
+    private int answerTimeLimitSecondsToUpdate(RoomState room, Integer answerTimeLimitSeconds) {
+        return answerTimeLimitSeconds == null ? room.answerTimeLimitSeconds() : answerTimeLimitSeconds;
     }
 
     private String normalizeRoomTitle(String title) {

@@ -29,6 +29,9 @@ public record RoomDomainEvent(
         LocalDateTime startedAt,
         LocalDateTime endsAt,
         Boolean audioRepeatEnabled,
+        Boolean hasPassword,
+        Integer maxPlayers,
+        Integer selectedQuestionCount,
         Integer answerTimeLimitSeconds,
         Boolean initialHintEnabled,
         Integer initialHintTriggerSeconds,
@@ -63,6 +66,19 @@ public record RoomDomainEvent(
 
     public static RoomDomainEvent memberKicked(RoomState room, Long targetUserId, LocalDateTime occurredAt) {
         return base(RoomDomainEventType.MEMBER_KICKED, room.roomId(), null, targetUserId, room.memberCount(), occurredAt);
+    }
+
+    public static RoomDomainEvent roomSettingsUpdated(RoomState room, LocalDateTime occurredAt) {
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.ROOM_SETTINGS_UPDATED)
+                .roomId(room.roomId())
+                .memberCount(room.memberCount())
+                .hasPassword(room.hasPassword())
+                .maxPlayers(room.maxPlayers())
+                .selectedQuestionCount(room.selectedQuestionCount())
+                .answerTimeLimitSeconds(room.answerTimeLimitSeconds())
+                .occurredAt(occurredAt)
+                .build();
     }
 
     public static RoomDomainEvent roomClosed(

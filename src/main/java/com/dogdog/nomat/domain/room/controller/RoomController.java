@@ -4,6 +4,7 @@ import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
 import com.dogdog.nomat.domain.room.dto.CurrentRoomResponse;
 import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
+import com.dogdog.nomat.domain.room.dto.ModifyRoomSettingsRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
@@ -16,6 +17,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -102,6 +104,16 @@ public class RoomController {
         Long userId = getUserId(jwt);
         roomService.leaveRoom(userId, roomId);
         return ApiResponse.success("success_leave_room");
+    }
+
+    @PatchMapping("/{roomId}/settings")
+    public ApiResponse<RoomDetailResponse> modifyRoomSettings(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long roomId,
+            @Valid @RequestBody ModifyRoomSettingsRequest request
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_modify_room_settings", roomService.modifyRoomSettings(userId, roomId, request));
     }
 
     @DeleteMapping("/{roomId}")

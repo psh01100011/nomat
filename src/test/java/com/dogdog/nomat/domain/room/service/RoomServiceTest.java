@@ -25,6 +25,7 @@ import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
 import com.dogdog.nomat.domain.room.dto.CurrentRoomResponse;
 import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
+import com.dogdog.nomat.domain.room.dto.ModifyRoomSettingsRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
@@ -635,6 +636,59 @@ class RoomServiceTest {
                         && events.get(0).type() == RoomDomainEventType.MEMBER_LEFT
                         && events.get(1).type() == RoomDomainEventType.ROOM_CLOSED
         ));
+    }
+
+    @Test
+    void modifyRoomSettingsUpdatesWaitingRoomAndPublishesEvent() {
+        User host = user(3L);
+        RoomState room = passwordRoom(25L, "encoded-password");
+        ModifyRoomSettingsRequest request = new ModifyRoomSettingsRequest("", 8, 5, 45);
+        given(userRepository.findById(3L)).willReturn(Optional.of(host));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        RoomDetailResponse response = roomService.modifyRoomSettings(3L, 25L, request);
+
+        assertThat(response.hasPassword()).isFalse();
+        assertThat(response.maxPlayers()).isEqualTo(8);
+        assertThat(response.selectedQuestionCount()).isEqualTo(5);
+        assertThat(response.answerTimeLimitSeconds()).isEqualTo(45);
+
+        ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
+        verify(roomRedisRepository).saveRoom(roomCaptor.capture());
+        RoomState savedRoom = roomCaptor.getValue();
+        assertThat(savedRoom.hasPassword()).isFalse();
+        assertThat(savedRoom.passwordHash()).isNull();
+        assertThat(savedRoom.maxPlayers()).isEqualTo(8);
+        assertThat(savedRoom.selectedQuestionCount()).isEqualTo(5);
+        assertThat(savedRoom.answerTimeLimitSeconds()).isEqualTo(45);
+
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 1
+                        && events.getFirst().type() == RoomDomainEventType.ROOM_SETTINGS_UPDATED
+                        && events.getFirst().roomId().equals(25L)
+                        && events.getFirst().hasPassword().equals(false)
+                        && events.getFirst().maxPlayers() == 8
+                        && events.getFirst().selectedQuestionCount() == 5
+                        && events.getFirst().answerTimeLimitSeconds() == 45
+        ));
+    }
+
+    @Test
+    void modifyRoomSettingsRejectsNonHost() {
+        User member = user(4L);
+        RoomState room = roomWithMember(25L, member(4L));
+        given(userRepository.findById(4L)).willReturn(Optional.of(member));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        assertThatThrownBy(() -> roomService.modifyRoomSettings(
+                4L,
+                25L,
+                new ModifyRoomSettingsRequest(null, 8, null, null)
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("forbidden_room_access");
+
+        verify(roomRedisRepository, never()).saveRoom(any(RoomState.class));
     }
 
     @Test
