@@ -49,7 +49,7 @@ public class GamePlayerResult {
     @Column(name = "score", nullable = false)
     private int score;
 
-    @Column(name = "rank")
+    @Column(name = "player_rank")
     private Integer rank;
 
     @Column(name = "correct_count", nullable = false)
