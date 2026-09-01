@@ -78,6 +78,10 @@ public class User {
         this.profileImageAsset = profileImageAsset;
     }
 
+    public void removeProfileImage() {
+        this.profileImageAsset = null;
+    }
+
     public void changePassword(String passwordHash) {
         this.passwordHash = passwordHash;
     }

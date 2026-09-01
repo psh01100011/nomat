@@ -84,6 +84,12 @@ public class UserService {
     }
 
     @Transactional
+    public void removeProfileImage(Long userId) {
+        User user = getAuthenticatedUser(userId);
+        user.removeProfileImage();
+    }
+
+    @Transactional
     public void modifyPassword(Long userId, ModifyPasswordRequest request) {
         User user = getAuthenticatedUser(userId);
         validatePasswordVerificationToken(user, request.passwordVerificationToken());

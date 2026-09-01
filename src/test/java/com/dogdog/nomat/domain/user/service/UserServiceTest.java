@@ -244,6 +244,27 @@ class UserServiceTest {
     }
 
     @Test
+    void removeProfileImageClearsCurrentProfileImage() {
+        User user = activeUser(1L);
+        Asset asset = imageAsset(10L, user);
+        ReflectionTestUtils.setField(user, "profileImageAsset", asset);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+
+        userService.removeProfileImage(1L);
+
+        assertThat(user.getProfileImageAsset()).isNull();
+    }
+
+    @Test
+    void removeProfileImageRejectsUnknownUserId() {
+        given(userRepository.findById(1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.removeProfileImage(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+    }
+
+    @Test
     void modifyPasswordChangesPasswordHash() {
         User user = activeUser(1L);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
