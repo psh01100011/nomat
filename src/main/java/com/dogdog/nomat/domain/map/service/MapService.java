@@ -44,6 +44,8 @@ import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -76,6 +78,7 @@ public class MapService {
     private static final int MAX_QUESTION_PROMPT_LENGTH = 200;
     private static final int MAX_ANSWER_COUNT = 20;
     private static final int MAX_ANSWER_LENGTH = 50;
+    private static final int MAX_YOUTUBE_URL_LENGTH = 500;
     private static final long MAX_YOUTUBE_CLIP_DURATION_MS = 90_000L;
 
     private final UserRepository userRepository;
@@ -777,7 +780,7 @@ public class MapService {
                 question,
                 asset,
                 sourceType,
-                media.sourceUrl(),
+                normalizeMediaSourceUrl(sourceType, media.sourceUrl()),
                 startTimeMs,
                 endTimeMs,
                 durationMs
@@ -1141,9 +1144,7 @@ public class MapService {
         }
 
         if (sourceType == QuestionMediaSourceType.YOUTUBE) {
-            if (!StringUtils.hasText(media.sourceUrl())) {
-                throw invalidRequest();
-            }
+            validateYoutubeUrl(media.sourceUrl());
             validateMediaTimeRange(media.startTimeMs(), media.endTimeMs());
             return;
         }
@@ -1172,9 +1173,7 @@ public class MapService {
         }
 
         if (sourceType == QuestionMediaSourceType.YOUTUBE) {
-            if (!StringUtils.hasText(media.sourceUrl())) {
-                throw invalidRequest();
-            }
+            validateYoutubeUrl(media.sourceUrl());
             validateMediaTimeRange(media.startTimeMs(), media.endTimeMs());
             return;
         }
@@ -1226,6 +1225,9 @@ public class MapService {
             if (questionType == QuestionType.IMAGE || questionType == QuestionType.TEXT) {
                 throw invalidRequest();
             }
+            if (StringUtils.hasText(media.sourceUrl())) {
+                validateYoutubeUrl(media.sourceUrl());
+            }
             validateDraftMediaTimeRange(media.startTimeMs(), media.endTimeMs());
             return;
         }
@@ -1265,6 +1267,63 @@ public class MapService {
         toIntegerMillis(startTimeMs);
         toIntegerMillis(endTimeMs);
         toIntegerMillis(endTimeMs - startTimeMs);
+    }
+
+    private void validateYoutubeUrl(String sourceUrl) {
+        if (!StringUtils.hasText(sourceUrl) || sourceUrl.trim().length() > MAX_YOUTUBE_URL_LENGTH) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        URI uri;
+        try {
+            uri = new URI(sourceUrl.trim());
+        } catch (URISyntaxException exception) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        String scheme = uri.getScheme();
+        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        String host = uri.getHost();
+        if (host == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        String normalizedHost = host.toLowerCase(Locale.ROOT);
+        String path = uri.getPath() == null ? "" : uri.getPath();
+        if ("youtu.be".equals(normalizedHost)) {
+            if (path.length() > 1) {
+                return;
+            }
+
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        if (isYoutubeComHost(normalizedHost)
+                && (isYoutubeWatchUrl(path, uri.getQuery()) || isYoutubeShortsUrl(path))) {
+            return;
+        }
+
+        throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+    }
+
+    private boolean isYoutubeComHost(String host) {
+        return "youtube.com".equals(host)
+                || "www.youtube.com".equals(host)
+                || "m.youtube.com".equals(host);
+    }
+
+    private boolean isYoutubeWatchUrl(String path, String query) {
+        return "/watch".equals(path)
+                && query != null
+                && List.of(query.split("&")).stream()
+                        .anyMatch(parameter -> parameter.startsWith("v=") && parameter.length() > 2);
+    }
+
+    private boolean isYoutubeShortsUrl(String path) {
+        return path.startsWith("/shorts/") && path.length() > "/shorts/".length();
     }
 
     private void saveQuestion(
@@ -1372,7 +1431,7 @@ public class MapService {
                 question,
                 asset,
                 sourceType,
-                media.sourceUrl(),
+                normalizeMediaSourceUrl(sourceType, media.sourceUrl()),
                 startTimeMs,
                 endTimeMs,
                 durationMs
@@ -1405,11 +1464,19 @@ public class MapService {
                 question,
                 asset,
                 sourceType,
-                media.sourceUrl(),
+                normalizeMediaSourceUrl(sourceType, media.sourceUrl()),
                 startTimeMs,
                 endTimeMs,
                 durationMs
         );
+    }
+
+    private String normalizeMediaSourceUrl(QuestionMediaSourceType sourceType, String sourceUrl) {
+        if (sourceType != QuestionMediaSourceType.YOUTUBE || sourceUrl == null) {
+            return sourceUrl;
+        }
+
+        return sourceUrl.trim();
     }
 
     private void validateQuestionPrompt(String promptText) {

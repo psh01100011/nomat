@@ -1125,6 +1125,59 @@ class MapServiceTest {
     }
 
     @Test
+    void createMapAcceptsYoutubeShortsUrlAndStoresTrimmedUrl() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        CreateMapRequest request = audioYoutubeMapRequestWithUrl(" https://www.youtube.com/shorts/abc123 ");
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
+        given(quizMapRepository.save(any(QuizMap.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(questionRepository.save(any(Question.class))).willAnswer(invocation -> invocation.getArgument(0));
+
+        mapService.createMap(1L, request);
+
+        ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
+        verify(questionMediaRepository).save(mediaCaptor.capture());
+        assertThat(mediaCaptor.getValue().getSourceUrl()).isEqualTo("https://www.youtube.com/shorts/abc123");
+    }
+
+    @Test
+    void createMapAcceptsYoutuBeUrl() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        CreateMapRequest request = audioYoutubeMapRequestWithUrl("https://youtu.be/abc123");
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
+        given(quizMapRepository.save(any(QuizMap.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(questionRepository.save(any(Question.class))).willAnswer(invocation -> invocation.getArgument(0));
+
+        mapService.createMap(1L, request);
+
+        ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
+        verify(questionMediaRepository).save(mediaCaptor.capture());
+        assertThat(mediaCaptor.getValue().getSourceUrl()).isEqualTo("https://youtu.be/abc123");
+    }
+
+    @Test
+    void createMapRejectsUnsupportedYoutubeUrl() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        CreateMapRequest request = audioYoutubeMapRequestWithUrl("https://example.com/watch?v=abc123");
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
+
+        assertThatThrownBy(() -> mapService.createMap(1L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_youtube_url");
+
+        verify(quizMapRepository, never()).save(any(QuizMap.class));
+        verify(questionMediaRepository, never()).save(any(QuestionMedia.class));
+    }
+
+    @Test
     void createMapAttachesThumbnailImageAsset() {
         User creator = activeUser(1L);
         Category category = category(10L);
@@ -1243,6 +1296,14 @@ class MapServiceTest {
     }
 
     private CreateMapRequest audioYoutubeMapRequest(Long thumbnailAssetId) {
+        return audioYoutubeMapRequest(thumbnailAssetId, "https://youtube.com/watch?v=---");
+    }
+
+    private CreateMapRequest audioYoutubeMapRequestWithUrl(String sourceUrl) {
+        return audioYoutubeMapRequest(null, sourceUrl);
+    }
+
+    private CreateMapRequest audioYoutubeMapRequest(Long thumbnailAssetId, String sourceUrl) {
         return new CreateMapRequest(
                 "20년대 아이돌 노래 맞히기",
                 10L,
@@ -1255,7 +1316,7 @@ class MapServiceTest {
                         new CreateMapRequest.MediaRequest(
                                 "YOUTUBE",
                                 null,
-                                "https://youtube.com/watch?v=---",
+                                sourceUrl,
                                 60000L,
                                 102000L
                         ),

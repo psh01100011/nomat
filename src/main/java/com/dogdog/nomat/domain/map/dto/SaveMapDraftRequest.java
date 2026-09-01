@@ -40,7 +40,7 @@ public record SaveMapDraftRequest(
 
             Long assetId,
 
-            @Size(max = 500)
+            @Size(max = 500, message = "invalid_youtube_url")
             String sourceUrl,
 
             Long startTimeMs,
