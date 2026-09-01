@@ -23,6 +23,7 @@ import com.dogdog.nomat.domain.map.repository.QuestionRepository;
 import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.CurrentRoomResponse;
 import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
@@ -154,10 +155,13 @@ class RoomServiceTest {
         given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
                 .willReturn(Optional.of(map));
         given(roomRedisRepository.findJoinedRoomId(3L)).willReturn(Optional.of(99L));
+        given(roomRedisRepository.findById(99L)).willReturn(Optional.of(room(99L, "참여 중인 방", 15L, 10)));
 
         assertThatThrownBy(() -> roomService.createRoom(3L, request(15L, null, 10)))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("already_joined_room");
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getMessageCode()).isEqualTo("already_joined_room");
+                    assertThat(exception.getData()).isEqualTo(new CurrentRoomResponse(99L, "WAITING"));
+                });
 
         verify(roomRedisRepository, never()).nextRoomId();
     }
@@ -204,6 +208,15 @@ class RoomServiceTest {
         assertThat(response.rooms()).hasSize(1);
         assertThat(response.rooms().getFirst().roomId()).isEqualTo(25L);
         assertThat(response.rooms().getFirst().status()).isEqualTo("WAITING");
+        assertThat(response.rooms().getFirst().questionType()).isEqualTo("AUDIO");
+        assertThat(response.rooms().getFirst().categoryId()).isEqualTo(7L);
+        assertThat(response.rooms().getFirst().categoryName()).isEqualTo("음악");
+        assertThat(response.rooms().getFirst().thumbnailUrl()).isEqualTo("https://cdn.example.com/thumbnail.png");
+        assertThat(response.rooms().getFirst().selectedQuestionCount()).isEqualTo(10);
+        assertThat(response.rooms().getFirst().answerTimeLimitSeconds()).isEqualTo(30);
+        assertThat(response.rooms().getFirst().timeLimitMode()).isEqualTo("FIXED");
+        assertThat(response.rooms().getFirst().initialHintEnabled()).isTrue();
+        assertThat(response.rooms().getFirst().initialHintTriggerSeconds()).isEqualTo(10);
         assertThat(response.totalElements()).isEqualTo(1);
         assertThat(response.totalPages()).isEqualTo(1);
         assertThat(response.hasNext()).isFalse();
@@ -226,6 +239,32 @@ class RoomServiceTest {
         assertThat(response.rooms().getFirst().roomId()).isEqualTo(25L);
         assertThat(response.rooms().getFirst().mapId()).isEqualTo(15L);
         assertThat(response.rooms().getFirst().status()).isEqualTo("PLAYING");
+    }
+
+    @Test
+    void getRoomsFiltersByQuestionTypeAndPassword() {
+        RoomState targetRoom = room(25L, "오디오 방", 15L, 10);
+        RoomState passwordRoom = room(26L, "비밀번호 방", 15L, 10, true, "IMAGE");
+        RoomState otherQuestionTypeRoom = room(27L, "이미지 방", 15L, 10, false, "IMAGE");
+        given(roomRedisRepository.findRooms("latest"))
+                .willReturn(List.of(targetRoom, passwordRoom, otherQuestionTypeRoom));
+
+        RoomListResponse response = roomService.getRooms(
+                null,
+                null,
+                null,
+                "audio",
+                false,
+                true,
+                null,
+                false,
+                0,
+                20,
+                "latest"
+        );
+
+        assertThat(response.rooms()).hasSize(1);
+        assertThat(response.rooms().getFirst().roomId()).isEqualTo(25L);
     }
 
     @Test
@@ -268,6 +307,29 @@ class RoomServiceTest {
     }
 
     @Test
+    void getCurrentRoomReturnsJoinedRoomStatus() {
+        User user = user(3L);
+        given(userRepository.findById(3L)).willReturn(Optional.of(user));
+        given(roomRedisRepository.findJoinedRoomId(3L)).willReturn(Optional.of(25L));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room(25L, "참여 중인 방", 15L, 10)));
+
+        CurrentRoomResponse response = roomService.getCurrentRoom(3L);
+
+        assertThat(response).isEqualTo(new CurrentRoomResponse(25L, "WAITING"));
+    }
+
+    @Test
+    void getCurrentRoomReturnsNullWhenUserHasNoRoom() {
+        User user = user(3L);
+        given(userRepository.findById(3L)).willReturn(Optional.of(user));
+        given(roomRedisRepository.findJoinedRoomId(3L)).willReturn(Optional.empty());
+
+        CurrentRoomResponse response = roomService.getCurrentRoom(3L);
+
+        assertThat(response).isNull();
+    }
+
+    @Test
     void getRoomsRejectsInvalidPageSizeAndSort() {
         assertThatThrownBy(() -> roomService.getRooms(null, null, null, null, true, -1, 20, "latest"))
                 .isInstanceOf(BusinessException.class)
@@ -304,7 +366,7 @@ class RoomServiceTest {
         assertThat(response.map().title()).isEqualTo("20년대 아이돌 노래 맞히기");
         assertThat(response.map().categoryId()).isEqualTo(7L);
         assertThat(response.map().categoryName()).isEqualTo("음악");
-        assertThat(response.map().thumbnailUrl()).isNull();
+        assertThat(response.map().thumbnailUrl()).isEqualTo("https://cdn.example.com/thumbnail.png");
         assertThat(response.map().questionCount()).isEqualTo(20);
         assertThat(response.hostUserId()).isEqualTo(3L);
         assertThat(response.memberCount()).isEqualTo(1);
@@ -374,10 +436,13 @@ class RoomServiceTest {
         User member = user(4L);
         given(userRepository.findById(4L)).willReturn(Optional.of(member));
         given(roomRedisRepository.findJoinedRoomId(4L)).willReturn(Optional.of(99L));
+        given(roomRedisRepository.findById(99L)).willReturn(Optional.of(room(99L, "참여 중인 방", 15L, 10)));
 
         assertThatThrownBy(() -> roomService.joinRoom(4L, 25L, new JoinRoomRequest(null)))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("already_joined_room");
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getMessageCode()).isEqualTo("already_joined_room");
+                    assertThat(exception.getData()).isEqualTo(new CurrentRoomResponse(99L, "WAITING"));
+                });
 
         verify(roomRedisRepository, never()).findById(25L);
         verify(roomRedisRepository, never()).saveJoinedRoom(any(RoomState.class), eq(4L));
@@ -779,6 +844,27 @@ class RoomServiceTest {
         return room(roomId, title, mapId, maxPlayers, 7L, "음악");
     }
 
+    private RoomState room(
+            Long roomId,
+            String title,
+            Long mapId,
+            int maxPlayers,
+            boolean hasPassword,
+            String questionType
+    ) {
+        return room(
+                roomId,
+                title,
+                mapId,
+                maxPlayers,
+                7L,
+                "음악",
+                "20년대 아이돌 노래 맞히기",
+                hasPassword,
+                questionType
+        );
+    }
+
     private RoomState roomWithMember(Long roomId, RoomMember member) {
         return room(roomId, "아이돌 노래 맞히기", 15L, 10).withJoinedMember(member);
     }
@@ -788,7 +874,17 @@ class RoomServiceTest {
     }
 
     private RoomState room(Long roomId, String title, Long mapId, int maxPlayers, Long categoryId, String categoryName) {
-        return room(roomId, title, mapId, maxPlayers, categoryId, categoryName, "20년대 아이돌 노래 맞히기");
+        return room(
+                roomId,
+                title,
+                mapId,
+                maxPlayers,
+                categoryId,
+                categoryName,
+                "20년대 아이돌 노래 맞히기",
+                false,
+                "AUDIO"
+        );
     }
 
     private RoomState room(
@@ -800,18 +896,33 @@ class RoomServiceTest {
             String categoryName,
             String mapTitle
     ) {
+        return room(roomId, title, mapId, maxPlayers, categoryId, categoryName, mapTitle, false, "AUDIO");
+    }
+
+    private RoomState room(
+            Long roomId,
+            String title,
+            Long mapId,
+            int maxPlayers,
+            Long categoryId,
+            String categoryName,
+            String mapTitle,
+            boolean hasPassword,
+            String questionType
+    ) {
         return RoomState.waiting(
                 roomId,
                 title,
                 mapId,
                 mapTitle,
-                null,
+                questionType,
+                "https://cdn.example.com/thumbnail.png",
                 categoryId,
                 categoryName,
                 20,
                 3,
-                false,
-                null,
+                hasPassword,
+                hasPassword ? "encoded-password" : null,
                 maxPlayers,
                 10,
                 30,

@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.room.controller;
 
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.CurrentRoomResponse;
 import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
@@ -44,6 +45,9 @@ public class RoomController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Long mapId,
             @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false) String questionType,
+            @RequestParam(required = false) Boolean hasPassword,
+            @RequestParam(defaultValue = "false") boolean excludePasswordRooms,
             @RequestParam(required = false) String status,
             @RequestParam(defaultValue = "true") boolean joinableOnly,
             @RequestParam(defaultValue = "0") int page,
@@ -52,13 +56,31 @@ public class RoomController {
     ) {
         return ApiResponse.of(
                 "success_get_rooms",
-                roomService.getRooms(keyword, mapId, categoryId, status, joinableOnly, page, size, sort)
+                roomService.getRooms(
+                        keyword,
+                        mapId,
+                        categoryId,
+                        questionType,
+                        hasPassword,
+                        excludePasswordRooms,
+                        status,
+                        joinableOnly,
+                        page,
+                        size,
+                        sort
+                )
         );
     }
 
     @GetMapping("/{roomId}")
     public ApiResponse<RoomDetailResponse> getRoom(@PathVariable Long roomId) {
         return ApiResponse.of("success_get_room", roomService.getRoom(roomId));
+    }
+
+    @GetMapping("/me/current")
+    public ApiResponse<CurrentRoomResponse> getCurrentRoom(@AuthenticationPrincipal Jwt jwt) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_get_current_room", roomService.getCurrentRoom(userId));
     }
 
     @PostMapping("/{roomId}/join")
