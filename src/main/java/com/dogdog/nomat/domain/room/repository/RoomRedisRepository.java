@@ -7,6 +7,8 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -26,7 +28,7 @@ public class RoomRedisRepository {
     private static final String USER_ROOM_KEY_PREFIX = "users:rooms:";
     private static final String ROOM_CREATED_AT_INDEX_KEY = "rooms:index:created-at";
     private static final String ROOM_MEMBER_COUNT_INDEX_KEY = "rooms:index:member-count";
-    private static final Duration ROOM_TTL = Duration.ofHours(6);
+    private static final Duration ROOM_TTL = Duration.ofMinutes(30);
     private static final Duration CORRECT_ANSWER_LOCK_TTL = Duration.ofSeconds(3);
     private static final DefaultRedisScript<Long> RELEASE_LOCK_SCRIPT = new DefaultRedisScript<>("""
             if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -97,7 +99,7 @@ public class RoomRedisRepository {
 
     public boolean saveJoinedRoom(RoomState room, Long joinedUserId) {
         Boolean reserved = redisTemplate.opsForValue()
-                .setIfAbsent(userRoomKey(joinedUserId), String.valueOf(room.roomId()), ROOM_TTL);
+                .setIfAbsent(userRoomKey(joinedUserId), String.valueOf(room.roomId()), roomTtl(room.roomId()));
         if (!Boolean.TRUE.equals(reserved)) {
             return false;
         }
@@ -112,7 +114,7 @@ public class RoomRedisRepository {
     }
 
     public void saveRoom(RoomState room) {
-        redisTemplate.opsForValue().set(roomKey(room.roomId()), serialize(room), ROOM_TTL);
+        setWithRemainingTtl(roomKey(room.roomId()), serialize(room), ROOM_TTL);
         redisTemplate.opsForZSet().add(
                 ROOM_MEMBER_COUNT_INDEX_KEY,
                 String.valueOf(room.roomId()),
@@ -137,7 +139,7 @@ public class RoomRedisRepository {
 
     public void saveStartedRoom(RoomState room, RoomGameState gameState) {
         saveRoom(room);
-        redisTemplate.opsForValue().set(roomGameKey(room.roomId()), serialize(gameState), ROOM_TTL);
+        redisTemplate.opsForValue().set(roomGameKey(room.roomId()), serialize(gameState), roomTtl(room.roomId()));
     }
 
     public Optional<RoomGameState> findGameState(Long roomId) {
@@ -150,7 +152,7 @@ public class RoomRedisRepository {
     }
 
     public void saveGameState(RoomGameState gameState) {
-        redisTemplate.opsForValue().set(roomGameKey(gameState.roomId()), serialize(gameState), ROOM_TTL);
+        setWithRemainingTtl(roomGameKey(gameState.roomId()), serialize(gameState), () -> roomTtl(gameState.roomId()));
     }
 
     public Optional<RoomGameState> tryRecordCorrectAnswer(
@@ -213,6 +215,27 @@ public class RoomRedisRepository {
 
     private RoomState deserialize(String room) {
         return deserialize(room, RoomState.class);
+    }
+
+    private void setWithRemainingTtl(String key, String value, Duration fallbackTtl) {
+        setWithRemainingTtl(key, value, () -> fallbackTtl);
+    }
+
+    private void setWithRemainingTtl(String key, String value, Supplier<Duration> fallbackTtl) {
+        redisTemplate.opsForValue().set(key, value, remainingTtl(key).orElseGet(fallbackTtl));
+    }
+
+    private Duration roomTtl(Long roomId) {
+        return remainingTtl(roomKey(roomId)).orElse(ROOM_TTL);
+    }
+
+    private Optional<Duration> remainingTtl(String key) {
+        Long seconds = redisTemplate.getExpire(key, TimeUnit.SECONDS);
+        if (seconds == null || seconds <= 0) {
+            return Optional.empty();
+        }
+
+        return Optional.of(Duration.ofSeconds(seconds));
     }
 
     private <T> T deserialize(String value, Class<T> valueType) {

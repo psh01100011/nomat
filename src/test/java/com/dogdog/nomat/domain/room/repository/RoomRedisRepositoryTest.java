@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentMatchers;
@@ -67,12 +68,24 @@ class RoomRedisRepositoryTest {
         assertThat(result.get().currentQuestionWinnerUserId()).isEqualTo(3L);
         assertThat(result.get().currentQuestionWinnerAnswer()).isEqualTo("정 답");
         assertThat(result.get().scores()).containsEntry(3L, 100);
-        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofHours(6));
+        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(30));
         verify(redisTemplate).execute(
                 ArgumentMatchers.<RedisScript<Long>>any(),
                 eq(List.of("rooms:games:25:correct-answer-lock:0")),
                 anyString()
         );
+    }
+
+    @Test
+    void saveGameStatePreservesRemainingGameStateTtl() throws Exception {
+        RoomGameState gameState = gameState();
+        given(redisTemplate.opsForValue()).willReturn(valueOperations);
+        given(objectMapper.writeValueAsString(gameState)).willReturn("saved-game-state");
+        given(redisTemplate.getExpire("rooms:games:25", TimeUnit.SECONDS)).willReturn(600L);
+
+        roomRedisRepository.saveGameState(gameState);
+
+        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(10));
     }
 
     @Test
