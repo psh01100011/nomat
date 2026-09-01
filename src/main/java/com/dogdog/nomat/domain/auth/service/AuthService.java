@@ -59,6 +59,15 @@ public class AuthService {
     @Transactional(readOnly = true)
     public RefreshResponse refresh(String authorizationHeader) {
         String refreshToken = getBearerToken(authorizationHeader);
+        return refreshWithToken(refreshToken);
+    }
+
+    @Transactional(readOnly = true)
+    public RefreshResponse refreshWithToken(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw invalidToken();
+        }
+
         Jwt refreshJwt = decodeRefreshToken(refreshToken);
         Long userId = getUserId(refreshJwt);
 

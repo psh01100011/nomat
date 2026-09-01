@@ -1,7 +1,9 @@
 package com.dogdog.nomat.global.config;
 
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
+import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -38,6 +40,7 @@ public class SecurityConfig {
     private static final String ACCESS_TOKEN_TYPE = "access";
     private static final String REFRESH_TOKEN_TYPE = "refresh";
     private static final String PASSWORD_VERIFICATION_TOKEN_TYPE = "password_verification";
+    private static final String ACCESS_TOKEN_COOKIE_NAME = "access_token";
 
     @Bean
     public SecurityFilterChain securityFilterChain(
@@ -122,7 +125,22 @@ public class SecurityConfig {
                 return null;
             }
 
-            return delegate.resolve(request);
+            String token = delegate.resolve(request);
+            if (token != null) {
+                return token;
+            }
+
+            Cookie[] cookies = request.getCookies();
+            if (cookies == null) {
+                return null;
+            }
+
+            return Arrays.stream(cookies)
+                    .filter(cookie -> ACCESS_TOKEN_COOKIE_NAME.equals(cookie.getName()))
+                    .map(Cookie::getValue)
+                    .filter(value -> value != null && !value.isBlank())
+                    .findFirst()
+                    .orElse(null);
         };
     }
 

@@ -7,9 +7,14 @@ import com.dogdog.nomat.domain.auth.dto.SignupRequest;
 import com.dogdog.nomat.domain.auth.service.AuthService;
 import com.dogdog.nomat.global.dto.ApiResponse;
 import jakarta.validation.Valid;
+import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -22,7 +27,22 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/auth")
 public class AuthController {
 
+    private static final String ACCESS_TOKEN_COOKIE_NAME = "access_token";
+    private static final String REFRESH_TOKEN_COOKIE_NAME = "refresh_token";
+
     private final AuthService authService;
+
+    @Value("${app.auth.jwt.access-token-validity-seconds}")
+    private long accessTokenValiditySeconds;
+
+    @Value("${app.auth.jwt.refresh-token-validity-seconds}")
+    private long refreshTokenValiditySeconds;
+
+    @Value("${app.auth.cookie.secure:false}")
+    private boolean cookieSecure;
+
+    @Value("${app.auth.cookie.same-site:Lax}")
+    private String cookieSameSite;
 
     @PostMapping("/signup")
     @ResponseStatus(HttpStatus.CREATED)
@@ -33,22 +53,71 @@ public class AuthController {
 
     @PostMapping("/login")
     @ResponseStatus(HttpStatus.OK)
-    public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
-        return ApiResponse.of("success_login", authService.login(request));
+    public ApiResponse<LoginResponse> login(
+            @Valid @RequestBody LoginRequest request,
+            jakarta.servlet.http.HttpServletResponse response
+    ) {
+        LoginResponse loginResponse = authService.login(request);
+        addAuthCookies(response, loginResponse.accessToken(), loginResponse.refreshToken());
+        return ApiResponse.of("success_login", loginResponse);
     }
 
     @PostMapping("/refresh")
     @ResponseStatus(HttpStatus.OK)
     public ApiResponse<RefreshResponse> refresh(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorizationHeader
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorizationHeader,
+            @CookieValue(value = REFRESH_TOKEN_COOKIE_NAME, required = false) String refreshTokenCookie,
+            jakarta.servlet.http.HttpServletResponse response
     ) {
-        return ApiResponse.of("success_refresh", authService.refresh(authorizationHeader));
+        RefreshResponse refreshResponse = StringUtils.hasText(authorizationHeader)
+                ? authService.refresh(authorizationHeader)
+                : authService.refreshWithToken(refreshTokenCookie);
+        addCookie(response, ACCESS_TOKEN_COOKIE_NAME, refreshResponse.accessToken(), accessTokenValiditySeconds);
+        return ApiResponse.of("success_refresh", refreshResponse);
     }
 
     // TODO: refreshToken 저장소 도입 시 로그아웃에서 refreshToken 폐기 처리 구현
     @PostMapping("/logout")
     @ResponseStatus(HttpStatus.OK)
-    public ApiResponse<Void> logout() {
+    public ApiResponse<Void> logout(jakarta.servlet.http.HttpServletResponse response) {
+        clearCookie(response, ACCESS_TOKEN_COOKIE_NAME);
+        clearCookie(response, REFRESH_TOKEN_COOKIE_NAME);
         return ApiResponse.success("success_logout");
+    }
+
+    private void addAuthCookies(
+            jakarta.servlet.http.HttpServletResponse response,
+            String accessToken,
+            String refreshToken
+    ) {
+        addCookie(response, ACCESS_TOKEN_COOKIE_NAME, accessToken, accessTokenValiditySeconds);
+        addCookie(response, REFRESH_TOKEN_COOKIE_NAME, refreshToken, refreshTokenValiditySeconds);
+    }
+
+    private void addCookie(
+            jakarta.servlet.http.HttpServletResponse response,
+            String name,
+            String value,
+            long maxAgeSeconds
+    ) {
+        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(name, value)
+                .httpOnly(true)
+                .secure(cookieSecure)
+                .sameSite(cookieSameSite)
+                .path("/")
+                .maxAge(Duration.ofSeconds(maxAgeSeconds))
+                .build()
+                .toString());
+    }
+
+    private void clearCookie(jakarta.servlet.http.HttpServletResponse response, String name) {
+        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(name, "")
+                .httpOnly(true)
+                .secure(cookieSecure)
+                .sameSite(cookieSameSite)
+                .path("/")
+                .maxAge(Duration.ZERO)
+                .build()
+                .toString());
     }
 }
