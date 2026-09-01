@@ -26,8 +26,10 @@ import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
 import com.dogdog.nomat.domain.room.dto.CurrentRoomResponse;
 import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
+import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
+import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
@@ -38,6 +40,7 @@ import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -327,6 +330,51 @@ class RoomServiceTest {
         CurrentRoomResponse response = roomService.getCurrentRoom(3L);
 
         assertThat(response).isNull();
+    }
+
+    @Test
+    void getGameSnapshotReturnsCurrentGameStateForRoomMember() {
+        User user = user(4L);
+        RoomState room = room(25L, "참여 중인 방", 15L, 10).withJoinedMember(member(4L)).started("seed", now());
+        RoomGameQuestion question = new RoomGameQuestion(
+                100L,
+                1,
+                "문제 지문",
+                List.of("정답"),
+                "정답",
+                "https://cdn.example.com/audio.mp3",
+                "YOUTUBE",
+                1000,
+                4000,
+                3000
+        );
+        RoomGameState gameState = RoomGameState.started(
+                        25L,
+                        "seed",
+                        List.of(question),
+                        Map.of(3L, 100, 4L, 0),
+                        now()
+                )
+                .withStartedQuestion(0, now(), 30)
+                .withHintRevealed()
+                .withSkipVote(4L);
+
+        given(userRepository.findById(4L)).willReturn(Optional.of(user));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+
+        RoomGameSnapshotResponse response = roomService.getGameSnapshot(4L, 25L);
+
+        assertThat(response.roomId()).isEqualTo(25L);
+        assertThat(response.status()).isEqualTo("PLAYING");
+        assertThat(response.currentQuestion().questionId()).isEqualTo(100L);
+        assertThat(response.currentQuestion().answerText()).isNull();
+        assertThat(response.hintRevealed()).isTrue();
+        assertThat(response.hintText()).isEqualTo("정");
+        assertThat(response.skipVoteCount()).isEqualTo(1);
+        assertThat(response.skipVoteThreshold()).isEqualTo(2);
+        assertThat(response.currentUserSkipVoted()).isTrue();
+        assertThat(response.scores()).hasSize(2);
     }
 
     @Test

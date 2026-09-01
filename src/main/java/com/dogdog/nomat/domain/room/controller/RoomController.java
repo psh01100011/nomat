@@ -5,6 +5,7 @@ import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
 import com.dogdog.nomat.domain.room.dto.CurrentRoomResponse;
 import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
+import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.service.RoomService;
 import com.dogdog.nomat.global.dto.ApiResponse;
@@ -131,6 +132,15 @@ public class RoomController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_start_game", roomService.startGame(userId, roomId));
+    }
+
+    @GetMapping("/{roomId}/game/snapshot")
+    public ApiResponse<RoomGameSnapshotResponse> getGameSnapshot(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long roomId
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_get_game_snapshot", roomService.getGameSnapshot(userId, roomId));
     }
 
     private Long getUserId(Jwt jwt) {

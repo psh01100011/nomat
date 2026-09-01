@@ -20,6 +20,7 @@ import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
 import com.dogdog.nomat.domain.room.dto.CurrentRoomResponse;
 import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
+import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomCommand;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
@@ -205,6 +206,19 @@ public class RoomService {
                 .orElse(null);
     }
 
+    @Transactional(readOnly = true)
+    public RoomGameSnapshotResponse getGameSnapshot(Long userId, Long roomId) {
+        getAuthenticatedUser(userId);
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        if (!room.hasMember(userId)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access");
+        }
+
+        RoomGameState gameState = roomRedisRepository.findGameState(roomId).orElse(null);
+        return RoomGameSnapshotResponse.of(room, gameState, userId, skipVoteThreshold(room.memberCount()));
+    }
+
     @Transactional
     public RoomDetailResponse joinRoom(Long userId, Long roomId, JoinRoomRequest request) {
         User user = getAuthenticatedUser(userId);
@@ -345,6 +359,10 @@ public class RoomService {
                             .orElseGet(() -> CurrentRoomResponse.of(roomId, null));
                     throw new BusinessException(HttpStatus.CONFLICT, "already_joined_room", currentRoom);
                 });
+    }
+
+    private int skipVoteThreshold(int memberCount) {
+        return memberCount / 2 + 1;
     }
 
     private List<RoomGameQuestion> selectQuestions(RoomState room, String randomSeed) {
