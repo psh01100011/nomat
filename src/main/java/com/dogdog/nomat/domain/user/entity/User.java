@@ -91,10 +91,10 @@ public class User {
             return;
         }
 
-        // TODO: 맵/댓글 응답 DTO에서 탈퇴한 유저를 익명 사용자로 표시하도록 처리
         this.loginId = "deleted_user_" + id;
         this.passwordHash = "deleted";
         this.nickname = "deleted_user_" + id;
+        this.email = null;
         this.profileImageAsset = null;
         this.status = UserStatus.DELETED;
         this.deletedAt = LocalDateTime.now();

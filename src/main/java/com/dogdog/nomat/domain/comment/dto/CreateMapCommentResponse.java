@@ -1,14 +1,13 @@
 package com.dogdog.nomat.domain.comment.dto;
 
-import com.dogdog.nomat.domain.asset.entity.Asset;
 import com.dogdog.nomat.domain.comment.entity.MapComment;
-import com.dogdog.nomat.domain.user.entity.User;
+import com.dogdog.nomat.domain.user.dto.UserSummaryResponse;
 import java.time.LocalDateTime;
 
 public record CreateMapCommentResponse(
         Long commentId,
         String content,
-        WriterResponse writer,
+        UserSummaryResponse writer,
         LocalDateTime createdAt
 ) {
 
@@ -16,24 +15,8 @@ public record CreateMapCommentResponse(
         return new CreateMapCommentResponse(
                 comment.getId(),
                 comment.getContent(),
-                WriterResponse.from(comment.getWriter()),
+                UserSummaryResponse.from(comment.getWriter()),
                 comment.getCreatedAt()
         );
-    }
-
-    public record WriterResponse(
-            Long userId,
-            String nickname,
-            String profileImageUrl
-    ) {
-
-        private static WriterResponse from(User writer) {
-            Asset profileImageAsset = writer.getProfileImageAsset();
-            return new WriterResponse(
-                    writer.getId(),
-                    writer.getNickname(),
-                    profileImageAsset == null ? null : profileImageAsset.getUrl()
-            );
-        }
     }
 }

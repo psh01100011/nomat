@@ -3,7 +3,7 @@ package com.dogdog.nomat.domain.map.dto;
 import com.dogdog.nomat.domain.asset.entity.Asset;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
-import com.dogdog.nomat.domain.user.entity.User;
+import com.dogdog.nomat.domain.user.dto.UserSummaryResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
@@ -47,7 +47,7 @@ public record MapListResponse(
             CategorySummaryResponse category,
             String questionType,
             String thumbnailUrl,
-            CreatorSummaryResponse creator,
+            UserSummaryResponse creator,
             int questionCount,
             long playCount,
             long likeCount,
@@ -68,7 +68,7 @@ public record MapListResponse(
                     CategorySummaryResponse.from(map.getCategory()),
                     map.getQuestionType() == null ? null : map.getQuestionType().name(),
                     thumbnailAsset == null ? null : thumbnailAsset.getUrl(),
-                    CreatorSummaryResponse.from(map.getCreator()),
+                    UserSummaryResponse.from(map.getCreator()),
                     map.getQuestionCount(),
                     map.getPlayCount(),
                     map.getLikeCount(),
@@ -95,13 +95,4 @@ public record MapListResponse(
         }
     }
 
-    public record CreatorSummaryResponse(
-            Long userId,
-            String nickname
-    ) {
-
-        private static CreatorSummaryResponse from(User creator) {
-            return new CreatorSummaryResponse(creator.getId(), creator.getNickname());
-        }
-    }
 }

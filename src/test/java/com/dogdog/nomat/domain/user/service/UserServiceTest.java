@@ -321,7 +321,8 @@ class UserServiceTest {
 
     @Test
     void deleteMyAccountMarksUserDeletedAndAnonymizesLoginFields() {
-        User user = activeUser(1L);
+        User user = User.create("testuser1", "encoded-password", "tester1", "tester1@example.com");
+        ReflectionTestUtils.setField(user, "id", 1L);
         Asset asset = imageAsset(10L, user);
         ReflectionTestUtils.setField(user, "profileImageAsset", asset);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
@@ -332,6 +333,7 @@ class UserServiceTest {
         assertThat(user.getDeletedAt()).isNotNull();
         assertThat(user.getLoginId()).isEqualTo("deleted_user_1");
         assertThat(user.getNickname()).isEqualTo("deleted_user_1");
+        assertThat(user.getEmail()).isNull();
         assertThat(user.getPasswordHash()).isEqualTo("deleted");
         assertThat(user.getProfileImageAsset()).isNull();
     }

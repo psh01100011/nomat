@@ -135,6 +135,24 @@ class MapServiceTest {
     }
 
     @Test
+    void getMapReturnsDeletedCreatorAsAnonymousUser() {
+        User creator = activeUser(1L);
+        creator.delete();
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+
+        MapDetailResponse response = mapService.getMap(null, 100L);
+
+        assertThat(response.creator().userId()).isEqualTo(1L);
+        assertThat(response.creator().nickname()).isEqualTo("탈퇴한 사용자");
+        assertThat(response.creator().profileImageUrl()).isNull();
+        assertThat(response.creator().deleted()).isTrue();
+    }
+
+    @Test
     void getMapReturnsLikedStatusForAuthenticatedUser() {
         User user = activeUser(1L);
         User creator = activeUser(2L);
@@ -239,6 +257,7 @@ class MapServiceTest {
         assertThat(summary.questionType()).isEqualTo("AUDIO");
         assertThat(summary.creator().userId()).isEqualTo(1L);
         assertThat(summary.creator().nickname()).isEqualTo("tester1");
+        assertThat(summary.creator().deleted()).isFalse();
         assertThat(summary.questionCount()).isEqualTo(1);
         assertThat(summary.playCount()).isEqualTo(135L);
         assertThat(summary.likeCount()).isEqualTo(12L);
@@ -272,6 +291,33 @@ class MapServiceTest {
         assertThat(creatorIdCaptor.getValue()).isNull();
         assertThat(pageableCaptor.getValue().getPageNumber()).isEqualTo(0);
         assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(20);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void getMapsReturnsDeletedCreatorsAsAnonymousUsers() {
+        User creator = activeUser(1L);
+        creator.delete();
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+
+        given(quizMapRepository.searchMaps(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(Pageable.class)
+        )).willReturn(new PageImpl<>(List.of(map)));
+
+        MapListResponse response = mapService.getMaps(null, null, null, null, 0, 20, "latest", null);
+
+        MapListResponse.MapSummaryResponse summary = response.maps().getFirst();
+        assertThat(summary.creator().userId()).isEqualTo(1L);
+        assertThat(summary.creator().nickname()).isEqualTo("탈퇴한 사용자");
+        assertThat(summary.creator().profileImageUrl()).isNull();
+        assertThat(summary.creator().deleted()).isTrue();
     }
 
     @Test
