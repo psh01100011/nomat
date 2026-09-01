@@ -16,4 +16,6 @@ docker compose up -d
 ```
 
 로컬 profile은 `localhost:3307`의 `nomat` MySQL database와 `localhost:6379` Redis를 사용한다.
+이미지 업로드는 로컬에서도 실제 S3를 사용하므로 `.env.example`을 참고해 `AWS_S3_BUCKET`,
+`AWS_REGION`, `AWS_S3_PUBLIC_BASE_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`를 설정한다.
 아직 Flyway migration이 없으므로 로컬에서는 Hibernate `ddl-auto=update`로 테이블을 생성한다.

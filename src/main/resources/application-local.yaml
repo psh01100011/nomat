@@ -22,7 +22,7 @@ app:
     cleanup:
       enabled: false
     s3:
-      bucket: ${AWS_S3_BUCKET:nomat-local-dummy}
-      public-base-url: ${AWS_S3_PUBLIC_BASE_URL:http://localhost:8080/local-s3}
+      bucket: ${AWS_S3_BUCKET}
+      public-base-url: ${AWS_S3_PUBLIC_BASE_URL}
   audio-processing:
     enabled: false
