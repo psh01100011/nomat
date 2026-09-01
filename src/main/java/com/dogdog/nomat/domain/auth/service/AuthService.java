@@ -35,7 +35,8 @@ public class AuthService {
         User user = User.create(
                 request.loginId(),
                 passwordEncoder.encode(request.password()),
-                request.nickname()
+                request.nickname(),
+                normalizeEmail(request.email())
         );
 
         userRepository.save(user);
@@ -76,6 +77,14 @@ public class AuthService {
         if (userRepository.existsByNickname(request.nickname())) {
             throw new BusinessException(HttpStatus.CONFLICT, "duplicate_nickname");
         }
+    }
+
+    private String normalizeEmail(String email) {
+        if (email == null || email.isBlank()) {
+            return null;
+        }
+
+        return email.trim();
     }
 
     private BusinessException invalidIdOrPassword() {

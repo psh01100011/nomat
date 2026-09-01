@@ -71,6 +71,11 @@ public class RoomService {
     @Transactional
     public CreateRoomResponse createRoom(Long userId, CreateRoomRequest request) {
         User host = getAuthenticatedUser(userId);
+        if (request == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+        String title = normalizeRoomTitle(request.title());
+        String password = normalizeRoomPassword(request.password());
         QuizMap map = getPublicPublishedMap(request.mapId());
         validateQuestionCount(request.selectedQuestionCount(), map);
 
@@ -82,7 +87,7 @@ public class RoomService {
         Long roomId = roomRedisRepository.nextRoomId();
         RoomState room = RoomState.waiting(
                 roomId,
-                request.title(),
+                title,
                 map.getId(),
                 map.getTitle(),
                 thumbnailUrl(map),
@@ -90,8 +95,8 @@ public class RoomService {
                 categoryName(map),
                 map.getQuestionCount(),
                 map.getVersion(),
-                hasPassword(request.password()),
-                passwordHash(request.password()),
+                hasPassword(password),
+                passwordHash(password),
                 request.maxPlayers(),
                 request.selectedQuestionCount(),
                 request.answerTimeLimitSeconds(),
@@ -388,6 +393,32 @@ public class RoomService {
         if (selectedQuestionCount > map.getQuestionCount()) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
         }
+    }
+
+    private String normalizeRoomTitle(String title) {
+        if (!StringUtils.hasText(title)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_room_title_length");
+        }
+
+        String normalizedTitle = title.trim();
+        if (normalizedTitle.length() < 2 || normalizedTitle.length() > 30) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_room_title_length");
+        }
+
+        return normalizedTitle;
+    }
+
+    private String normalizeRoomPassword(String password) {
+        if (!StringUtils.hasText(password)) {
+            return null;
+        }
+
+        String normalizedPassword = password.trim();
+        if (normalizedPassword.length() < 4 || normalizedPassword.length() > 20) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+
+        return normalizedPassword;
     }
 
     private void validatePage(int page, int size) {

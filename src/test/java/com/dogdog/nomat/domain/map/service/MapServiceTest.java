@@ -538,7 +538,7 @@ class MapServiceTest {
                                 1000L,
                                 null
                         ),
-                        List.of("", "정답", "정 답")
+                        List.of("", "정답")
                 ))
         );
 
@@ -614,7 +614,7 @@ class MapServiceTest {
 
         assertThatThrownBy(() -> mapService.saveMapDraft(1L, request))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("invalid_youtube_clip_range");
 
         verify(quizMapRepository, never()).save(any(QuizMap.class));
     }
@@ -1173,7 +1173,7 @@ class MapServiceTest {
 
         assertThatThrownBy(() -> mapService.createMap(1L, request))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("duplicate_answer");
 
         verify(quizMapRepository, never()).save(any(QuizMap.class));
     }

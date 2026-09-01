@@ -132,10 +132,10 @@ class CommentServiceTest {
         assertThatThrownBy(() -> commentService.createMapComment(
                 1L,
                 100L,
-                new CreateMapCommentRequest("a".repeat(501))
+                new CreateMapCommentRequest("a".repeat(301))
         ))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("comment_too_long");
 
         verify(quizMapRepository, never()).findByIdAndStatusAndVisibility(any(), any(), any());
         verify(mapCommentRepository, never()).save(any());

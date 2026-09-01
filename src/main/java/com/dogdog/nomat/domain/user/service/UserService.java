@@ -105,19 +105,32 @@ public class UserService {
     }
 
     private String getNicknameToUpdate(User user, String nickname) {
-        if (nickname == null || user.getNickname().equals(nickname)) {
+        if (nickname == null) {
             return user.getNickname();
         }
 
-        if (!StringUtils.hasText(nickname)) {
-            throw invalidRequest();
+        String normalizedNickname = nickname.trim();
+        if (!StringUtils.hasText(normalizedNickname)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_nickname_length");
         }
 
-        if (userRepository.existsByNicknameAndIdNot(nickname, user.getId())) {
+        if (normalizedNickname.length() < 2 || normalizedNickname.length() > 12) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_nickname_length");
+        }
+
+        if (!normalizedNickname.matches("^[가-힣A-Za-z0-9_]+$")) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_nickname_format");
+        }
+
+        if (user.getNickname().equals(normalizedNickname)) {
+            return user.getNickname();
+        }
+
+        if (userRepository.existsByNicknameAndIdNot(normalizedNickname, user.getId())) {
             throw new BusinessException(HttpStatus.CONFLICT, "duplicate_nickname");
         }
 
-        return nickname;
+        return normalizedNickname;
     }
 
     private Asset getProfileImageToUpdate(User user, Long profileImageAssetId) {

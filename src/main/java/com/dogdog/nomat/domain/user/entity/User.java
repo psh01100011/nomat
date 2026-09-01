@@ -38,6 +38,9 @@ public class User {
     @Column(name = "nickname", length = 50, nullable = false, unique = true)
     private String nickname;
 
+    @Column(name = "email", length = 254)
+    private String email;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "profile_image_asset_id")
     private Asset profileImageAsset;
@@ -55,14 +58,19 @@ public class User {
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
-    private User(String loginId, String passwordHash, String nickname) {
+    private User(String loginId, String passwordHash, String nickname, String email) {
         this.loginId = loginId;
         this.passwordHash = passwordHash;
         this.nickname = nickname;
+        this.email = email;
     }
 
     public static User create(String loginId, String passwordHash, String nickname) {
-        return new User(loginId, passwordHash, nickname);
+        return create(loginId, passwordHash, nickname, null);
+    }
+
+    public static User create(String loginId, String passwordHash, String nickname, String email) {
+        return new User(loginId, passwordHash, nickname, email);
     }
 
     public void changeProfile(String nickname, Asset profileImageAsset) {

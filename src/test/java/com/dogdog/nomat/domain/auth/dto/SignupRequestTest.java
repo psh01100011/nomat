@@ -23,7 +23,7 @@ class SignupRequestTest {
                 "password123!",
                 "password123!",
                 "tester",
-                null
+                "tester@example.com"
         );
 
         assertThat(validator.validate(request)).isEmpty();
@@ -53,5 +53,25 @@ class SignupRequestTest {
         assertThat(validator.validate(request))
                 .anySatisfy(violation -> assertThat(violation.getPropertyPath().toString())
                         .isEqualTo("passwordConfirmed"));
+    }
+
+    @Test
+    void signupRequestAllowsEmptyEmailButRejectsInvalidEmailFormat() {
+        SignupRequest withoutEmail = new SignupRequest("testuser", "password123!", "password123!", "tester", null);
+        SignupRequest invalidEmail = new SignupRequest("testuser", "password123!", "password123!", "tester", "invalid");
+
+        assertThat(validator.validate(withoutEmail)).isEmpty();
+        assertThat(validator.validate(invalidEmail)).isNotEmpty();
+    }
+
+    @Test
+    void nicknameAllowsKoreanEnglishNumberAndUnderscoreOnly() {
+        SignupRequest valid = new SignupRequest("testuser", "password123!", "password123!", "테스터_1", null);
+        SignupRequest tooLong = new SignupRequest("testuser", "password123!", "password123!", "a".repeat(13), null);
+        SignupRequest invalidFormat = new SignupRequest("testuser", "password123!", "password123!", "tester!", null);
+
+        assertThat(validator.validate(valid)).isEmpty();
+        assertThat(validator.validate(tooLong)).isNotEmpty();
+        assertThat(validator.validate(invalidFormat)).isNotEmpty();
     }
 }

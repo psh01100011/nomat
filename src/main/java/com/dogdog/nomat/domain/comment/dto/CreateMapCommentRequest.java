@@ -5,7 +5,7 @@ import jakarta.validation.constraints.Size;
 
 public record CreateMapCommentRequest(
         @NotBlank
-        @Size(max = 500)
+        @Size(max = 300, message = "comment_too_long")
         String content
 ) {
 }
