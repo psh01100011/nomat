@@ -1,5 +1,6 @@
 package com.dogdog.nomat.global.config;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
 
@@ -9,7 +10,9 @@ import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
 import com.dogdog.nomat.domain.room.service.RoomWebSocketSessionRegistry;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.security.Principal;
 import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,6 +21,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
@@ -32,6 +36,38 @@ class JwtStompChannelInterceptorTest {
     private RoomRedisRepository roomRedisRepository;
 
     private final RoomWebSocketSessionRegistry sessionRegistry = new RoomWebSocketSessionRegistry();
+
+    @Test
+    void connectAuthenticatesTokenAndRegistersSession() {
+        JwtStompChannelInterceptor interceptor = interceptor();
+        given(jwtDecoder.decode("access-token")).willReturn(jwt(3L));
+
+        interceptor.preSend(connectMessage("session-3", null), null);
+
+        assertThat(sessionRegistry.hasActiveSession(3L)).isTrue();
+    }
+
+    @Test
+    void connectIgnoresNonStompPrincipalAndAuthenticatesToken() {
+        JwtStompChannelInterceptor interceptor = interceptor();
+        given(jwtDecoder.decode("access-token")).willReturn(jwt(3L));
+
+        interceptor.preSend(connectMessage("session-3", () -> "authenticated-user"), null);
+
+        assertThat(sessionRegistry.hasActiveSession(3L)).isTrue();
+    }
+
+    @Test
+    void connectRejectsMissingSessionIdWithExplicitMessageCode() {
+        JwtStompChannelInterceptor interceptor = interceptor();
+        given(jwtDecoder.decode("access-token")).willReturn(jwt(3L));
+
+        assertThatThrownBy(() -> interceptor.preSend(connectMessage(null, null), null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("websocket_session_unavailable");
+
+        assertThat(sessionRegistry.hasActiveSession(3L)).isFalse();
+    }
 
     @Test
     void subscribeRoomTopicAllowsRoomMember() {
@@ -65,12 +101,31 @@ class JwtStompChannelInterceptorTest {
         return new JwtStompChannelInterceptor(jwtDecoder, sessionRegistry, roomRedisRepository);
     }
 
+    private Message<byte[]> connectMessage(String sessionId, Principal principal) {
+        StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.CONNECT);
+        accessor.setSessionId(sessionId);
+        accessor.setUser(principal);
+        accessor.setNativeHeader("Authorization", "Bearer access-token");
+        accessor.setLeaveMutable(true);
+        return MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
+    }
+
     private Message<byte[]> subscribeMessage(Long userId, String destination) {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
         accessor.setSessionId("session-" + userId);
         accessor.setDestination(destination);
         accessor.setUser(new StompUserPrincipal(userId));
         return MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
+    }
+
+    private Jwt jwt(Long userId) {
+        Instant now = Instant.now();
+        return Jwt.withTokenValue("access-token")
+                .header("alg", "none")
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(60))
+                .claim("userId", userId)
+                .build();
     }
 
     private RoomState room(Long roomId, Long userId) {
