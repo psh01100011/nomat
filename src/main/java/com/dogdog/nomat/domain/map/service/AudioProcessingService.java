@@ -31,6 +31,15 @@ public class AudioProcessingService {
     private final AudioProcessingProperties processingProperties;
 
     public int processPendingJobs() {
+        audioProcessingJobService.recoverStaleProcessingJobs(
+                processingProperties.getBatchSize(),
+                processingProperties.getProcessingTimeoutMinutes(),
+                processingProperties.getMaxRetryAttempts()
+        );
+        audioProcessingJobService.recoverFailedJobs(
+                processingProperties.getBatchSize(),
+                processingProperties.getMaxRetryAttempts()
+        );
         List<Long> jobIds = audioProcessingJobService.getPendingJobIds(processingProperties.getBatchSize());
         int processedCount = 0;
         for (Long jobId : jobIds) {

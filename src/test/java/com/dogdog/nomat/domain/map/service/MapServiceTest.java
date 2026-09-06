@@ -624,7 +624,7 @@ class MapServiceTest {
         verify(questionMediaRepository).save(mediaCaptor.capture());
         QuestionMedia savedMedia = mediaCaptor.getValue();
         assertThat(savedMedia.getSourceType()).isEqualTo(QuestionMediaSourceType.YOUTUBE);
-        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://youtube.com/watch?v=draft");
+        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=draft");
         assertThat(savedMedia.getStartTimeMs()).isEqualTo(1000);
         assertThat(savedMedia.getEndTimeMs()).isNull();
         assertThat(savedMedia.getDurationMs()).isNull();
@@ -815,7 +815,7 @@ class MapServiceTest {
         verify(questionMediaRepository).save(mediaCaptor.capture());
         QuestionMedia savedMedia = mediaCaptor.getValue();
         assertThat(savedMedia.getSourceType()).isEqualTo(QuestionMediaSourceType.YOUTUBE);
-        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://youtube.com/watch?v=updated");
+        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=updated");
         assertThat(savedMedia.getStartTimeMs()).isEqualTo(60000);
         assertThat(savedMedia.getEndTimeMs()).isEqualTo(80000);
         assertThat(savedMedia.getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PENDING);
@@ -1113,7 +1113,7 @@ class MapServiceTest {
         QuestionMedia savedMedia = mediaCaptor.getValue();
         assertThat(savedMedia.getQuestion()).isEqualTo(savedQuestion);
         assertThat(savedMedia.getSourceType()).isEqualTo(QuestionMediaSourceType.YOUTUBE);
-        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://youtube.com/watch?v=---");
+        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=---");
         assertThat(savedMedia.getStartTimeMs()).isEqualTo(60000);
         assertThat(savedMedia.getEndTimeMs()).isEqualTo(102000);
         assertThat(savedMedia.getDurationMs()).isEqualTo(42000);
@@ -1125,7 +1125,7 @@ class MapServiceTest {
     }
 
     @Test
-    void createMapAcceptsYoutubeShortsUrlAndStoresTrimmedUrl() {
+    void createMapAcceptsYoutubeShortsUrlAndStoresCanonicalUrl() {
         User creator = activeUser(1L);
         Category category = category(10L);
         CreateMapRequest request = audioYoutubeMapRequestWithUrl(" https://www.youtube.com/shorts/abc123 ");
@@ -1139,7 +1139,7 @@ class MapServiceTest {
 
         ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
         verify(questionMediaRepository).save(mediaCaptor.capture());
-        assertThat(mediaCaptor.getValue().getSourceUrl()).isEqualTo("https://www.youtube.com/shorts/abc123");
+        assertThat(mediaCaptor.getValue().getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=abc123");
     }
 
     @Test
@@ -1157,7 +1157,27 @@ class MapServiceTest {
 
         ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
         verify(questionMediaRepository).save(mediaCaptor.capture());
-        assertThat(mediaCaptor.getValue().getSourceUrl()).isEqualTo("https://youtu.be/abc123");
+        assertThat(mediaCaptor.getValue().getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=abc123");
+    }
+
+    @Test
+    void createMapRemovesPlaylistParametersFromYoutubeUrl() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        CreateMapRequest request = audioYoutubeMapRequestWithUrl(
+                "https://www.youtube.com/watch?v=W_QQ2VF1b4Y&list=PLGoTZQa91pYvSdHpes7H6fit_iOYtH-fj&index=3&t=18543s"
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
+        given(quizMapRepository.save(any(QuizMap.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(questionRepository.save(any(Question.class))).willAnswer(invocation -> invocation.getArgument(0));
+
+        mapService.createMap(1L, request);
+
+        ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
+        verify(questionMediaRepository).save(mediaCaptor.capture());
+        assertThat(mediaCaptor.getValue().getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=W_QQ2VF1b4Y");
     }
 
     @Test

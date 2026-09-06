@@ -1270,6 +1270,35 @@ public class MapService {
     }
 
     private void validateYoutubeUrl(String sourceUrl) {
+        extractYoutubeVideoId(sourceUrl);
+    }
+
+    private String canonicalYoutubeUrl(String sourceUrl) {
+        return "https://www.youtube.com/watch?v=" + extractYoutubeVideoId(sourceUrl);
+    }
+
+    private String extractYoutubeVideoId(String sourceUrl) {
+        URI uri = parseYoutubeUri(sourceUrl);
+        String normalizedHost = uri.getHost().toLowerCase(Locale.ROOT);
+        String path = uri.getPath() == null ? "" : uri.getPath();
+        if ("youtu.be".equals(normalizedHost)) {
+            String videoId = path.length() > 1 ? path.substring(1).split("/")[0] : "";
+            return requireYoutubeVideoId(videoId);
+        }
+
+        if (isYoutubeComHost(normalizedHost)) {
+            if (isYoutubeWatchPath(path)) {
+                return youtubeVideoIdFromQuery(uri.getQuery());
+            }
+            if (isYoutubeShortsUrl(path)) {
+                return requireYoutubeVideoId(path.substring("/shorts/".length()).split("/")[0]);
+            }
+        }
+
+        throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+    }
+
+    private URI parseYoutubeUri(String sourceUrl) {
         if (!StringUtils.hasText(sourceUrl) || sourceUrl.trim().length() > MAX_YOUTUBE_URL_LENGTH) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
         }
@@ -1291,22 +1320,7 @@ public class MapService {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
         }
 
-        String normalizedHost = host.toLowerCase(Locale.ROOT);
-        String path = uri.getPath() == null ? "" : uri.getPath();
-        if ("youtu.be".equals(normalizedHost)) {
-            if (path.length() > 1) {
-                return;
-            }
-
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
-        }
-
-        if (isYoutubeComHost(normalizedHost)
-                && (isYoutubeWatchUrl(path, uri.getQuery()) || isYoutubeShortsUrl(path))) {
-            return;
-        }
-
-        throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        return uri;
     }
 
     private boolean isYoutubeComHost(String host) {
@@ -1315,15 +1329,33 @@ public class MapService {
                 || "m.youtube.com".equals(host);
     }
 
-    private boolean isYoutubeWatchUrl(String path, String query) {
-        return "/watch".equals(path)
-                && query != null
-                && List.of(query.split("&")).stream()
-                        .anyMatch(parameter -> parameter.startsWith("v=") && parameter.length() > 2);
+    private boolean isYoutubeWatchPath(String path) {
+        return "/watch".equals(path);
+    }
+
+    private String youtubeVideoIdFromQuery(String query) {
+        if (query == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        return List.of(query.split("&")).stream()
+                .filter(parameter -> parameter.startsWith("v="))
+                .map(parameter -> parameter.substring(2))
+                .findFirst()
+                .map(this::requireYoutubeVideoId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url"));
     }
 
     private boolean isYoutubeShortsUrl(String path) {
         return path.startsWith("/shorts/") && path.length() > "/shorts/".length();
+    }
+
+    private String requireYoutubeVideoId(String videoId) {
+        if (!StringUtils.hasText(videoId)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        return videoId;
     }
 
     private void saveQuestion(
@@ -1476,7 +1508,7 @@ public class MapService {
             return sourceUrl;
         }
 
-        return sourceUrl.trim();
+        return canonicalYoutubeUrl(sourceUrl);
     }
 
     private void validateQuestionPrompt(String promptText) {
