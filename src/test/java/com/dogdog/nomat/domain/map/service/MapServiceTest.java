@@ -56,7 +56,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -810,6 +812,10 @@ class MapServiceTest {
         assertThat(savedAnswers.getFirst().getAnswerText()).isEqualTo("수정 정답");
         assertThat(savedAnswers.getFirst().isPrimary()).isTrue();
         verify(questionAnswerRepository).deleteByQuestionId(200L);
+        InOrder answerUpdateOrder = Mockito.inOrder(questionAnswerRepository);
+        answerUpdateOrder.verify(questionAnswerRepository).deleteByQuestionId(200L);
+        answerUpdateOrder.verify(questionAnswerRepository).flush();
+        answerUpdateOrder.verify(questionAnswerRepository).saveAll(any());
 
         ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
         verify(questionMediaRepository).save(mediaCaptor.capture());
@@ -823,6 +829,71 @@ class MapServiceTest {
         ArgumentCaptor<AudioProcessingJob> jobCaptor = ArgumentCaptor.forClass(AudioProcessingJob.class);
         verify(audioProcessingJobRepository).save(jobCaptor.capture());
         assertThat(jobCaptor.getValue().getQuestionMedia()).isEqualTo(savedMedia);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void modifyMapDoesNotReprocessYoutubeMediaWhenOnlyAnswersChanged() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+        Question question = question(200L, map);
+        QuestionAnswer oldAnswer = QuestionAnswer.create(question, "이전 정답", "이전정답", true);
+        QuestionMedia existingMedia = QuestionMedia.create(
+                question,
+                null,
+                QuestionMediaSourceType.YOUTUBE,
+                "https://www.youtube.com/watch?v=updated",
+                60000,
+                80000,
+                20000
+        );
+        Asset audioAsset = Asset.createAudio(
+                creator,
+                "question-media-200.mp3",
+                "uploads/audios/2026/09/question-media-200.mp3",
+                "https://cdn.nomat.com/uploads/audios/2026/09/question-media-200.mp3",
+                "audio/mpeg",
+                1234L,
+                20000
+        );
+        ReflectionTestUtils.setField(audioAsset, "id", 30L);
+        audioAsset.attach();
+        existingMedia.completeProcessing(audioAsset, 20000);
+        ModifyMapRequest request = new ModifyMapRequest(
+                1,
+                null,
+                new ModifyMapRequest.QuestionsRequest(
+                        null,
+                        List.of(new ModifyMapRequest.UpdateQuestionRequest(
+                                200L,
+                                "수정된 문제",
+                                new ModifyMapRequest.MediaRequest(
+                                        "YOUTUBE",
+                                        null,
+                                        "https://youtube.com/watch?v=updated",
+                                        60000L,
+                                        80000L
+                                ),
+                                List.of("새 정답", "추가 정답")
+                        )),
+                        null
+                )
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+        given(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(100L, QuestionStatus.ACTIVE))
+                .willReturn(List.of(question));
+        given(questionAnswerRepository.findByQuestionIdInOrderByQuestionIdAscIdAsc(List.of(200L)))
+                .willReturn(List.of(oldAnswer));
+        given(questionMediaRepository.findByQuestionIdIn(List.of(200L))).willReturn(List.of(existingMedia));
+
+        mapService.modifyMap(1L, 100L, request);
+
+        verify(audioProcessingJobRepository, never()).findByQuestionMediaId(any());
+        verify(audioProcessingJobRepository, never()).save(any(AudioProcessingJob.class));
+        assertThat(existingMedia.getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.READY);
     }
 
     @Test

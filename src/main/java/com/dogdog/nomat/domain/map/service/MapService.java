@@ -611,6 +611,7 @@ public class MapService {
             Question question = existingQuestionsById.get(request.questionId());
             question.update(normalizeQuestionPrompt(request.promptText()));
             questionAnswerRepository.deleteByQuestionId(question.getId());
+            questionAnswerRepository.flush();
             List<QuestionAnswer> answers = createAnswers(question, request.answers());
             questionAnswerRepository.saveAll(answers);
             answersByQuestionId.put(question.getId(), answers);
@@ -728,6 +729,10 @@ public class MapService {
             return;
         }
 
+        if (hasSameMedia(existingMedia, newMedia)) {
+            return;
+        }
+
         existingMedia.update(
                 newMedia.getAsset(),
                 newMedia.getSourceType(),
@@ -738,6 +743,37 @@ public class MapService {
         );
         mediaByQuestionId.put(question.getId(), existingMedia);
         syncAudioProcessingJob(existingMedia);
+    }
+
+    private boolean hasSameMedia(QuestionMedia existingMedia, QuestionMedia newMedia) {
+        if (existingMedia.getSourceType() != newMedia.getSourceType()) {
+            return false;
+        }
+
+        if (existingMedia.getSourceType() == QuestionMediaSourceType.UPLOAD) {
+            return sameAsset(existingMedia.getAsset(), newMedia.getAsset());
+        }
+
+        if (existingMedia.getSourceType() == QuestionMediaSourceType.YOUTUBE) {
+            return Objects.equals(normalizeMediaSourceUrl(existingMedia.getSourceType(), existingMedia.getSourceUrl()),
+                    newMedia.getSourceUrl())
+                    && Objects.equals(existingMedia.getStartTimeMs(), newMedia.getStartTimeMs())
+                    && Objects.equals(existingMedia.getEndTimeMs(), newMedia.getEndTimeMs())
+                    && Objects.equals(existingMedia.getDurationMs(), newMedia.getDurationMs());
+        }
+
+        return Objects.equals(existingMedia.getSourceUrl(), newMedia.getSourceUrl())
+                && Objects.equals(existingMedia.getStartTimeMs(), newMedia.getStartTimeMs())
+                && Objects.equals(existingMedia.getEndTimeMs(), newMedia.getEndTimeMs())
+                && Objects.equals(existingMedia.getDurationMs(), newMedia.getDurationMs());
+    }
+
+    private boolean sameAsset(Asset existingAsset, Asset newAsset) {
+        if (existingAsset == null || newAsset == null) {
+            return existingAsset == newAsset;
+        }
+
+        return Objects.equals(existingAsset.getId(), newAsset.getId());
     }
 
     private void removeQuestionMedia(Long questionId, Map<Long, QuestionMedia> mediaByQuestionId) {
