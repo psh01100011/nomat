@@ -73,9 +73,10 @@ public class User {
         return new User(loginId, passwordHash, nickname, email);
     }
 
-    public void changeProfile(String nickname, Asset profileImageAsset) {
+    public void changeProfile(String nickname, Asset profileImageAsset, String email) {
         this.nickname = nickname;
         this.profileImageAsset = profileImageAsset;
+        this.email = email;
     }
 
     public void removeProfileImage() {
