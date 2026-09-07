@@ -55,14 +55,18 @@ public class SecurityConfig {
                         .requestMatchers("/auth/signup").permitAll()
                         .requestMatchers("/auth/login").permitAll()
                         .requestMatchers("/auth/refresh").permitAll()
+                        .requestMatchers("/auth/logout").permitAll()
                         .requestMatchers("/users/login-id/availability").permitAll()
                         .requestMatchers("/users/nickname/availability").permitAll()
-                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/users/\\d+$")).permitAll()
+                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/users/[^/]+$")).permitAll()
                         .requestMatchers(HttpMethod.GET, "/maps").permitAll()
-                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/maps/\\d+$")).permitAll()
-                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/maps/\\d+/comments$")).permitAll()
+                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/maps/[^/]+$")).permitAll()
+                        .requestMatchers(RegexRequestMatcher.regexMatcher(
+                                HttpMethod.GET,
+                                "^/maps/[^/]+/comments(\\?.*)?$"
+                        )).permitAll()
                         .requestMatchers(HttpMethod.GET, "/rooms").permitAll()
-                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/rooms/\\d+$")).permitAll()
+                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/rooms/[^/]+$")).permitAll()
                         .requestMatchers("/ws").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
@@ -121,7 +125,8 @@ public class SecurityConfig {
     public BearerTokenResolver bearerTokenResolver() {
         DefaultBearerTokenResolver delegate = new DefaultBearerTokenResolver();
         return request -> {
-            if ("/auth/refresh".equals(request.getServletPath())) {
+            if ("/auth/refresh".equals(request.getServletPath())
+                    || "/auth/logout".equals(request.getServletPath())) {
                 return null;
             }
 

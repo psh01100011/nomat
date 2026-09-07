@@ -36,4 +36,14 @@ class SecurityConfigTest {
 
         assertThat(resolver.resolve(request)).isNull();
     }
+
+    @Test
+    void bearerTokenResolverIgnoresLogoutEndpoint() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setServletPath("/auth/logout");
+        request.addHeader("Authorization", "Bearer header-token");
+        request.setCookies(new Cookie("access_token", "cookie-token"));
+
+        assertThat(resolver.resolve(request)).isNull();
+    }
 }
