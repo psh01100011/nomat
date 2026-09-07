@@ -28,8 +28,8 @@ public interface QuizMapRepository extends JpaRepository<QuizMap, Long> {
             WHERE map.status IN :statuses
               AND (:visibility IS NULL OR map.visibility = :visibility)
               AND (:keyword IS NULL
-                    OR map.title LIKE CONCAT('%', :keyword, '%')
-                    OR (map.description IS NOT NULL AND map.description LIKE CONCAT('%', :keyword, '%')))
+                    OR LOWER(map.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                    OR LOWER(map.creator.nickname) LIKE LOWER(CONCAT('%', :keyword, '%')))
               AND (:categoryId IS NULL OR map.category.id = :categoryId)
               AND (:questionType IS NULL OR map.questionType = :questionType)
               AND (:creatorId IS NULL OR map.creator.id = :creatorId)
