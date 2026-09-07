@@ -413,6 +413,7 @@ class RoomServiceTest {
         assertThat(response.initialHintTriggerSeconds()).isEqualTo(10);
         assertThat(response.map().mapId()).isEqualTo(15L);
         assertThat(response.map().title()).isEqualTo("20년대 아이돌 노래 맞히기");
+        assertThat(response.map().questionType()).isEqualTo("AUDIO");
         assertThat(response.map().categoryId()).isEqualTo(7L);
         assertThat(response.map().categoryName()).isEqualTo("음악");
         assertThat(response.map().thumbnailUrl()).isEqualTo("https://cdn.example.com/thumbnail.png");
