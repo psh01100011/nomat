@@ -51,7 +51,7 @@ class UserServiceTest {
 
     @Test
     void getMyInfoReturnsCurrentUserInfo() {
-        User user = User.create("testuser", "encoded-password", "tester");
+        User user = User.create("testuser", "encoded-password", "tester", "tester@example.com");
         ReflectionTestUtils.setField(user, "id", 1L);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
 
@@ -60,6 +60,7 @@ class UserServiceTest {
         assertThat(response.userId()).isEqualTo(1L);
         assertThat(response.nickname()).isEqualTo("tester");
         assertThat(response.profileImageUrl()).isNull();
+        assertThat(response.email()).isEqualTo("tester@example.com");
     }
 
     @Test
@@ -167,7 +168,7 @@ class UserServiceTest {
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(userRepository.existsByNicknameAndIdNot("newbie", 1L)).willReturn(false);
 
-        userService.modifyMyInfo(1L, new ModifyMyInfoRequest("newbie", null));
+        userService.modifyMyInfo(1L, new ModifyMyInfoRequest("newbie", null, null));
 
         assertThat(user.getNickname()).isEqualTo("newbie");
         assertThat(user.getProfileImageAsset()).isNull();
@@ -179,7 +180,7 @@ class UserServiceTest {
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(userRepository.existsByNicknameAndIdNot("newbie", 1L)).willReturn(true);
 
-        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest("newbie", null)))
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest("newbie", null, null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("duplicate_nickname");
     }
@@ -191,7 +192,7 @@ class UserServiceTest {
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
 
-        userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L));
+        userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null));
 
         assertThat(user.getProfileImageAsset()).isEqualTo(asset);
         assertThat(asset.getStatus()).isEqualTo(com.dogdog.nomat.domain.asset.entity.AssetStatus.ATTACHED);
@@ -203,7 +204,7 @@ class UserServiceTest {
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(assetRepository.findById(10L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L)))
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_request");
     }
@@ -216,7 +217,7 @@ class UserServiceTest {
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
 
-        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L)))
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_request");
     }
@@ -229,7 +230,38 @@ class UserServiceTest {
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
 
-        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L)))
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_request");
+    }
+
+    @Test
+    void modifyMyInfoChangesEmail() {
+        User user = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+
+        userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, null, "  tester@example.com  "));
+
+        assertThat(user.getEmail()).isEqualTo("tester@example.com");
+    }
+
+    @Test
+    void modifyMyInfoClearsEmailWhenBlankEmailIsRequested() {
+        User user = User.create("testuser1", "encoded-password", "tester1", "tester@example.com");
+        ReflectionTestUtils.setField(user, "id", 1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+
+        userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, null, " "));
+
+        assertThat(user.getEmail()).isNull();
+    }
+
+    @Test
+    void modifyMyInfoRejectsInvalidEmail() {
+        User user = activeUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, null, "invalid-email")))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_request");
     }
@@ -238,7 +270,28 @@ class UserServiceTest {
     void modifyMyInfoRejectsUnknownUserId() {
         given(userRepository.findById(1L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest("newbie", null)))
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest("newbie", null, null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_token");
+    }
+
+    @Test
+    void removeProfileImageClearsCurrentProfileImage() {
+        User user = activeUser(1L);
+        Asset asset = imageAsset(10L, user);
+        ReflectionTestUtils.setField(user, "profileImageAsset", asset);
+        given(userRepository.findById(1L)).willReturn(Optional.of(user));
+
+        userService.removeProfileImage(1L);
+
+        assertThat(user.getProfileImageAsset()).isNull();
+    }
+
+    @Test
+    void removeProfileImageRejectsUnknownUserId() {
+        given(userRepository.findById(1L)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.removeProfileImage(1L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_token");
     }
@@ -300,7 +353,8 @@ class UserServiceTest {
 
     @Test
     void deleteMyAccountMarksUserDeletedAndAnonymizesLoginFields() {
-        User user = activeUser(1L);
+        User user = User.create("testuser1", "encoded-password", "tester1", "tester1@example.com");
+        ReflectionTestUtils.setField(user, "id", 1L);
         Asset asset = imageAsset(10L, user);
         ReflectionTestUtils.setField(user, "profileImageAsset", asset);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
@@ -311,6 +365,7 @@ class UserServiceTest {
         assertThat(user.getDeletedAt()).isNotNull();
         assertThat(user.getLoginId()).isEqualTo("deleted_user_1");
         assertThat(user.getNickname()).isEqualTo("deleted_user_1");
+        assertThat(user.getEmail()).isNull();
         assertThat(user.getPasswordHash()).isEqualTo("deleted");
         assertThat(user.getProfileImageAsset()).isNull();
     }

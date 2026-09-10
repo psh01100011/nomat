@@ -31,13 +31,15 @@ public record ModifyMapRequest(
             String clientId,
 
             @NotBlank
+            @Size(max = 200, message = "invalid_question_prompt_length")
             String promptText,
 
             @Valid
             MediaRequest media,
 
             @NotEmpty
-            List<@NotBlank @Size(max = 255) String> answers
+            @Size(max = 20, message = "invalid_answer_count")
+            List<@NotBlank(message = "invalid_answer_length") @Size(max = 50, message = "invalid_answer_length") String> answers
     ) {
     }
 
@@ -46,13 +48,15 @@ public record ModifyMapRequest(
             Long questionId,
 
             @NotBlank
+            @Size(max = 200, message = "invalid_question_prompt_length")
             String promptText,
 
             @Valid
             MediaRequest media,
 
             @NotEmpty
-            List<@NotBlank @Size(max = 255) String> answers
+            @Size(max = 20, message = "invalid_answer_count")
+            List<@NotBlank(message = "invalid_answer_length") @Size(max = 50, message = "invalid_answer_length") String> answers
     ) {
     }
 
@@ -62,7 +66,7 @@ public record ModifyMapRequest(
 
             Long assetId,
 
-            @Size(max = 500)
+            @Size(max = 500, message = "invalid_youtube_url")
             String sourceUrl,
 
             Long startTimeMs,

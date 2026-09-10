@@ -25,10 +25,11 @@ public class UploadController {
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<UploadImageResponse> uploadImage(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestParam MultipartFile file
+            @RequestParam MultipartFile file,
+            @RequestParam(required = false) String purpose
     ) {
         Long userId = getUserId(jwt);
-        return ApiResponse.of("success_upload_image", assetService.uploadImage(userId, file));
+        return ApiResponse.of("success_upload_image", assetService.uploadImage(userId, file, purpose));
     }
 
     private Long getUserId(Jwt jwt) {

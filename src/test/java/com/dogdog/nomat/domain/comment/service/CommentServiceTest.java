@@ -132,10 +132,10 @@ class CommentServiceTest {
         assertThatThrownBy(() -> commentService.createMapComment(
                 1L,
                 100L,
-                new CreateMapCommentRequest("a".repeat(501))
+                new CreateMapCommentRequest("a".repeat(301))
         ))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("comment_too_long");
 
         verify(quizMapRepository, never()).findByIdAndStatusAndVisibility(any(), any(), any());
         verify(mapCommentRepository, never()).save(any());
@@ -320,6 +320,7 @@ class CommentServiceTest {
         assertThat(first.writer().userId()).isEqualTo(1L);
         assertThat(first.writer().nickname()).isEqualTo("tester1");
         assertThat(first.writer().profileImageUrl()).isNull();
+        assertThat(first.writer().deleted()).isFalse();
 
         MapCommentListResponse.MapCommentResponse second = response.comments().get(1);
         assertThat(second.commentId()).isEqualTo(201L);
@@ -337,6 +338,28 @@ class CommentServiceTest {
         assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(20);
         assertThat(pageableCaptor.getValue().getSort().getOrderFor("createdAt").getDirection().isDescending())
                 .isTrue();
+    }
+
+    @Test
+    void getMapCommentsReturnsDeletedWritersAsAnonymousUsers() {
+        User writer = activeUser(2L);
+        writer.delete();
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, writer, category);
+        MapComment comment = comment(200L, map, writer, "댓글", LocalDateTime.of(2026, 8, 15, 10, 0));
+
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+        given(mapCommentRepository.findByMapIdAndStatus(any(), any(), any(Pageable.class)))
+                .willReturn(new PageImpl<>(List.of(comment)));
+
+        MapCommentListResponse response = commentService.getMapComments(null, 100L, 0, 20, "oldest");
+
+        MapCommentListResponse.MapCommentResponse result = response.comments().getFirst();
+        assertThat(result.writer().userId()).isEqualTo(2L);
+        assertThat(result.writer().nickname()).isEqualTo("탈퇴한 사용자");
+        assertThat(result.writer().profileImageUrl()).isNull();
+        assertThat(result.writer().deleted()).isTrue();
     }
 
     @Test

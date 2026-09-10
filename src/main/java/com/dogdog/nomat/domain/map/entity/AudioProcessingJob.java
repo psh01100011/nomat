@@ -82,6 +82,19 @@ public class AudioProcessingJob {
         this.failureMessage = null;
         this.startedAt = null;
         this.completedAt = null;
+        this.questionMedia.resetProcessing();
+    }
+
+    public void retry() {
+        this.status = AudioProcessingJobStatus.PENDING;
+        this.failureMessage = null;
+        this.startedAt = null;
+        this.completedAt = null;
+        this.questionMedia.resetProcessing();
+    }
+
+    public boolean canRetry(int maxRetryAttempts) {
+        return attemptCount < maxRetryAttempts;
     }
 
     public void succeed() {

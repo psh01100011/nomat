@@ -23,6 +23,8 @@ import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
 import com.dogdog.nomat.domain.user.entity.User;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -135,6 +137,68 @@ class AudioProcessingJobServiceTest {
         assertThat(job.getFailureMessage()).isEqualTo("extract failed");
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.FAILED);
         assertThat(job.getQuestionMedia().getFailureMessage()).isEqualTo("extract failed");
+    }
+
+    @Test
+    void recoverStaleProcessingJobsRetriesJobsAndMedia() {
+        AudioProcessingJob job = audioProcessingJob(1L);
+        job.start();
+        ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
+        given(audioProcessingJobRepository.findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
+                any(),
+                any(),
+                any()
+        )).willReturn(List.of(job));
+
+        int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 10, 3);
+
+        assertThat(recoveredCount).isEqualTo(1);
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.PENDING);
+        assertThat(job.getAttemptCount()).isEqualTo(1);
+        assertThat(job.getStartedAt()).isNull();
+        assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PENDING);
+    }
+
+    @Test
+    void recoverStaleProcessingJobsFailsJobWhenRetryAttemptsAreExhausted() {
+        AudioProcessingJob job = audioProcessingJob(1L);
+        job.start();
+        job.retry();
+        job.start();
+        ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
+        given(audioProcessingJobRepository.findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
+                any(),
+                any(),
+                any()
+        )).willReturn(List.of(job));
+
+        int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 10, 2);
+
+        assertThat(recoveredCount).isEqualTo(1);
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.FAILED);
+        assertThat(job.getFailureMessage()).isEqualTo("audio_processing_retry_exhausted");
+        assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.FAILED);
+    }
+
+    @Test
+    void recoverFailedJobsRetriesFailedJobsWithinMaxAttempts() {
+        AudioProcessingJob job = audioProcessingJob(1L);
+        job.start();
+        job.fail("extract failed");
+        given(audioProcessingJobRepository.findByStatusAndAttemptCountLessThanOrderByUpdatedAtAsc(
+                any(),
+                any(Integer.class),
+                any()
+        )).willReturn(List.of(job));
+
+        int recoveredCount = audioProcessingJobService.recoverFailedJobs(5, 3);
+
+        assertThat(recoveredCount).isEqualTo(1);
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.PENDING);
+        assertThat(job.getAttemptCount()).isEqualTo(1);
+        assertThat(job.getFailureMessage()).isNull();
+        assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PENDING);
+        assertThat(job.getQuestionMedia().getFailureMessage()).isNull();
     }
 
     private AudioProcessingJob audioProcessingJob(Long id) {

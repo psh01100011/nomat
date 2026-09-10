@@ -9,6 +9,7 @@ import com.dogdog.nomat.domain.map.entity.Question;
 import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
 import com.dogdog.nomat.domain.map.entity.QuestionStatus;
+import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.QuestionAnswerRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
@@ -16,10 +17,14 @@ import com.dogdog.nomat.domain.map.repository.QuestionRepository;
 import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.CurrentRoomResponse;
 import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
+import com.dogdog.nomat.domain.room.dto.ModifyRoomSettingsRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
+import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomCommand;
+import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomMember;
@@ -38,6 +43,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -71,27 +77,31 @@ public class RoomService {
     @Transactional
     public CreateRoomResponse createRoom(Long userId, CreateRoomRequest request) {
         User host = getAuthenticatedUser(userId);
+        if (request == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+        String title = normalizeRoomTitle(request.title());
+        String password = normalizeRoomPassword(request.password());
         QuizMap map = getPublicPublishedMap(request.mapId());
         validateQuestionCount(request.selectedQuestionCount(), map);
 
-        if (roomRedisRepository.findJoinedRoomId(userId).isPresent()) {
-            throw new BusinessException(HttpStatus.CONFLICT, "already_joined_room");
-        }
+        validateNotAlreadyJoined(userId);
 
         LocalDateTime now = LocalDateTime.now();
         Long roomId = roomRedisRepository.nextRoomId();
         RoomState room = RoomState.waiting(
                 roomId,
-                request.title(),
+                title,
                 map.getId(),
                 map.getTitle(),
+                map.getQuestionType().name(),
                 thumbnailUrl(map),
                 categoryId(map),
                 categoryName(map),
                 map.getQuestionCount(),
                 map.getVersion(),
-                hasPassword(request.password()),
-                passwordHash(request.password()),
+                hasPassword(password),
+                passwordHash(password),
                 request.maxPlayers(),
                 request.selectedQuestionCount(),
                 request.answerTimeLimitSeconds(),
@@ -121,16 +131,50 @@ public class RoomService {
             int size,
             String sort
     ) {
+        return getRooms(
+                keyword,
+                mapId,
+                categoryId,
+                null,
+                null,
+                false,
+                statusValue,
+                joinableOnly,
+                page,
+                size,
+                sort
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public RoomListResponse getRooms(
+            String keyword,
+            Long mapId,
+            Long categoryId,
+            String questionType,
+            Boolean hasPassword,
+            boolean excludePasswordRooms,
+            String statusValue,
+            boolean joinableOnly,
+            int page,
+            int size,
+            String sort
+    ) {
         validatePage(page, size);
         validateSort(sort);
         RoomStatus status = parseRoomStatusOrNull(statusValue);
         String normalizedKeyword = normalizeKeyword(keyword);
+        String normalizedQuestionType = normalizeQuestionType(questionType);
 
         List<RoomState> filteredRooms = roomRedisRepository.findRooms(sort).stream()
                 .filter(room -> isListableStatus(room.status()))
                 .filter(room -> status == null || room.status() == status)
                 .filter(room -> mapId == null || room.mapId().equals(mapId))
                 .filter(room -> categoryId == null || categoryId.equals(room.categoryId()))
+                .filter(room -> normalizedQuestionType == null
+                        || normalizedQuestionType.equalsIgnoreCase(room.questionType()))
+                .filter(room -> hasPassword == null || room.hasPassword() == hasPassword)
+                .filter(room -> !excludePasswordRooms || !room.hasPassword())
                 .filter(room -> normalizedKeyword == null || matchesKeyword(room, normalizedKeyword))
                 .filter(room -> !joinableOnly || isJoinable(room))
                 .toList();
@@ -154,13 +198,34 @@ public class RoomService {
         return RoomDetailResponse.from(room);
     }
 
+    @Transactional(readOnly = true)
+    public CurrentRoomResponse getCurrentRoom(Long userId) {
+        getAuthenticatedUser(userId);
+        return roomRedisRepository.findJoinedRoomId(userId)
+                .flatMap(roomId -> roomRedisRepository.findById(roomId)
+                        .map(CurrentRoomResponse::from)
+                        .or(() -> Optional.of(CurrentRoomResponse.of(roomId, null))))
+                .orElse(null);
+    }
+
+    @Transactional(readOnly = true)
+    public RoomGameSnapshotResponse getGameSnapshot(Long userId, Long roomId) {
+        getAuthenticatedUser(userId);
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        if (!room.hasMember(userId)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access");
+        }
+
+        RoomGameState gameState = roomRedisRepository.findGameState(roomId).orElse(null);
+        return RoomGameSnapshotResponse.of(room, gameState, userId, skipVoteThreshold(room.memberCount()));
+    }
+
     @Transactional
     public RoomDetailResponse joinRoom(Long userId, Long roomId, JoinRoomRequest request) {
         User user = getAuthenticatedUser(userId);
 
-        if (roomRedisRepository.findJoinedRoomId(userId).isPresent()) {
-            throw new BusinessException(HttpStatus.CONFLICT, "already_joined_room");
-        }
+        validateNotAlreadyJoined(userId);
 
         RoomState room = roomRedisRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
@@ -195,6 +260,35 @@ public class RoomService {
 
         roomRedisRepository.saveLeftRoom(result.room(), userId);
         roomEventPublisher.publish(result.events());
+    }
+
+    @Transactional
+    public RoomDetailResponse modifyRoomSettings(Long userId, Long roomId, ModifyRoomSettingsRequest request) {
+        getAuthenticatedUser(userId);
+        if (request == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        if (!room.isHost(userId)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access");
+        }
+        if (room.status() != RoomStatus.WAITING) {
+            throw new BusinessException(HttpStatus.CONFLICT, "cannot_modify_room_settings");
+        }
+
+        RoomState updatedRoom = room.withSettings(
+                hasPasswordToUpdate(room, request.password()),
+                passwordHashToUpdate(room, request.password()),
+                maxPlayersToUpdate(room, request.maxPlayers()),
+                selectedQuestionCountToUpdate(room, request.selectedQuestionCount()),
+                answerTimeLimitSecondsToUpdate(room, request.answerTimeLimitSeconds())
+        );
+
+        roomRedisRepository.saveRoom(updatedRoom);
+        roomEventPublisher.publish(List.of(RoomDomainEvent.roomSettingsUpdated(updatedRoom, LocalDateTime.now())));
+        return RoomDetailResponse.from(updatedRoom);
     }
 
     @Transactional
@@ -286,6 +380,20 @@ public class RoomService {
         if (room.memberCount() < 1) {
             throw new BusinessException(HttpStatus.CONFLICT, "cannot_start_game");
         }
+    }
+
+    private void validateNotAlreadyJoined(Long userId) {
+        roomRedisRepository.findJoinedRoomId(userId)
+                .ifPresent(roomId -> {
+                    CurrentRoomResponse currentRoom = roomRedisRepository.findById(roomId)
+                            .map(CurrentRoomResponse::from)
+                            .orElseGet(() -> CurrentRoomResponse.of(roomId, null));
+                    throw new BusinessException(HttpStatus.CONFLICT, "already_joined_room", currentRoom);
+                });
+    }
+
+    private int skipVoteThreshold(int memberCount) {
+        return memberCount / 2 + 1;
     }
 
     private List<RoomGameQuestion> selectQuestions(RoomState room, String randomSeed) {
@@ -390,6 +498,80 @@ public class RoomService {
         }
     }
 
+    private boolean hasPasswordToUpdate(RoomState room, String password) {
+        if (password == null) {
+            return room.hasPassword();
+        }
+
+        return StringUtils.hasText(password);
+    }
+
+    private String passwordHashToUpdate(RoomState room, String password) {
+        if (password == null) {
+            return room.passwordHash();
+        }
+
+        if (!StringUtils.hasText(password)) {
+            return null;
+        }
+
+        return passwordHash(normalizeRoomPassword(password));
+    }
+
+    private int maxPlayersToUpdate(RoomState room, Integer maxPlayers) {
+        if (maxPlayers == null) {
+            return room.maxPlayers();
+        }
+
+        if (maxPlayers < room.memberCount()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+
+        return maxPlayers;
+    }
+
+    private int selectedQuestionCountToUpdate(RoomState room, Integer selectedQuestionCount) {
+        if (selectedQuestionCount == null) {
+            return room.selectedQuestionCount();
+        }
+
+        if (selectedQuestionCount > room.mapQuestionCount()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+
+        return selectedQuestionCount;
+    }
+
+    private int answerTimeLimitSecondsToUpdate(RoomState room, Integer answerTimeLimitSeconds) {
+        return answerTimeLimitSeconds == null ? room.answerTimeLimitSeconds() : answerTimeLimitSeconds;
+    }
+
+    private String normalizeRoomTitle(String title) {
+        if (!StringUtils.hasText(title)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_room_title_length");
+        }
+
+        String normalizedTitle = title.trim();
+        if (normalizedTitle.length() < 2 || normalizedTitle.length() > 30) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_room_title_length");
+        }
+
+        return normalizedTitle;
+    }
+
+    private String normalizeRoomPassword(String password) {
+        if (!StringUtils.hasText(password)) {
+            return null;
+        }
+
+        String normalizedPassword = password.trim();
+        if (normalizedPassword.length() < 4 || normalizedPassword.length() > 20) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+
+        return normalizedPassword;
+    }
+
     private void validatePage(int page, int size) {
         if (page < 0 || size < 1 || size > 100) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
@@ -432,6 +614,18 @@ public class RoomService {
         }
 
         return keyword.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String normalizeQuestionType(String questionType) {
+        if (!StringUtils.hasText(questionType)) {
+            return null;
+        }
+
+        try {
+            return QuestionType.valueOf(questionType.trim().toUpperCase(Locale.ROOT)).name();
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
     }
 
     private boolean matchesKeyword(RoomState room, String normalizedKeyword) {

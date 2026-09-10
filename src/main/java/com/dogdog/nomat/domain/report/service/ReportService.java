@@ -32,6 +32,7 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class ReportService {
 
+    private static final int MIN_REPORT_DESCRIPTION_LENGTH = 10;
     private static final int MAX_REPORT_DESCRIPTION_LENGTH = 500;
 
     private final UserRepository userRepository;
@@ -165,16 +166,22 @@ public class ReportService {
 
     private void validateDescription(boolean otherReason, String description) {
         if (otherReason && !StringUtils.hasText(description)) {
-            throw invalidRequest();
+            throw invalidReportDescription();
         }
 
-        if (description != null && description.length() > MAX_REPORT_DESCRIPTION_LENGTH) {
-            throw invalidRequest();
+        if (description != null
+                && (description.length() < MIN_REPORT_DESCRIPTION_LENGTH
+                || description.length() > MAX_REPORT_DESCRIPTION_LENGTH)) {
+            throw invalidReportDescription();
         }
     }
 
     private BusinessException invalidRequest() {
         return new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+    }
+
+    private BusinessException invalidReportDescription() {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "invalid_report_description");
     }
 
     private BusinessException alreadyReportedMap() {

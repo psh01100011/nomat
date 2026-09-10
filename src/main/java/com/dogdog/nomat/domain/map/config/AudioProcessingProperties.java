@@ -28,7 +28,15 @@ public class AudioProcessingProperties {
     @Positive
     private long commandTimeoutSeconds = 300;
 
+    @Positive
+    private long processingTimeoutMinutes = 10;
+
+    @Positive
+    private int maxRetryAttempts = 3;
+
     private String ytDlpPath = "yt-dlp";
 
     private String ffmpegPath = "ffmpeg";
+
+    private String outputBitrate = "128k";
 }

@@ -18,6 +18,7 @@ import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.util.Objects;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -30,6 +31,8 @@ import org.springframework.util.StringUtils;
 @Service
 @RequiredArgsConstructor
 public class UserService {
+
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
     private final UserRepository userRepository;
     private final AssetRepository assetRepository;
@@ -79,8 +82,15 @@ public class UserService {
 
         String nickname = getNicknameToUpdate(user, request.nickname());
         Asset profileImageAsset = getProfileImageToUpdate(user, request.profileImageAssetId());
+        String email = getEmailToUpdate(user, request.email());
 
-        user.changeProfile(nickname, profileImageAsset);
+        user.changeProfile(nickname, profileImageAsset, email);
+    }
+
+    @Transactional
+    public void removeProfileImage(Long userId) {
+        User user = getAuthenticatedUser(userId);
+        user.removeProfileImage();
     }
 
     @Transactional
@@ -105,19 +115,32 @@ public class UserService {
     }
 
     private String getNicknameToUpdate(User user, String nickname) {
-        if (nickname == null || user.getNickname().equals(nickname)) {
+        if (nickname == null) {
             return user.getNickname();
         }
 
-        if (!StringUtils.hasText(nickname)) {
-            throw invalidRequest();
+        String normalizedNickname = nickname.trim();
+        if (!StringUtils.hasText(normalizedNickname)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_nickname_length");
         }
 
-        if (userRepository.existsByNicknameAndIdNot(nickname, user.getId())) {
+        if (normalizedNickname.length() < 2 || normalizedNickname.length() > 12) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_nickname_length");
+        }
+
+        if (!normalizedNickname.matches("^[가-힣A-Za-z0-9_]+$")) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_nickname_format");
+        }
+
+        if (user.getNickname().equals(normalizedNickname)) {
+            return user.getNickname();
+        }
+
+        if (userRepository.existsByNicknameAndIdNot(normalizedNickname, user.getId())) {
             throw new BusinessException(HttpStatus.CONFLICT, "duplicate_nickname");
         }
 
-        return nickname;
+        return normalizedNickname;
     }
 
     private Asset getProfileImageToUpdate(User user, Long profileImageAssetId) {
@@ -131,6 +154,23 @@ public class UserService {
         asset.attach();
 
         return asset;
+    }
+
+    private String getEmailToUpdate(User user, String email) {
+        if (email == null) {
+            return user.getEmail();
+        }
+
+        String normalizedEmail = email.trim();
+        if (normalizedEmail.isBlank()) {
+            return null;
+        }
+
+        if (normalizedEmail.length() > 254 || !EMAIL_PATTERN.matcher(normalizedEmail).matches()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+
+        return normalizedEmail;
     }
 
     private void validateProfileImageAsset(User user, Asset asset) {

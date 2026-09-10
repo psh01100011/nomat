@@ -70,6 +70,13 @@ public class UserController {
         return ApiResponse.success("success_modify_info");
     }
 
+    @DeleteMapping("/me/profile-image")
+    public ApiResponse<Void> removeProfileImage(@AuthenticationPrincipal Jwt jwt) {
+        Long userId = getUserId(jwt);
+        userService.removeProfileImage(userId);
+        return ApiResponse.success("success_remove_profile_image");
+    }
+
     @PatchMapping("/me/password")
     public ApiResponse<Void> modifyPassword(
             @AuthenticationPrincipal Jwt jwt,

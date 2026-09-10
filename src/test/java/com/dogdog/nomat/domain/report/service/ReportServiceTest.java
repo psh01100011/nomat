@@ -122,7 +122,7 @@ class ReportServiceTest {
         )) {
             ReportMapRequest request = new ReportMapRequest(
                     reason,
-                    reason.equals("OTHER") ? "기타 사유입니다." : null
+                    reason.equals("OTHER") ? "기타 신고 사유입니다." : null
             );
 
             ReportMapResponse response = reportService.reportMap(1L, 100L, request);
@@ -137,7 +137,7 @@ class ReportServiceTest {
         User creator = activeUser(2L);
         Category category = category(10L);
         QuizMap map = quizMap(100L, creator, category);
-        ReportMapRequest request = new ReportMapRequest(" other ", "  기타 사유입니다.  ");
+        ReportMapRequest request = new ReportMapRequest(" other ", "  기타 신고 사유입니다.  ");
 
         given(userRepository.findById(1L)).willReturn(Optional.of(reporter));
         given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
@@ -155,7 +155,7 @@ class ReportServiceTest {
         ArgumentCaptor<Report> reportCaptor = ArgumentCaptor.forClass(Report.class);
         verify(reportRepository).saveAndFlush(reportCaptor.capture());
         assertThat(reportCaptor.getValue().getReason()).isEqualTo("OTHER");
-        assertThat(reportCaptor.getValue().getDescription()).isEqualTo("기타 사유입니다.");
+        assertThat(reportCaptor.getValue().getDescription()).isEqualTo("기타 신고 사유입니다.");
     }
 
     @Test
@@ -202,7 +202,7 @@ class ReportServiceTest {
                 new ReportMapRequest("OTHER", " ")
         ))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("invalid_report_description");
 
         verify(quizMapRepository, never()).findByIdAndStatusAndVisibility(any(), any(), any());
         verify(reportRepository, never()).saveAndFlush(any());
@@ -219,7 +219,7 @@ class ReportServiceTest {
                 new ReportMapRequest("SPAM", "a".repeat(501))
         ))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("invalid_report_description");
 
         verify(quizMapRepository, never()).findByIdAndStatusAndVisibility(any(), any(), any());
         verify(reportRepository, never()).saveAndFlush(any());
@@ -354,7 +354,7 @@ class ReportServiceTest {
         )) {
             ReportCommentRequest request = new ReportCommentRequest(
                     reason,
-                    reason.equals("OTHER") ? "기타 사유입니다." : null
+                    reason.equals("OTHER") ? "기타 신고 사유입니다." : null
             );
 
             ReportCommentResponse response = reportService.reportComment(1L, 200L, request);
@@ -391,7 +391,7 @@ class ReportServiceTest {
                 new ReportCommentRequest("OTHER", " ")
         ))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("invalid_report_description");
 
         verify(mapCommentRepository, never()).findByIdAndStatus(any(), any());
         verify(reportRepository, never()).saveAndFlush(any());

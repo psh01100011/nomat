@@ -38,6 +38,9 @@ public class User {
     @Column(name = "nickname", length = 50, nullable = false, unique = true)
     private String nickname;
 
+    @Column(name = "email", length = 254)
+    private String email;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "profile_image_asset_id")
     private Asset profileImageAsset;
@@ -55,19 +58,29 @@ public class User {
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
-    private User(String loginId, String passwordHash, String nickname) {
+    private User(String loginId, String passwordHash, String nickname, String email) {
         this.loginId = loginId;
         this.passwordHash = passwordHash;
         this.nickname = nickname;
+        this.email = email;
     }
 
     public static User create(String loginId, String passwordHash, String nickname) {
-        return new User(loginId, passwordHash, nickname);
+        return create(loginId, passwordHash, nickname, null);
     }
 
-    public void changeProfile(String nickname, Asset profileImageAsset) {
+    public static User create(String loginId, String passwordHash, String nickname, String email) {
+        return new User(loginId, passwordHash, nickname, email);
+    }
+
+    public void changeProfile(String nickname, Asset profileImageAsset, String email) {
         this.nickname = nickname;
         this.profileImageAsset = profileImageAsset;
+        this.email = email;
+    }
+
+    public void removeProfileImage() {
+        this.profileImageAsset = null;
     }
 
     public void changePassword(String passwordHash) {
@@ -79,10 +92,10 @@ public class User {
             return;
         }
 
-        // TODO: 맵/댓글 응답 DTO에서 탈퇴한 유저를 익명 사용자로 표시하도록 처리
         this.loginId = "deleted_user_" + id;
         this.passwordHash = "deleted";
         this.nickname = "deleted_user_" + id;
+        this.email = null;
         this.profileImageAsset = null;
         this.status = UserStatus.DELETED;
         this.deletedAt = LocalDateTime.now();

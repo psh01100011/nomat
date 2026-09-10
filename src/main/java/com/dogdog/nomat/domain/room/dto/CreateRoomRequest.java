@@ -11,15 +11,15 @@ public record CreateRoomRequest(
         Long mapId,
 
         @NotBlank
-        @Size(max = 100)
+        @Size(min = 2, max = 30, message = "invalid_room_title_length")
         String title,
 
-        @Size(max = 100)
+        @Size(min = 4, max = 20, message = "invalid_request")
         String password,
 
         @NotNull
         @Min(2)
-        @Max(50)
+        @Max(12)
         Integer maxPlayers,
 
         @NotNull

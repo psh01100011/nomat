@@ -35,7 +35,8 @@ public class AuthService {
         User user = User.create(
                 request.loginId(),
                 passwordEncoder.encode(request.password()),
-                request.nickname()
+                request.nickname(),
+                normalizeEmail(request.email())
         );
 
         userRepository.save(user);
@@ -58,6 +59,15 @@ public class AuthService {
     @Transactional(readOnly = true)
     public RefreshResponse refresh(String authorizationHeader) {
         String refreshToken = getBearerToken(authorizationHeader);
+        return refreshWithToken(refreshToken);
+    }
+
+    @Transactional(readOnly = true)
+    public RefreshResponse refreshWithToken(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw invalidToken();
+        }
+
         Jwt refreshJwt = decodeRefreshToken(refreshToken);
         Long userId = getUserId(refreshJwt);
 
@@ -76,6 +86,14 @@ public class AuthService {
         if (userRepository.existsByNickname(request.nickname())) {
             throw new BusinessException(HttpStatus.CONFLICT, "duplicate_nickname");
         }
+    }
+
+    private String normalizeEmail(String email) {
+        if (email == null || email.isBlank()) {
+            return null;
+        }
+
+        return email.trim();
     }
 
     private BusinessException invalidIdOrPassword() {

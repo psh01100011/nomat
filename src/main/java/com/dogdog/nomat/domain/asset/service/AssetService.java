@@ -3,15 +3,27 @@ package com.dogdog.nomat.domain.asset.service;
 import com.dogdog.nomat.domain.asset.config.AssetS3Properties;
 import com.dogdog.nomat.domain.asset.dto.UploadImageResponse;
 import com.dogdog.nomat.domain.asset.entity.Asset;
+import com.dogdog.nomat.domain.asset.model.ImageUploadPurpose;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.LocalDate;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
+import javax.imageio.IIOImage;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageOutputStream;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -36,6 +48,10 @@ public class AssetService {
             "png", "image/png",
             "webp", "image/webp"
     );
+    private static final String WEBP_EXTENSION = "webp";
+    private static final String WEBP_CONTENT_TYPE = "image/webp";
+    private static final int MAX_IMAGE_LONG_SIDE = 4096;
+    private static final float WEBP_QUALITY = 0.82f;
 
     private final UserRepository userRepository;
     private final AssetRepository assetRepository;
@@ -44,27 +60,34 @@ public class AssetService {
 
     @Transactional
     public UploadImageResponse uploadImage(Long userId, MultipartFile file) {
+        return uploadImage(userId, file, null);
+    }
+
+    @Transactional
+    public UploadImageResponse uploadImage(Long userId, MultipartFile file, String purposeValue) {
         User uploader = userRepository.findById(userId)
                 .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
 
+        ImageUploadPurpose purpose = parsePurpose(purposeValue);
         validateImage(file);
         validateS3Configuration();
 
         String originalFilename = getOriginalFilename(file);
         String extension = getExtension(originalFilename);
-        String storageKey = createImageStorageKey(extension);
+        ProcessedImage processedImage = processImage(file, purpose);
+        String storageKey = createImageStorageKey(WEBP_EXTENSION);
         String url = createPublicUrl(storageKey);
 
-        uploadToS3(file, storageKey);
+        uploadToS3(processedImage, storageKey);
 
         Asset asset = Asset.createImage(
                 uploader,
                 originalFilename,
                 storageKey,
                 url,
-                file.getContentType(),
-                file.getSize()
+                WEBP_CONTENT_TYPE,
+                (long) processedImage.bytes().length
         );
 
         try {
@@ -81,18 +104,27 @@ public class AssetService {
         }
 
         if (file.getSize() > properties.getMaxImageSizeBytes()) {
-            throw invalidRequest();
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "image_too_large");
         }
 
         String extension = getExtension(getOriginalFilename(file));
         String expectedContentType = IMAGE_CONTENT_TYPES.get(extension);
         if (expectedContentType == null || !expectedContentType.equals(file.getContentType())) {
-            throw invalidRequest();
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "unsupported_image_type");
         }
 
         if (!matchesImageMagicBytes(file, extension)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "unsupported_image_type");
+        }
+    }
+
+    private ImageUploadPurpose parsePurpose(String purposeValue) {
+        ImageUploadPurpose purpose = ImageUploadPurpose.parse(purposeValue);
+        if (purpose == null) {
             throw invalidRequest();
         }
+
+        return purpose;
     }
 
     private void validateS3Configuration() {
@@ -144,17 +176,126 @@ public class AssetService {
         return baseUrl + "/" + storageKey;
     }
 
-    private void uploadToS3(MultipartFile file, String storageKey) {
+    private ProcessedImage processImage(MultipartFile file, ImageUploadPurpose purpose) {
+        try {
+            BufferedImage sourceImage = ImageIO.read(file.getInputStream());
+            if (sourceImage == null) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "unsupported_image_type");
+            }
+
+            validateResolution(sourceImage);
+            BufferedImage resizedImage = resizeAndCrop(sourceImage, purpose.width(), purpose.height());
+            return new ProcessedImage(
+                    encodeWebp(resizedImage),
+                    resizedImage.getWidth(),
+                    resizedImage.getHeight()
+            );
+        } catch (IOException | UncheckedIOException exception) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "image_processing_failed");
+        }
+    }
+
+    private void validateResolution(BufferedImage sourceImage) {
+        int longSide = Math.max(sourceImage.getWidth(), sourceImage.getHeight());
+        if (longSide > MAX_IMAGE_LONG_SIDE) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "image_too_large");
+        }
+    }
+
+    private BufferedImage resizeAndCrop(BufferedImage sourceImage, int targetWidth, int targetHeight) {
+        double sourceRatio = (double) sourceImage.getWidth() / sourceImage.getHeight();
+        double targetRatio = (double) targetWidth / targetHeight;
+        int cropWidth = sourceImage.getWidth();
+        int cropHeight = sourceImage.getHeight();
+
+        if (sourceRatio > targetRatio) {
+            cropWidth = (int) Math.round(sourceImage.getHeight() * targetRatio);
+        } else if (sourceRatio < targetRatio) {
+            cropHeight = (int) Math.round(sourceImage.getWidth() / targetRatio);
+        }
+
+        int cropX = (sourceImage.getWidth() - cropWidth) / 2;
+        int cropY = (sourceImage.getHeight() - cropHeight) / 2;
+        BufferedImage outputImage = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = outputImage.createGraphics();
+        try {
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            graphics.drawImage(
+                    sourceImage,
+                    0,
+                    0,
+                    targetWidth,
+                    targetHeight,
+                    cropX,
+                    cropY,
+                    cropX + cropWidth,
+                    cropY + cropHeight,
+                    null
+            );
+            return outputImage;
+        } finally {
+            graphics.dispose();
+        }
+    }
+
+    private byte[] encodeWebp(BufferedImage image) {
+        Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName(WEBP_EXTENSION);
+        if (!writers.hasNext()) {
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "image_processing_failed");
+        }
+
+        ImageWriter writer = writers.next();
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+                ImageOutputStream imageOutputStream = ImageIO.createImageOutputStream(outputStream)) {
+            writer.setOutput(imageOutputStream);
+            ImageWriteParam writeParam = writer.getDefaultWriteParam();
+            if (writeParam.canWriteCompressed()) {
+                writeParam.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+                setCompressionType(writeParam);
+                writeParam.setCompressionQuality(WEBP_QUALITY);
+            }
+            writer.write(null, new IIOImage(image, null, null), writeParam);
+            imageOutputStream.flush();
+            return outputStream.toByteArray();
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        } catch (RuntimeException exception) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "image_processing_failed");
+        } finally {
+            writer.dispose();
+        }
+    }
+
+    private void setCompressionType(ImageWriteParam writeParam) {
+        String[] compressionTypes = writeParam.getCompressionTypes();
+        if (compressionTypes == null || compressionTypes.length == 0) {
+            return;
+        }
+
+        for (String compressionType : compressionTypes) {
+            if ("Lossy".equalsIgnoreCase(compressionType)) {
+                writeParam.setCompressionType(compressionType);
+                return;
+            }
+        }
+
+        writeParam.setCompressionType(compressionTypes[0]);
+    }
+
+    private void uploadToS3(ProcessedImage processedImage, String storageKey) {
         PutObjectRequest request = PutObjectRequest.builder()
                 .bucket(properties.getBucket())
                 .key(storageKey)
-                .contentType(file.getContentType())
-                .contentLength(file.getSize())
+                .contentType(WEBP_CONTENT_TYPE)
+                .contentLength((long) processedImage.bytes().length)
                 .build();
 
         try {
-            s3Client.putObject(request, RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
-        } catch (IOException | SdkException exception) {
+            s3Client.putObject(request, RequestBody.fromBytes(processedImage.bytes()));
+        } catch (SdkException exception) {
+            log.error("Failed to upload image to S3. bucket={}, key={}", properties.getBucket(), storageKey, exception);
             throw internalServerError();
         }
     }
@@ -233,5 +374,12 @@ public class AssetService {
 
     private BusinessException internalServerError() {
         return new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "internal_server_error");
+    }
+
+    private record ProcessedImage(
+            byte[] bytes,
+            int width,
+            int height
+    ) {
     }
 }

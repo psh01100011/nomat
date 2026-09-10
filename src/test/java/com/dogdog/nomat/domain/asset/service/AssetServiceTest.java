@@ -17,7 +17,12 @@ import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.util.Optional;
+import javax.imageio.ImageIO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -81,11 +86,11 @@ class AssetServiceTest {
             return asset;
         });
 
-        UploadImageResponse response = assetService.uploadImage(1L, file);
+        UploadImageResponse response = assetService.uploadImage(1L, file, "PROFILE");
 
         assertThat(response.assetId()).isEqualTo(10L);
         assertThat(response.url()).startsWith("https://cdn.nomat.com/uploads/images/");
-        assertThat(response.url()).endsWith(".png");
+        assertThat(response.url()).endsWith(".webp");
 
         ArgumentCaptor<PutObjectRequest> requestCaptor = ArgumentCaptor.forClass(PutObjectRequest.class);
         verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
@@ -93,9 +98,9 @@ class AssetServiceTest {
         PutObjectRequest request = requestCaptor.getValue();
         assertThat(request.bucket()).isEqualTo("nomat-assets");
         assertThat(request.key()).startsWith("uploads/images/");
-        assertThat(request.key()).endsWith(".png");
-        assertThat(request.contentType()).isEqualTo("image/png");
-        assertThat(request.contentLength()).isEqualTo(file.getSize());
+        assertThat(request.key()).endsWith(".webp");
+        assertThat(request.contentType()).isEqualTo("image/webp");
+        assertThat(request.contentLength()).isPositive();
 
         ArgumentCaptor<Asset> assetCaptor = ArgumentCaptor.forClass(Asset.class);
         verify(assetRepository).saveAndFlush(assetCaptor.capture());
@@ -106,8 +111,8 @@ class AssetServiceTest {
         assertThat(savedAsset.getOriginalFilename()).isEqualTo("profile.png");
         assertThat(savedAsset.getStorageKey()).isEqualTo(request.key());
         assertThat(savedAsset.getUrl()).isEqualTo(response.url());
-        assertThat(savedAsset.getMimeType()).isEqualTo("image/png");
-        assertThat(savedAsset.getSizeBytes()).isEqualTo(file.getSize());
+        assertThat(savedAsset.getMimeType()).isEqualTo("image/webp");
+        assertThat(savedAsset.getSizeBytes()).isEqualTo(request.contentLength());
         assertThat(savedAsset.getStatus()).isEqualTo(AssetStatus.TEMP);
         assertThat(savedAsset.getProcessingStatus()).isEqualTo(AssetProcessingStatus.READY);
     }
@@ -131,7 +136,7 @@ class AssetServiceTest {
             return asset;
         });
 
-        UploadImageResponse response = assetService.uploadImage(1L, file);
+        UploadImageResponse response = assetService.uploadImage(1L, file, "MAP_THUMBNAIL");
 
         assertThat(response.assetId()).isEqualTo(10L);
         assertThat(response.url()).endsWith(".webp");
@@ -156,10 +161,10 @@ class AssetServiceTest {
             return asset;
         });
 
-        UploadImageResponse response = assetService.uploadImage(1L, file);
+        UploadImageResponse response = assetService.uploadImage(1L, file, "QUESTION_IMAGE");
 
         assertThat(response.assetId()).isEqualTo(10L);
-        assertThat(response.url()).endsWith(".jpg");
+        assertThat(response.url()).endsWith(".webp");
     }
 
 
@@ -184,7 +189,7 @@ class AssetServiceTest {
 
         assertThatThrownBy(() -> assetService.uploadImage(1L, file))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("unsupported_image_type");
 
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
         verify(assetRepository, never()).saveAndFlush(any(Asset.class));
@@ -198,7 +203,7 @@ class AssetServiceTest {
 
         assertThatThrownBy(() -> assetService.uploadImage(1L, file))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("unsupported_image_type");
 
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
         verify(assetRepository, never()).saveAndFlush(any(Asset.class));
@@ -217,7 +222,7 @@ class AssetServiceTest {
 
         assertThatThrownBy(() -> assetService.uploadImage(1L, file))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("unsupported_image_type");
 
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
         verify(assetRepository, never()).saveAndFlush(any(Asset.class));
@@ -232,7 +237,7 @@ class AssetServiceTest {
 
         assertThatThrownBy(() -> assetService.uploadImage(1L, file))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("image_too_large");
 
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
         verify(assetRepository, never()).saveAndFlush(any(Asset.class));
@@ -258,7 +263,7 @@ class AssetServiceTest {
         DeleteObjectRequest deleteRequest = deleteRequestCaptor.getValue();
         assertThat(deleteRequest.bucket()).isEqualTo("nomat-assets");
         assertThat(deleteRequest.key()).startsWith("uploads/images/");
-        assertThat(deleteRequest.key()).endsWith(".png");
+        assertThat(deleteRequest.key()).endsWith(".webp");
     }
 
     @Test
@@ -283,25 +288,28 @@ class AssetServiceTest {
     }
 
     private byte[] pngBytes() {
-        return new byte[] {
-                (byte) 0x89, 0x50, 0x4E, 0x47,
-                0x0D, 0x0A, 0x1A, 0x0A,
-                0x00, 0x00, 0x00, 0x00
-        };
+        return imageBytes("png");
     }
 
     private byte[] jpegBytes() {
-        return new byte[] {
-                (byte) 0xFF, (byte) 0xD8, (byte) 0xFF,
-                0x00, 0x00, 0x00
-        };
+        return imageBytes("jpg");
     }
 
     private byte[] webpBytes() {
-        return new byte[] {
-                0x52, 0x49, 0x46, 0x46,
-                0x00, 0x00, 0x00, 0x00,
-                0x57, 0x45, 0x42, 0x50
-        };
+        return imageBytes("webp");
+    }
+
+    private byte[] imageBytes(String formatName) {
+        BufferedImage image = new BufferedImage(32, 18, BufferedImage.TYPE_INT_RGB);
+        image.setRGB(0, 0, Color.RED.getRGB());
+
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            if (!ImageIO.write(image, formatName, outputStream)) {
+                throw new IllegalStateException("No ImageIO writer for " + formatName);
+            }
+            return outputStream.toByteArray();
+        } catch (IOException exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 }

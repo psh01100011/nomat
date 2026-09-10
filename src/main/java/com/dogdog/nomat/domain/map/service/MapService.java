@@ -44,6 +44,8 @@ import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -69,6 +71,16 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class MapService {
 
+    private static final int MIN_MAP_TITLE_LENGTH = 2;
+    private static final int MAX_MAP_TITLE_LENGTH = 40;
+    private static final int MAX_MAP_DESCRIPTION_LENGTH = 500;
+    private static final int MAX_QUESTION_COUNT = 300;
+    private static final int MAX_QUESTION_PROMPT_LENGTH = 200;
+    private static final int MAX_ANSWER_COUNT = 20;
+    private static final int MAX_ANSWER_LENGTH = 50;
+    private static final int MAX_YOUTUBE_URL_LENGTH = 500;
+    private static final long MAX_YOUTUBE_CLIP_DURATION_MS = 90_000L;
+
     private final UserRepository userRepository;
     private final CategoryRepository categoryRepository;
     private final AssetRepository assetRepository;
@@ -87,6 +99,13 @@ public class MapService {
         QuestionType questionType = parseQuestionType(request.questionType());
         MapVisibility visibility = parseVisibility(request.visibility());
         Asset thumbnailAsset = getImageAssetToAttach(request.thumbnailAssetId(), creator);
+        String title = normalizeRequiredText(
+                request.title(),
+                MIN_MAP_TITLE_LENGTH,
+                MAX_MAP_TITLE_LENGTH,
+                "invalid_map_title_length"
+        );
+        String description = normalizeOptionalText(request.description(), MAX_MAP_DESCRIPTION_LENGTH, "invalid_request");
 
         validateQuestions(questionType, request.questions());
         MapStatus mapStatus = hasPendingAudioProcessing(request.questions())
@@ -98,8 +117,8 @@ public class MapService {
                 category,
                 thumbnailAsset,
                 questionType,
-                request.title(),
-                request.description(),
+                title,
+                description,
                 visibility,
                 request.questions().size(),
                 mapStatus
@@ -121,6 +140,8 @@ public class MapService {
         MapVisibility visibility = parseVisibilityForDraft(request.visibility());
         Asset thumbnailAsset = getImageAssetToAttach(request.thumbnailAssetId(), creator);
         List<SaveMapDraftRequest.QuestionRequest> questions = draftQuestions(request.questions());
+        String title = normalizeOptionalText(request.title(), MAX_MAP_TITLE_LENGTH, "invalid_map_title_length");
+        String description = normalizeOptionalText(request.description(), MAX_MAP_DESCRIPTION_LENGTH, "invalid_request");
 
         validateDraftQuestions(questionType, questions);
 
@@ -129,8 +150,8 @@ public class MapService {
                 category,
                 thumbnailAsset,
                 questionType,
-                request.title(),
-                request.description(),
+                title,
+                description,
                 visibility,
                 questions.size()
         );
@@ -441,7 +462,10 @@ public class MapService {
         }
 
         if (mapNode.containsKey("title")) {
-            title = readTextField(mapNode, "title", true, 100);
+            title = readTextField(mapNode, "title", true, MAX_MAP_TITLE_LENGTH);
+            if (title.length() < MIN_MAP_TITLE_LENGTH) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_map_title_length");
+            }
         }
 
         if (mapNode.containsKey("categoryId")) {
@@ -460,7 +484,7 @@ public class MapService {
         }
 
         if (mapNode.containsKey("description")) {
-            description = readTextField(mapNode, "description", false, null);
+            description = readTextField(mapNode, "description", false, MAX_MAP_DESCRIPTION_LENGTH);
         }
 
         if (mapNode.containsKey("visibility")) {
@@ -484,11 +508,20 @@ public class MapService {
             throw invalidRequest();
         }
 
-        if (maxLength != null && value.length() > maxLength) {
+        String normalizedValue = value.trim();
+        if (!StringUtils.hasText(normalizedValue)) {
+            if (required) {
+                throw invalidRequest();
+            }
+
+            return null;
+        }
+
+        if (maxLength != null && normalizedValue.length() > maxLength) {
             throw invalidRequest();
         }
 
-        return value;
+        return normalizedValue;
     }
 
     private Long readLongField(Map<String, Object> node, String fieldName) {
@@ -576,8 +609,9 @@ public class MapService {
             validateModifyQuestion(questionType, request.promptText(), request.media(), request.answers());
 
             Question question = existingQuestionsById.get(request.questionId());
-            question.update(request.promptText());
+            question.update(normalizeQuestionPrompt(request.promptText()));
             questionAnswerRepository.deleteByQuestionId(question.getId());
+            questionAnswerRepository.flush();
             List<QuestionAnswer> answers = createAnswers(question, request.answers());
             questionAnswerRepository.saveAll(answers);
             answersByQuestionId.put(question.getId(), answers);
@@ -607,7 +641,11 @@ public class MapService {
             }
             validateModifyQuestion(questionType, request.promptText(), request.media(), request.answers());
 
-            Question question = questionRepository.save(Question.create(map, nextQuestionOrder++, request.promptText()));
+            Question question = questionRepository.save(Question.create(
+                    map,
+                    nextQuestionOrder++,
+                    normalizeQuestionPrompt(request.promptText())
+            ));
             List<QuestionAnswer> answers = createAnswers(question, request.answers());
             questionAnswerRepository.saveAll(answers);
             QuestionMedia media = createModifiedQuestionMedia(question, questionType, request.media(), creator);
@@ -644,9 +682,7 @@ public class MapService {
             ModifyMapRequest.MediaRequest media,
             List<String> answers
     ) {
-        if (!StringUtils.hasText(promptText)) {
-            throw invalidRequest();
-        }
+        validateQuestionPrompt(promptText);
 
         if (questionType != QuestionType.TEXT && media == null) {
             throw invalidRequest();
@@ -665,7 +701,7 @@ public class MapService {
     private List<QuestionAnswer> createAnswers(Question question, List<String> answerValues) {
         List<QuestionAnswer> answers = new ArrayList<>();
         for (int index = 0; index < answerValues.size(); index++) {
-            String answer = answerValues.get(index);
+            String answer = normalizeAnswer(answerValues.get(index));
             answers.add(QuestionAnswer.create(question, answer, createAnswerKey(answer), index == 0));
         }
 
@@ -693,6 +729,10 @@ public class MapService {
             return;
         }
 
+        if (hasSameMedia(existingMedia, newMedia)) {
+            return;
+        }
+
         existingMedia.update(
                 newMedia.getAsset(),
                 newMedia.getSourceType(),
@@ -703,6 +743,37 @@ public class MapService {
         );
         mediaByQuestionId.put(question.getId(), existingMedia);
         syncAudioProcessingJob(existingMedia);
+    }
+
+    private boolean hasSameMedia(QuestionMedia existingMedia, QuestionMedia newMedia) {
+        if (existingMedia.getSourceType() != newMedia.getSourceType()) {
+            return false;
+        }
+
+        if (existingMedia.getSourceType() == QuestionMediaSourceType.UPLOAD) {
+            return sameAsset(existingMedia.getAsset(), newMedia.getAsset());
+        }
+
+        if (existingMedia.getSourceType() == QuestionMediaSourceType.YOUTUBE) {
+            return Objects.equals(normalizeMediaSourceUrl(existingMedia.getSourceType(), existingMedia.getSourceUrl()),
+                    newMedia.getSourceUrl())
+                    && Objects.equals(existingMedia.getStartTimeMs(), newMedia.getStartTimeMs())
+                    && Objects.equals(existingMedia.getEndTimeMs(), newMedia.getEndTimeMs())
+                    && Objects.equals(existingMedia.getDurationMs(), newMedia.getDurationMs());
+        }
+
+        return Objects.equals(existingMedia.getSourceUrl(), newMedia.getSourceUrl())
+                && Objects.equals(existingMedia.getStartTimeMs(), newMedia.getStartTimeMs())
+                && Objects.equals(existingMedia.getEndTimeMs(), newMedia.getEndTimeMs())
+                && Objects.equals(existingMedia.getDurationMs(), newMedia.getDurationMs());
+    }
+
+    private boolean sameAsset(Asset existingAsset, Asset newAsset) {
+        if (existingAsset == null || newAsset == null) {
+            return existingAsset == newAsset;
+        }
+
+        return Objects.equals(existingAsset.getId(), newAsset.getId());
     }
 
     private void removeQuestionMedia(Long questionId, Map<Long, QuestionMedia> mediaByQuestionId) {
@@ -745,7 +816,7 @@ public class MapService {
                 question,
                 asset,
                 sourceType,
-                media.sourceUrl(),
+                normalizeMediaSourceUrl(sourceType, media.sourceUrl()),
                 startTimeMs,
                 endTimeMs,
                 durationMs
@@ -784,10 +855,12 @@ public class MapService {
             throw invalidRequest();
         }
 
+        if (activeQuestions.size() > MAX_QUESTION_COUNT) {
+            throw invalidRequest();
+        }
+
         for (Question question : activeQuestions) {
-            if (!StringUtils.hasText(question.getPromptText())) {
-                throw invalidRequest();
-            }
+            validateQuestionPrompt(question.getPromptText());
 
             List<QuestionAnswer> answers = answersByQuestionId.getOrDefault(question.getId(), List.of());
             validatePersistedAnswers(answers);
@@ -796,16 +869,18 @@ public class MapService {
     }
 
     private void validatePersistedAnswers(List<QuestionAnswer> answers) {
-        if (answers.isEmpty()) {
-            throw invalidRequest();
+        if (answers.isEmpty() || answers.size() > MAX_ANSWER_COUNT) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_answer_count");
         }
 
         Set<String> answerKeys = new HashSet<>();
         for (QuestionAnswer answer : answers) {
-            if (!StringUtils.hasText(answer.getAnswerText())
-                    || !StringUtils.hasText(answer.getAnswerKey())
-                    || !answerKeys.add(answer.getAnswerKey())) {
-                throw invalidRequest();
+            validateAnswer(answer.getAnswerText());
+            if (!StringUtils.hasText(answer.getAnswerKey())) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_answer_length");
+            }
+            if (!answerKeys.add(answer.getAnswerKey())) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "duplicate_answer");
             }
         }
     }
@@ -1042,10 +1117,12 @@ public class MapService {
             throw invalidRequest();
         }
 
+        if (questions.size() > MAX_QUESTION_COUNT) {
+            throw invalidRequest();
+        }
+
         for (CreateMapRequest.QuestionRequest question : questions) {
-            if (!StringUtils.hasText(question.promptText())) {
-                throw invalidRequest();
-            }
+            validateQuestionPrompt(question.promptText());
 
             if (questionType != QuestionType.TEXT && question.media() == null) {
                 throw invalidRequest();
@@ -1070,15 +1147,16 @@ public class MapService {
     }
 
     private void validateAnswers(List<String> answers) {
-        if (answers == null || answers.isEmpty()) {
-            throw invalidRequest();
+        if (answers == null || answers.isEmpty() || answers.size() > MAX_ANSWER_COUNT) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_answer_count");
         }
 
         Set<String> answerKeys = new HashSet<>();
         for (String answer : answers) {
+            validateAnswer(answer);
             String answerKey = createAnswerKey(answer);
             if (!answerKeys.add(answerKey)) {
-                throw invalidRequest();
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "duplicate_answer");
             }
         }
     }
@@ -1102,9 +1180,7 @@ public class MapService {
         }
 
         if (sourceType == QuestionMediaSourceType.YOUTUBE) {
-            if (!StringUtils.hasText(media.sourceUrl())) {
-                throw invalidRequest();
-            }
+            validateYoutubeUrl(media.sourceUrl());
             validateMediaTimeRange(media.startTimeMs(), media.endTimeMs());
             return;
         }
@@ -1133,9 +1209,7 @@ public class MapService {
         }
 
         if (sourceType == QuestionMediaSourceType.YOUTUBE) {
-            if (!StringUtils.hasText(media.sourceUrl())) {
-                throw invalidRequest();
-            }
+            validateYoutubeUrl(media.sourceUrl());
             validateMediaTimeRange(media.startTimeMs(), media.endTimeMs());
             return;
         }
@@ -1155,10 +1229,17 @@ public class MapService {
             QuestionType questionType,
             List<SaveMapDraftRequest.QuestionRequest> questions
     ) {
+        if (questions.size() > MAX_QUESTION_COUNT) {
+            throw invalidRequest();
+        }
+
         for (SaveMapDraftRequest.QuestionRequest question : questions) {
             if (question == null) {
                 throw invalidRequest();
             }
+
+            validateDraftQuestionPrompt(question.promptText());
+            validateDraftAnswers(question.answers());
 
             if (question.media() != null && StringUtils.hasText(question.media().sourceType())) {
                 validateDraftMedia(questionType, question.media());
@@ -1180,6 +1261,9 @@ public class MapService {
             if (questionType == QuestionType.IMAGE || questionType == QuestionType.TEXT) {
                 throw invalidRequest();
             }
+            if (StringUtils.hasText(media.sourceUrl())) {
+                validateYoutubeUrl(media.sourceUrl());
+            }
             validateDraftMediaTimeRange(media.startTimeMs(), media.endTimeMs());
             return;
         }
@@ -1199,18 +1283,115 @@ public class MapService {
         }
 
         if (startTimeMs != null && endTimeMs != null && endTimeMs <= startTimeMs) {
-            throw invalidRequest();
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_clip_range");
+        }
+
+        if (startTimeMs != null && endTimeMs != null && endTimeMs - startTimeMs > MAX_YOUTUBE_CLIP_DURATION_MS) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "youtube_clip_too_long");
         }
     }
 
     private void validateMediaTimeRange(Long startTimeMs, Long endTimeMs) {
         if (startTimeMs == null || endTimeMs == null || startTimeMs < 0 || endTimeMs <= startTimeMs) {
-            throw invalidRequest();
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_clip_range");
+        }
+
+        if (endTimeMs - startTimeMs > MAX_YOUTUBE_CLIP_DURATION_MS) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "youtube_clip_too_long");
         }
 
         toIntegerMillis(startTimeMs);
         toIntegerMillis(endTimeMs);
         toIntegerMillis(endTimeMs - startTimeMs);
+    }
+
+    private void validateYoutubeUrl(String sourceUrl) {
+        extractYoutubeVideoId(sourceUrl);
+    }
+
+    private String canonicalYoutubeUrl(String sourceUrl) {
+        return "https://www.youtube.com/watch?v=" + extractYoutubeVideoId(sourceUrl);
+    }
+
+    private String extractYoutubeVideoId(String sourceUrl) {
+        URI uri = parseYoutubeUri(sourceUrl);
+        String normalizedHost = uri.getHost().toLowerCase(Locale.ROOT);
+        String path = uri.getPath() == null ? "" : uri.getPath();
+        if ("youtu.be".equals(normalizedHost)) {
+            String videoId = path.length() > 1 ? path.substring(1).split("/")[0] : "";
+            return requireYoutubeVideoId(videoId);
+        }
+
+        if (isYoutubeComHost(normalizedHost)) {
+            if (isYoutubeWatchPath(path)) {
+                return youtubeVideoIdFromQuery(uri.getQuery());
+            }
+            if (isYoutubeShortsUrl(path)) {
+                return requireYoutubeVideoId(path.substring("/shorts/".length()).split("/")[0]);
+            }
+        }
+
+        throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+    }
+
+    private URI parseYoutubeUri(String sourceUrl) {
+        if (!StringUtils.hasText(sourceUrl) || sourceUrl.trim().length() > MAX_YOUTUBE_URL_LENGTH) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        URI uri;
+        try {
+            uri = new URI(sourceUrl.trim());
+        } catch (URISyntaxException exception) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        String scheme = uri.getScheme();
+        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        String host = uri.getHost();
+        if (host == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        return uri;
+    }
+
+    private boolean isYoutubeComHost(String host) {
+        return "youtube.com".equals(host)
+                || "www.youtube.com".equals(host)
+                || "m.youtube.com".equals(host);
+    }
+
+    private boolean isYoutubeWatchPath(String path) {
+        return "/watch".equals(path);
+    }
+
+    private String youtubeVideoIdFromQuery(String query) {
+        if (query == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        return List.of(query.split("&")).stream()
+                .filter(parameter -> parameter.startsWith("v="))
+                .map(parameter -> parameter.substring(2))
+                .findFirst()
+                .map(this::requireYoutubeVideoId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url"));
+    }
+
+    private boolean isYoutubeShortsUrl(String path) {
+        return path.startsWith("/shorts/") && path.length() > "/shorts/".length();
+    }
+
+    private String requireYoutubeVideoId(String videoId) {
+        if (!StringUtils.hasText(videoId)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_youtube_url");
+        }
+
+        return videoId;
     }
 
     private void saveQuestion(
@@ -1220,11 +1401,15 @@ public class MapService {
             int questionOrder,
             User creator
     ) {
-        Question question = questionRepository.save(Question.create(map, questionOrder, request.promptText()));
+        Question question = questionRepository.save(Question.create(
+                map,
+                questionOrder,
+                normalizeQuestionPrompt(request.promptText())
+        ));
 
         List<QuestionAnswer> answers = new ArrayList<>();
         for (int index = 0; index < request.answers().size(); index++) {
-            String answer = request.answers().get(index);
+            String answer = normalizeAnswer(request.answers().get(index));
             answers.add(QuestionAnswer.create(question, answer, createAnswerKey(answer), index == 0));
         }
         questionAnswerRepository.saveAll(answers);
@@ -1245,7 +1430,11 @@ public class MapService {
             int questionOrder,
             User creator
     ) {
-        Question question = questionRepository.save(Question.create(map, questionOrder, request.promptText()));
+        Question question = questionRepository.save(Question.create(
+                map,
+                questionOrder,
+                normalizeOptionalQuestionPrompt(request.promptText())
+        ));
 
         List<QuestionAnswer> answers = createDraftAnswers(question, request.answers());
         if (!answers.isEmpty()) {
@@ -1270,9 +1459,10 @@ public class MapService {
                 continue;
             }
 
-            String answerKey = createAnswerKey(answer);
+            String normalizedAnswer = normalizeAnswer(answer);
+            String answerKey = createAnswerKey(normalizedAnswer);
             if (answerKeys.add(answerKey)) {
-                answers.add(QuestionAnswer.create(question, answer, answerKey, answers.isEmpty()));
+                answers.add(QuestionAnswer.create(question, normalizedAnswer, answerKey, answers.isEmpty()));
             }
         }
 
@@ -1309,7 +1499,7 @@ public class MapService {
                 question,
                 asset,
                 sourceType,
-                media.sourceUrl(),
+                normalizeMediaSourceUrl(sourceType, media.sourceUrl()),
                 startTimeMs,
                 endTimeMs,
                 durationMs
@@ -1342,11 +1532,101 @@ public class MapService {
                 question,
                 asset,
                 sourceType,
-                media.sourceUrl(),
+                normalizeMediaSourceUrl(sourceType, media.sourceUrl()),
                 startTimeMs,
                 endTimeMs,
                 durationMs
         );
+    }
+
+    private String normalizeMediaSourceUrl(QuestionMediaSourceType sourceType, String sourceUrl) {
+        if (sourceType != QuestionMediaSourceType.YOUTUBE || sourceUrl == null) {
+            return sourceUrl;
+        }
+
+        return canonicalYoutubeUrl(sourceUrl);
+    }
+
+    private void validateQuestionPrompt(String promptText) {
+        normalizeQuestionPrompt(promptText);
+    }
+
+    private String normalizeQuestionPrompt(String promptText) {
+        return normalizeRequiredText(
+                promptText,
+                1,
+                MAX_QUESTION_PROMPT_LENGTH,
+                "invalid_question_prompt_length"
+        );
+    }
+
+    private void validateDraftQuestionPrompt(String promptText) {
+        if (!StringUtils.hasText(promptText)) {
+            return;
+        }
+
+        normalizeOptionalQuestionPrompt(promptText);
+    }
+
+    private String normalizeOptionalQuestionPrompt(String promptText) {
+        return normalizeOptionalText(promptText, MAX_QUESTION_PROMPT_LENGTH, "invalid_question_prompt_length");
+    }
+
+    private void validateDraftAnswers(List<String> answers) {
+        if (answers == null || answers.isEmpty()) {
+            return;
+        }
+
+        if (answers.size() > MAX_ANSWER_COUNT) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_answer_count");
+        }
+
+        Set<String> answerKeys = new HashSet<>();
+        for (String answer : answers) {
+            if (!StringUtils.hasText(answer)) {
+                continue;
+            }
+
+            validateAnswer(answer);
+            String answerKey = createAnswerKey(answer);
+            if (!answerKeys.add(answerKey)) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "duplicate_answer");
+            }
+        }
+    }
+
+    private void validateAnswer(String answer) {
+        normalizeAnswer(answer);
+    }
+
+    private String normalizeAnswer(String answer) {
+        return normalizeRequiredText(answer, 1, MAX_ANSWER_LENGTH, "invalid_answer_length");
+    }
+
+    private String normalizeRequiredText(String value, int minLength, int maxLength, String messageCode) {
+        if (!StringUtils.hasText(value)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, messageCode);
+        }
+
+        String normalizedValue = value.trim();
+        if (normalizedValue.length() < minLength || normalizedValue.length() > maxLength) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, messageCode);
+        }
+
+        return normalizedValue;
+    }
+
+    private String normalizeOptionalText(String value, int maxLength, String messageCode) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+
+        String normalizedValue = value.trim();
+        if (normalizedValue.length() > maxLength) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, messageCode);
+        }
+
+        return normalizedValue;
     }
 
     private String createAnswerKey(String answer) {
@@ -1354,7 +1634,7 @@ public class MapService {
             throw invalidRequest();
         }
 
-        String answerKey = answer.replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
+        String answerKey = answer.trim().replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
         if (!StringUtils.hasText(answerKey)) {
             throw invalidRequest();
         }

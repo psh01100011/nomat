@@ -6,14 +6,16 @@ import com.dogdog.nomat.domain.user.entity.User;
 public record MyInfoResponse(
         Long userId,
         String nickname,
-        String profileImageUrl
+        String profileImageUrl,
+        String email
 ) {
 
     public static MyInfoResponse from(User user) {
         return new MyInfoResponse(
                 user.getId(),
                 user.getNickname(),
-                getProfileImageUrl(user)
+                getProfileImageUrl(user),
+                user.getEmail()
         );
     }
 

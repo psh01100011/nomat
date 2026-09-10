@@ -2,8 +2,11 @@ package com.dogdog.nomat.domain.room.controller;
 
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
+import com.dogdog.nomat.domain.room.dto.CurrentRoomResponse;
 import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
+import com.dogdog.nomat.domain.room.dto.ModifyRoomSettingsRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
+import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.service.RoomService;
 import com.dogdog.nomat.global.dto.ApiResponse;
@@ -14,6 +17,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -44,6 +48,9 @@ public class RoomController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Long mapId,
             @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false) String questionType,
+            @RequestParam(required = false) Boolean hasPassword,
+            @RequestParam(defaultValue = "false") boolean excludePasswordRooms,
             @RequestParam(required = false) String status,
             @RequestParam(defaultValue = "true") boolean joinableOnly,
             @RequestParam(defaultValue = "0") int page,
@@ -52,13 +59,31 @@ public class RoomController {
     ) {
         return ApiResponse.of(
                 "success_get_rooms",
-                roomService.getRooms(keyword, mapId, categoryId, status, joinableOnly, page, size, sort)
+                roomService.getRooms(
+                        keyword,
+                        mapId,
+                        categoryId,
+                        questionType,
+                        hasPassword,
+                        excludePasswordRooms,
+                        status,
+                        joinableOnly,
+                        page,
+                        size,
+                        sort
+                )
         );
     }
 
     @GetMapping("/{roomId}")
     public ApiResponse<RoomDetailResponse> getRoom(@PathVariable Long roomId) {
         return ApiResponse.of("success_get_room", roomService.getRoom(roomId));
+    }
+
+    @GetMapping("/me/current")
+    public ApiResponse<CurrentRoomResponse> getCurrentRoom(@AuthenticationPrincipal Jwt jwt) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_get_current_room", roomService.getCurrentRoom(userId));
     }
 
     @PostMapping("/{roomId}/join")
@@ -79,6 +104,16 @@ public class RoomController {
         Long userId = getUserId(jwt);
         roomService.leaveRoom(userId, roomId);
         return ApiResponse.success("success_leave_room");
+    }
+
+    @PatchMapping("/{roomId}/settings")
+    public ApiResponse<RoomDetailResponse> modifyRoomSettings(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long roomId,
+            @Valid @RequestBody ModifyRoomSettingsRequest request
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_modify_room_settings", roomService.modifyRoomSettings(userId, roomId, request));
     }
 
     @DeleteMapping("/{roomId}")
@@ -109,6 +144,15 @@ public class RoomController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_start_game", roomService.startGame(userId, roomId));
+    }
+
+    @GetMapping("/{roomId}/game/snapshot")
+    public ApiResponse<RoomGameSnapshotResponse> getGameSnapshot(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long roomId
+    ) {
+        Long userId = getUserId(jwt);
+        return ApiResponse.of("success_get_game_snapshot", roomService.getGameSnapshot(userId, roomId));
     }
 
     private Long getUserId(Jwt jwt) {

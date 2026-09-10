@@ -35,9 +35,15 @@ app:
     initial-delay-ms: 10000
     fixed-delay-ms: 30000
     command-timeout-seconds: 300
+    processing-timeout-minutes: 10
+    max-retry-attempts: 3
     yt-dlp-path: ${YT_DLP_PATH:yt-dlp}
     ffmpeg-path: ${FFMPEG_PATH:ffmpeg}
+    output-bitrate: ${AUDIO_OUTPUT_BITRATE:128k}
   auth:
+    cookie:
+      secure: ${AUTH_COOKIE_SECURE:false}
+      same-site: ${AUTH_COOKIE_SAME_SITE:Lax}
     jwt:
       issuer: nomat
       secret: ${JWT_SECRET:nomat-local-development-secret-key-32}

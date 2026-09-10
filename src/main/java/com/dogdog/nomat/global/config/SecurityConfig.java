@@ -1,7 +1,9 @@
 package com.dogdog.nomat.global.config;
 
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
+import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -38,6 +40,7 @@ public class SecurityConfig {
     private static final String ACCESS_TOKEN_TYPE = "access";
     private static final String REFRESH_TOKEN_TYPE = "refresh";
     private static final String PASSWORD_VERIFICATION_TOKEN_TYPE = "password_verification";
+    private static final String ACCESS_TOKEN_COOKIE_NAME = "access_token";
 
     @Bean
     public SecurityFilterChain securityFilterChain(
@@ -52,14 +55,18 @@ public class SecurityConfig {
                         .requestMatchers("/auth/signup").permitAll()
                         .requestMatchers("/auth/login").permitAll()
                         .requestMatchers("/auth/refresh").permitAll()
+                        .requestMatchers("/auth/logout").permitAll()
                         .requestMatchers("/users/login-id/availability").permitAll()
                         .requestMatchers("/users/nickname/availability").permitAll()
                         .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/users/\\d+$")).permitAll()
                         .requestMatchers(HttpMethod.GET, "/maps").permitAll()
-                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/maps/\\d+$")).permitAll()
-                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/maps/\\d+/comments$")).permitAll()
+                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/maps/[^/]+$")).permitAll()
+                        .requestMatchers(RegexRequestMatcher.regexMatcher(
+                                HttpMethod.GET,
+                                "^/maps/[^/]+/comments(\\?.*)?$"
+                        )).permitAll()
                         .requestMatchers(HttpMethod.GET, "/rooms").permitAll()
-                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/rooms/\\d+$")).permitAll()
+                        .requestMatchers(RegexRequestMatcher.regexMatcher(HttpMethod.GET, "^/rooms/[^/]+$")).permitAll()
                         .requestMatchers("/ws").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
@@ -118,11 +125,27 @@ public class SecurityConfig {
     public BearerTokenResolver bearerTokenResolver() {
         DefaultBearerTokenResolver delegate = new DefaultBearerTokenResolver();
         return request -> {
-            if ("/auth/refresh".equals(request.getServletPath())) {
+            if ("/auth/refresh".equals(request.getServletPath())
+                    || "/auth/logout".equals(request.getServletPath())) {
                 return null;
             }
 
-            return delegate.resolve(request);
+            String token = delegate.resolve(request);
+            if (token != null) {
+                return token;
+            }
+
+            Cookie[] cookies = request.getCookies();
+            if (cookies == null) {
+                return null;
+            }
+
+            return Arrays.stream(cookies)
+                    .filter(cookie -> ACCESS_TOKEN_COOKIE_NAME.equals(cookie.getName()))
+                    .map(Cookie::getValue)
+                    .filter(value -> value != null && !value.isBlank())
+                    .findFirst()
+                    .orElse(null);
         };
     }
 

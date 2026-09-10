@@ -46,7 +46,13 @@ class AuthServiceTest {
 
     @Test
     void signupCreatesUserWithEncodedPassword() {
-        SignupRequest request = new SignupRequest("testuser", "password123!", "password123!", "tester", null);
+        SignupRequest request = new SignupRequest(
+                "testuser",
+                "password123!",
+                "password123!",
+                "tester",
+                " tester@example.com "
+        );
         given(passwordEncoder.encode("password123!")).willReturn("encoded-password");
         given(userRepository.save(any(User.class))).willAnswer(invocation -> invocation.getArgument(0));
 
@@ -59,6 +65,7 @@ class AuthServiceTest {
         assertThat(savedUser.getLoginId()).isEqualTo("testuser");
         assertThat(savedUser.getPasswordHash()).isEqualTo("encoded-password");
         assertThat(savedUser.getNickname()).isEqualTo("tester");
+        assertThat(savedUser.getEmail()).isEqualTo("tester@example.com");
     }
 
     @Test

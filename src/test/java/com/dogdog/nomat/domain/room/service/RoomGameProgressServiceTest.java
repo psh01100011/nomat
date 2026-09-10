@@ -140,7 +140,7 @@ class RoomGameProgressServiceTest {
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
                         && events.getFirst().type() == RoomDomainEventType.HINT_REVEALED
-                        && events.getFirst().hint().equals("정")
+                        && events.getFirst().hint().equals("ㅈㄷ")
         ));
     }
 

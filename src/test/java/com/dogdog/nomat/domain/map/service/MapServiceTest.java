@@ -56,7 +56,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -132,6 +134,24 @@ class MapServiceTest {
         assertThat(response.favorited()).isFalse();
         assertThat(response.createdAt()).isEqualTo(LocalDateTime.of(2026, 8, 11, 10, 0));
         assertThat(response.updatedAt()).isEqualTo(LocalDateTime.of(2026, 8, 11, 10, 30));
+    }
+
+    @Test
+    void getMapReturnsDeletedCreatorAsAnonymousUser() {
+        User creator = activeUser(1L);
+        creator.delete();
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+
+        given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+
+        MapDetailResponse response = mapService.getMap(null, 100L);
+
+        assertThat(response.creator().userId()).isEqualTo(1L);
+        assertThat(response.creator().nickname()).isEqualTo("탈퇴한 사용자");
+        assertThat(response.creator().profileImageUrl()).isNull();
+        assertThat(response.creator().deleted()).isTrue();
     }
 
     @Test
@@ -239,6 +259,7 @@ class MapServiceTest {
         assertThat(summary.questionType()).isEqualTo("AUDIO");
         assertThat(summary.creator().userId()).isEqualTo(1L);
         assertThat(summary.creator().nickname()).isEqualTo("tester1");
+        assertThat(summary.creator().deleted()).isFalse();
         assertThat(summary.questionCount()).isEqualTo(1);
         assertThat(summary.playCount()).isEqualTo(135L);
         assertThat(summary.likeCount()).isEqualTo(12L);
@@ -272,6 +293,33 @@ class MapServiceTest {
         assertThat(creatorIdCaptor.getValue()).isNull();
         assertThat(pageableCaptor.getValue().getPageNumber()).isEqualTo(0);
         assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(20);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void getMapsReturnsDeletedCreatorsAsAnonymousUsers() {
+        User creator = activeUser(1L);
+        creator.delete();
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+
+        given(quizMapRepository.searchMaps(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(Pageable.class)
+        )).willReturn(new PageImpl<>(List.of(map)));
+
+        MapListResponse response = mapService.getMaps(null, null, null, null, 0, 20, "latest", null);
+
+        MapListResponse.MapSummaryResponse summary = response.maps().getFirst();
+        assertThat(summary.creator().userId()).isEqualTo(1L);
+        assertThat(summary.creator().nickname()).isEqualTo("탈퇴한 사용자");
+        assertThat(summary.creator().profileImageUrl()).isNull();
+        assertThat(summary.creator().deleted()).isTrue();
     }
 
     @Test
@@ -538,7 +586,7 @@ class MapServiceTest {
                                 1000L,
                                 null
                         ),
-                        List.of("", "정답", "정 답")
+                        List.of("", "정답")
                 ))
         );
 
@@ -578,7 +626,7 @@ class MapServiceTest {
         verify(questionMediaRepository).save(mediaCaptor.capture());
         QuestionMedia savedMedia = mediaCaptor.getValue();
         assertThat(savedMedia.getSourceType()).isEqualTo(QuestionMediaSourceType.YOUTUBE);
-        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://youtube.com/watch?v=draft");
+        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=draft");
         assertThat(savedMedia.getStartTimeMs()).isEqualTo(1000);
         assertThat(savedMedia.getEndTimeMs()).isNull();
         assertThat(savedMedia.getDurationMs()).isNull();
@@ -614,7 +662,7 @@ class MapServiceTest {
 
         assertThatThrownBy(() -> mapService.saveMapDraft(1L, request))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("invalid_youtube_clip_range");
 
         verify(quizMapRepository, never()).save(any(QuizMap.class));
     }
@@ -764,12 +812,16 @@ class MapServiceTest {
         assertThat(savedAnswers.getFirst().getAnswerText()).isEqualTo("수정 정답");
         assertThat(savedAnswers.getFirst().isPrimary()).isTrue();
         verify(questionAnswerRepository).deleteByQuestionId(200L);
+        InOrder answerUpdateOrder = Mockito.inOrder(questionAnswerRepository);
+        answerUpdateOrder.verify(questionAnswerRepository).deleteByQuestionId(200L);
+        answerUpdateOrder.verify(questionAnswerRepository).flush();
+        answerUpdateOrder.verify(questionAnswerRepository).saveAll(any());
 
         ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
         verify(questionMediaRepository).save(mediaCaptor.capture());
         QuestionMedia savedMedia = mediaCaptor.getValue();
         assertThat(savedMedia.getSourceType()).isEqualTo(QuestionMediaSourceType.YOUTUBE);
-        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://youtube.com/watch?v=updated");
+        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=updated");
         assertThat(savedMedia.getStartTimeMs()).isEqualTo(60000);
         assertThat(savedMedia.getEndTimeMs()).isEqualTo(80000);
         assertThat(savedMedia.getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PENDING);
@@ -777,6 +829,71 @@ class MapServiceTest {
         ArgumentCaptor<AudioProcessingJob> jobCaptor = ArgumentCaptor.forClass(AudioProcessingJob.class);
         verify(audioProcessingJobRepository).save(jobCaptor.capture());
         assertThat(jobCaptor.getValue().getQuestionMedia()).isEqualTo(savedMedia);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void modifyMapDoesNotReprocessYoutubeMediaWhenOnlyAnswersChanged() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
+        Question question = question(200L, map);
+        QuestionAnswer oldAnswer = QuestionAnswer.create(question, "이전 정답", "이전정답", true);
+        QuestionMedia existingMedia = QuestionMedia.create(
+                question,
+                null,
+                QuestionMediaSourceType.YOUTUBE,
+                "https://www.youtube.com/watch?v=updated",
+                60000,
+                80000,
+                20000
+        );
+        Asset audioAsset = Asset.createAudio(
+                creator,
+                "question-media-200.mp3",
+                "uploads/audios/2026/09/question-media-200.mp3",
+                "https://cdn.nomat.com/uploads/audios/2026/09/question-media-200.mp3",
+                "audio/mpeg",
+                1234L,
+                20000
+        );
+        ReflectionTestUtils.setField(audioAsset, "id", 30L);
+        audioAsset.attach();
+        existingMedia.completeProcessing(audioAsset, 20000);
+        ModifyMapRequest request = new ModifyMapRequest(
+                1,
+                null,
+                new ModifyMapRequest.QuestionsRequest(
+                        null,
+                        List.of(new ModifyMapRequest.UpdateQuestionRequest(
+                                200L,
+                                "수정된 문제",
+                                new ModifyMapRequest.MediaRequest(
+                                        "YOUTUBE",
+                                        null,
+                                        "https://youtube.com/watch?v=updated",
+                                        60000L,
+                                        80000L
+                                ),
+                                List.of("새 정답", "추가 정답")
+                        )),
+                        null
+                )
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+        given(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(100L, QuestionStatus.ACTIVE))
+                .willReturn(List.of(question));
+        given(questionAnswerRepository.findByQuestionIdInOrderByQuestionIdAscIdAsc(List.of(200L)))
+                .willReturn(List.of(oldAnswer));
+        given(questionMediaRepository.findByQuestionIdIn(List.of(200L))).willReturn(List.of(existingMedia));
+
+        mapService.modifyMap(1L, 100L, request);
+
+        verify(audioProcessingJobRepository, never()).findByQuestionMediaId(any());
+        verify(audioProcessingJobRepository, never()).save(any(AudioProcessingJob.class));
+        assertThat(existingMedia.getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.READY);
     }
 
     @Test
@@ -1067,7 +1184,7 @@ class MapServiceTest {
         QuestionMedia savedMedia = mediaCaptor.getValue();
         assertThat(savedMedia.getQuestion()).isEqualTo(savedQuestion);
         assertThat(savedMedia.getSourceType()).isEqualTo(QuestionMediaSourceType.YOUTUBE);
-        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://youtube.com/watch?v=---");
+        assertThat(savedMedia.getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=---");
         assertThat(savedMedia.getStartTimeMs()).isEqualTo(60000);
         assertThat(savedMedia.getEndTimeMs()).isEqualTo(102000);
         assertThat(savedMedia.getDurationMs()).isEqualTo(42000);
@@ -1076,6 +1193,79 @@ class MapServiceTest {
         ArgumentCaptor<AudioProcessingJob> jobCaptor = ArgumentCaptor.forClass(AudioProcessingJob.class);
         verify(audioProcessingJobRepository).save(jobCaptor.capture());
         assertThat(jobCaptor.getValue().getQuestionMedia()).isEqualTo(savedMedia);
+    }
+
+    @Test
+    void createMapAcceptsYoutubeShortsUrlAndStoresCanonicalUrl() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        CreateMapRequest request = audioYoutubeMapRequestWithUrl(" https://www.youtube.com/shorts/abc123 ");
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
+        given(quizMapRepository.save(any(QuizMap.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(questionRepository.save(any(Question.class))).willAnswer(invocation -> invocation.getArgument(0));
+
+        mapService.createMap(1L, request);
+
+        ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
+        verify(questionMediaRepository).save(mediaCaptor.capture());
+        assertThat(mediaCaptor.getValue().getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=abc123");
+    }
+
+    @Test
+    void createMapAcceptsYoutuBeUrl() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        CreateMapRequest request = audioYoutubeMapRequestWithUrl("https://youtu.be/abc123");
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
+        given(quizMapRepository.save(any(QuizMap.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(questionRepository.save(any(Question.class))).willAnswer(invocation -> invocation.getArgument(0));
+
+        mapService.createMap(1L, request);
+
+        ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
+        verify(questionMediaRepository).save(mediaCaptor.capture());
+        assertThat(mediaCaptor.getValue().getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=abc123");
+    }
+
+    @Test
+    void createMapRemovesPlaylistParametersFromYoutubeUrl() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        CreateMapRequest request = audioYoutubeMapRequestWithUrl(
+                "https://www.youtube.com/watch?v=W_QQ2VF1b4Y&list=PLGoTZQa91pYvSdHpes7H6fit_iOYtH-fj&index=3&t=18543s"
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
+        given(quizMapRepository.save(any(QuizMap.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(questionRepository.save(any(Question.class))).willAnswer(invocation -> invocation.getArgument(0));
+
+        mapService.createMap(1L, request);
+
+        ArgumentCaptor<QuestionMedia> mediaCaptor = ArgumentCaptor.forClass(QuestionMedia.class);
+        verify(questionMediaRepository).save(mediaCaptor.capture());
+        assertThat(mediaCaptor.getValue().getSourceUrl()).isEqualTo("https://www.youtube.com/watch?v=W_QQ2VF1b4Y");
+    }
+
+    @Test
+    void createMapRejectsUnsupportedYoutubeUrl() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        CreateMapRequest request = audioYoutubeMapRequestWithUrl("https://example.com/watch?v=abc123");
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
+
+        assertThatThrownBy(() -> mapService.createMap(1L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invalid_youtube_url");
+
+        verify(quizMapRepository, never()).save(any(QuizMap.class));
+        verify(questionMediaRepository, never()).save(any(QuestionMedia.class));
     }
 
     @Test
@@ -1173,7 +1363,7 @@ class MapServiceTest {
 
         assertThatThrownBy(() -> mapService.createMap(1L, request))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("invalid_request");
+                .hasMessageContaining("duplicate_answer");
 
         verify(quizMapRepository, never()).save(any(QuizMap.class));
     }
@@ -1197,6 +1387,14 @@ class MapServiceTest {
     }
 
     private CreateMapRequest audioYoutubeMapRequest(Long thumbnailAssetId) {
+        return audioYoutubeMapRequest(thumbnailAssetId, "https://youtube.com/watch?v=---");
+    }
+
+    private CreateMapRequest audioYoutubeMapRequestWithUrl(String sourceUrl) {
+        return audioYoutubeMapRequest(null, sourceUrl);
+    }
+
+    private CreateMapRequest audioYoutubeMapRequest(Long thumbnailAssetId, String sourceUrl) {
         return new CreateMapRequest(
                 "20년대 아이돌 노래 맞히기",
                 10L,
@@ -1209,7 +1407,7 @@ class MapServiceTest {
                         new CreateMapRequest.MediaRequest(
                                 "YOUTUBE",
                                 null,
-                                "https://youtube.com/watch?v=---",
+                                sourceUrl,
                                 60000L,
                                 102000L
                         ),

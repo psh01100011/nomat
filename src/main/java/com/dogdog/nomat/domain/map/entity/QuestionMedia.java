@@ -132,6 +132,11 @@ public class QuestionMedia {
         this.failureMessage = null;
     }
 
+    public void resetProcessing() {
+        this.processingStatus = QuestionMediaProcessingStatus.PENDING;
+        this.failureMessage = null;
+    }
+
     public void completeProcessing(Asset asset, Integer durationMs) {
         this.asset = asset;
         this.durationMs = durationMs;

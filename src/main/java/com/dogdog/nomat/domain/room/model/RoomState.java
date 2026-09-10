@@ -15,6 +15,7 @@ public record RoomState(
         RoomStatus status,
         Long mapId,
         String mapTitle,
+        String questionType,
         String mapThumbnailUrl,
         Long categoryId,
         String categoryName,
@@ -65,6 +66,54 @@ public record RoomState(
             RoomMember host,
             LocalDateTime createdAt
     ) {
+        return waiting(
+                roomId,
+                title,
+                mapId,
+                mapTitle,
+                null,
+                mapThumbnailUrl,
+                categoryId,
+                categoryName,
+                mapQuestionCount,
+                mapVersion,
+                hasPassword,
+                passwordHash,
+                maxPlayers,
+                selectedQuestionCount,
+                answerTimeLimitSeconds,
+                timeLimitMode,
+                audioRepeatEnabled,
+                initialHintEnabled,
+                initialHintTriggerSeconds,
+                host,
+                createdAt
+        );
+    }
+
+    public static RoomState waiting(
+            Long roomId,
+            String title,
+            Long mapId,
+            String mapTitle,
+            String questionType,
+            String mapThumbnailUrl,
+            Long categoryId,
+            String categoryName,
+            int mapQuestionCount,
+            int mapVersion,
+            boolean hasPassword,
+            String passwordHash,
+            int maxPlayers,
+            int selectedQuestionCount,
+            int answerTimeLimitSeconds,
+            TimeLimitMode timeLimitMode,
+            boolean audioRepeatEnabled,
+            boolean initialHintEnabled,
+            int initialHintTriggerSeconds,
+            RoomMember host,
+            LocalDateTime createdAt
+    ) {
         RoomMember hostMember = host.asHost();
         return new RoomState(
                 roomId,
@@ -72,6 +121,7 @@ public record RoomState(
                 RoomStatus.WAITING,
                 mapId,
                 mapTitle,
+                questionType,
                 mapThumbnailUrl,
                 categoryId,
                 categoryName,
@@ -156,6 +206,7 @@ public record RoomState(
                 status,
                 mapId,
                 mapTitle,
+                questionType,
                 mapThumbnailUrl,
                 categoryId,
                 categoryName,
@@ -192,6 +243,44 @@ public record RoomState(
         return withStatus(RoomStatus.ENDED, randomSeed, startedAt, endedAt);
     }
 
+    public RoomState withSettings(
+            boolean nextHasPassword,
+            String nextPasswordHash,
+            int nextMaxPlayers,
+            int nextSelectedQuestionCount,
+            int nextAnswerTimeLimitSeconds
+    ) {
+        return new RoomState(
+                roomId,
+                title,
+                status,
+                mapId,
+                mapTitle,
+                questionType,
+                mapThumbnailUrl,
+                categoryId,
+                categoryName,
+                mapQuestionCount,
+                mapVersion,
+                nextHasPassword,
+                nextPasswordHash,
+                nextMaxPlayers,
+                nextSelectedQuestionCount,
+                nextAnswerTimeLimitSeconds,
+                timeLimitMode,
+                audioRepeatEnabled,
+                initialHintEnabled,
+                initialHintTriggerSeconds,
+                hostUserId,
+                members,
+                kickedUserIds,
+                randomSeed,
+                createdAt,
+                startedAt,
+                endedAt
+        );
+    }
+
     private RoomState withMembers(List<RoomMember> nextMembers, Long nextHostUserId) {
         return new RoomState(
                 roomId,
@@ -199,6 +288,7 @@ public record RoomState(
                 status,
                 mapId,
                 mapTitle,
+                questionType,
                 mapThumbnailUrl,
                 categoryId,
                 categoryName,
@@ -235,6 +325,7 @@ public record RoomState(
                 nextStatus,
                 mapId,
                 mapTitle,
+                questionType,
                 mapThumbnailUrl,
                 categoryId,
                 categoryName,

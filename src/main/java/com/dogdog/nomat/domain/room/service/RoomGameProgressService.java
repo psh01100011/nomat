@@ -1,6 +1,7 @@
 package com.dogdog.nomat.domain.room.service;
 
 import com.dogdog.nomat.domain.room.dto.RoomSkipVoteRequest;
+import com.dogdog.nomat.domain.room.model.RoomAnswerHint;
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
 import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
@@ -106,7 +107,7 @@ public class RoomGameProgressService {
             roomRedisRepository.saveGameState(skippedGameState);
             roomEventPublisher.publish(List.of(
                     skipVoteUpdated,
-                    RoomDomainEvent.questionEnded(roomId, question.questionNumber(), now)
+                    RoomDomainEvent.questionEnded(roomId, question.questionNumber(), question.primaryAnswer(), now)
             ));
             scheduleQuestionAdvance(roomId, votedGameState.currentQuestionIndex());
             return;
@@ -133,7 +134,7 @@ public class RoomGameProgressService {
         roomEventPublisher.publish(List.of(RoomDomainEvent.hintRevealed(
                 roomId,
                 question.questionNumber(),
-                hint(question.primaryAnswer()),
+                RoomAnswerHint.from(question.primaryAnswer()),
                 LocalDateTime.now()
         )));
     }
@@ -153,6 +154,7 @@ public class RoomGameProgressService {
         roomEventPublisher.publish(List.of(RoomDomainEvent.questionEnded(
                 roomId,
                 question.questionNumber(),
+                question.primaryAnswer(),
                 LocalDateTime.now()
         )));
         scheduleQuestionAdvance(roomId, questionIndex);
@@ -217,11 +219,4 @@ public class RoomGameProgressService {
         return memberCount / 2 + 1;
     }
 
-    private String hint(String primaryAnswer) {
-        if (primaryAnswer == null || primaryAnswer.isBlank()) {
-            return null;
-        }
-
-        return primaryAnswer.substring(0, 1);
-    }
 }

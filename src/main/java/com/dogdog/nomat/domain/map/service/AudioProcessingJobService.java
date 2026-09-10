@@ -9,6 +9,7 @@ import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
 import com.dogdog.nomat.domain.user.entity.User;
+import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -30,6 +31,31 @@ public class AudioProcessingJobService {
                 .stream()
                 .map(AudioProcessingJob::getId)
                 .toList();
+    }
+
+    @Transactional
+    public int recoverStaleProcessingJobs(int batchSize, long processingTimeoutMinutes, int maxRetryAttempts) {
+        LocalDateTime threshold = LocalDateTime.now().minusMinutes(processingTimeoutMinutes);
+        List<AudioProcessingJob> jobs = audioProcessingJobRepository
+                .findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
+                        AudioProcessingJobStatus.PROCESSING,
+                        threshold,
+                        PageRequest.of(0, batchSize)
+                );
+        jobs.forEach(job -> retryOrFail(job, maxRetryAttempts));
+        return jobs.size();
+    }
+
+    @Transactional
+    public int recoverFailedJobs(int batchSize, int maxRetryAttempts) {
+        List<AudioProcessingJob> jobs = audioProcessingJobRepository
+                .findByStatusAndAttemptCountLessThanOrderByUpdatedAtAsc(
+                        AudioProcessingJobStatus.FAILED,
+                        maxRetryAttempts,
+                        PageRequest.of(0, batchSize)
+                );
+        jobs.forEach(AudioProcessingJob::retry);
+        return jobs.size();
     }
 
     @Transactional
@@ -87,6 +113,15 @@ public class AudioProcessingJobService {
     public void failJob(Long jobId, String failureMessage) {
         audioProcessingJobRepository.findById(jobId)
                 .ifPresent(job -> job.fail(failureMessage));
+    }
+
+    private void retryOrFail(AudioProcessingJob job, int maxRetryAttempts) {
+        if (job.canRetry(maxRetryAttempts)) {
+            job.retry();
+            return;
+        }
+
+        job.fail("audio_processing_retry_exhausted");
     }
 
     private void publishMapIfAllMediaReady(QuestionMedia media) {

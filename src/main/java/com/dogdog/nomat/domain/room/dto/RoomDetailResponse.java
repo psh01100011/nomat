@@ -50,16 +50,18 @@ public record RoomDetailResponse(
     public record MapResponse(
             Long mapId,
             String title,
+            String questionType,
             Long categoryId,
             String categoryName,
             String thumbnailUrl,
             int questionCount
-    ) {
+        ) {
 
         private static MapResponse from(RoomState room) {
             return new MapResponse(
                     room.mapId(),
                     room.mapTitle(),
+                    room.questionType(),
                     room.categoryId(),
                     room.categoryName(),
                     room.mapThumbnailUrl(),

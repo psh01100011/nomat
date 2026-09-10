@@ -30,7 +30,7 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class CommentService {
 
-    private static final int MAX_COMMENT_CONTENT_LENGTH = 500;
+    private static final int MAX_COMMENT_CONTENT_LENGTH = 300;
 
     private final UserRepository userRepository;
     private final QuizMapRepository quizMapRepository;
@@ -46,10 +46,10 @@ public class CommentService {
         if (request == null) {
             throw invalidRequest();
         }
-        validateContent(request.content());
+        String content = normalizeContent(request.content());
         QuizMap map = getPublicPublishedMap(mapId);
 
-        MapComment comment = mapCommentRepository.save(MapComment.create(map, writer, request.content()));
+        MapComment comment = mapCommentRepository.save(MapComment.create(map, writer, content));
         map.increaseCommentCount();
 
         return CreateMapCommentResponse.from(comment);
@@ -65,11 +65,11 @@ public class CommentService {
         if (request == null) {
             throw invalidRequest();
         }
-        validateContent(request.content());
+        String content = normalizeContent(request.content());
         MapComment comment = getActiveComment(commentId);
         validateCommentWriter(comment, userId);
 
-        comment.modify(request.content());
+        comment.modify(content);
 
         return ModifyMapCommentResponse.from(comment);
     }
@@ -125,10 +125,21 @@ public class CommentService {
         }
     }
 
-    private void validateContent(String content) {
-        if (!StringUtils.hasText(content) || content.length() > MAX_COMMENT_CONTENT_LENGTH) {
+    private String normalizeContent(String content) {
+        if (!StringUtils.hasText(content)) {
             throw invalidRequest();
         }
+
+        String normalizedContent = content.trim();
+        if (!StringUtils.hasText(normalizedContent)) {
+            throw invalidRequest();
+        }
+
+        if (normalizedContent.length() > MAX_COMMENT_CONTENT_LENGTH) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "comment_too_long");
+        }
+
+        return normalizedContent;
     }
 
     private void validatePage(int page, int size) {
