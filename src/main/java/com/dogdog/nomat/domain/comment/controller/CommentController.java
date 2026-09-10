@@ -1,5 +1,6 @@
 package com.dogdog.nomat.domain.comment.controller;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.comment.dto.ModifyMapCommentRequest;
 import com.dogdog.nomat.domain.comment.dto.ModifyMapCommentResponse;
 import com.dogdog.nomat.domain.comment.service.CommentService;
@@ -35,7 +36,7 @@ public class CommentController {
             @PathVariable Long commentId,
             @Valid @RequestBody ModifyMapCommentRequest request
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of(
                 "success_modify_comment",
                 commentService.modifyMapComment(userId, commentId, request)
@@ -47,7 +48,7 @@ public class CommentController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long commentId
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         commentService.deleteMapComment(userId, commentId);
         return ApiResponse.success("success_delete_comment");
     }
@@ -59,15 +60,10 @@ public class CommentController {
             @PathVariable Long commentId,
             @Valid @RequestBody ReportCommentRequest request
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of(
                 "success_report_comment",
                 reportService.reportComment(userId, commentId, request)
         );
-    }
-
-    private Long getUserId(Jwt jwt) {
-        Number userId = jwt.getClaim("userId");
-        return userId.longValue();
     }
 }

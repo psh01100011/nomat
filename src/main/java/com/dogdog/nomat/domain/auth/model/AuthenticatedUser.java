@@ -44,6 +44,11 @@ public record AuthenticatedUser(
         }
     }
 
+    public Long requireMemberId() {
+        requireMember();
+        return userId;
+    }
+
     public void requireGuest() {
         if (isMember()) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "guest_only");

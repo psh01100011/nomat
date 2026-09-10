@@ -4,6 +4,7 @@ import com.dogdog.nomat.domain.comment.dto.CreateMapCommentRequest;
 import com.dogdog.nomat.domain.comment.dto.CreateMapCommentResponse;
 import com.dogdog.nomat.domain.comment.dto.MapCommentListResponse;
 import com.dogdog.nomat.domain.comment.service.CommentService;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
@@ -51,7 +52,7 @@ public class MapController {
             @AuthenticationPrincipal Jwt jwt,
             @Valid @RequestBody CreateMapRequest request
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of("success_create_map", mapService.createMap(userId, request));
     }
 
@@ -61,7 +62,7 @@ public class MapController {
             @AuthenticationPrincipal Jwt jwt,
             @Valid @RequestBody SaveMapDraftRequest request
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of("success_save_map_draft", mapService.saveMapDraft(userId, request));
     }
 
@@ -70,7 +71,7 @@ public class MapController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long mapId
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of("success_like_map", mapService.likeMap(userId, mapId));
     }
 
@@ -79,7 +80,7 @@ public class MapController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long mapId
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of("success_unlike_map", mapService.unlikeMap(userId, mapId));
     }
 
@@ -88,7 +89,7 @@ public class MapController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long mapId
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of("success_favorite_map", mapService.favoriteMap(userId, mapId));
     }
 
@@ -97,7 +98,7 @@ public class MapController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long mapId
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of("success_unfavorite_map", mapService.unfavoriteMap(userId, mapId));
     }
 
@@ -108,7 +109,7 @@ public class MapController {
             @PathVariable Long mapId,
             @Valid @RequestBody ReportMapRequest request
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of(
                 "success_report_map",
                 reportService.reportMap(userId, mapId, request)
@@ -121,7 +122,7 @@ public class MapController {
             @PathVariable Long mapId,
             @Valid @RequestBody ModifyMapRequest request
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of("success_modify_map", mapService.modifyMap(userId, mapId, request));
     }
 
@@ -130,7 +131,7 @@ public class MapController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long mapId
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         mapService.deleteMap(userId, mapId);
         return ApiResponse.success("success_delete_map");
     }
@@ -140,7 +141,7 @@ public class MapController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long mapId
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of("success_get_map_editor", mapService.getMapEditor(userId, mapId));
     }
 
@@ -193,16 +194,11 @@ public class MapController {
             @PathVariable Long mapId,
             @Valid @RequestBody CreateMapCommentRequest request
     ) {
-        Long userId = getUserId(jwt);
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of(
                 "success_create_comment",
                 commentService.createMapComment(userId, mapId, request)
         );
-    }
-
-    private Long getUserId(Jwt jwt) {
-        Number userId = jwt.getClaim("userId");
-        return userId.longValue();
     }
 
     private Long getUserIdOrNull(Jwt jwt) {
@@ -210,6 +206,11 @@ public class MapController {
             return null;
         }
 
-        return getUserId(jwt);
+        AuthenticatedUser user = AuthenticatedUser.from(jwt);
+        if (user.isGuest()) {
+            return null;
+        }
+
+        return user.userId();
     }
 }
