@@ -1,9 +1,13 @@
 package com.dogdog.nomat.domain.auth.service;
 
+import com.dogdog.nomat.domain.auth.dto.GuestLoginRequest;
+import com.dogdog.nomat.domain.auth.dto.GuestLoginResponse;
 import com.dogdog.nomat.domain.auth.dto.LoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginResponse;
 import com.dogdog.nomat.domain.auth.dto.RefreshResponse;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.auth.token.TokenPair;
 import com.dogdog.nomat.domain.user.entity.User;
@@ -23,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class AuthService {
 
     private static final String BEARER_PREFIX = "Bearer ";
+    private static final String GUEST_USER_TYPE = "GUEST";
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -56,6 +61,35 @@ public class AuthService {
         return new LoginResponse(user.getId(), tokenPair.accessToken(), tokenPair.refreshToken());
     }
 
+    public GuestLoginResponse loginGuest(GuestLoginRequest request) {
+        String nickname = request.nickname().trim();
+        Long guestUserId = authTokenProvider.generateGuestUserId();
+        TokenPair tokenPair = authTokenProvider.issueGuest(guestUserId, nickname);
+
+        return new GuestLoginResponse(
+                guestUserId,
+                GUEST_USER_TYPE,
+                nickname,
+                tokenPair.accessToken(),
+                tokenPair.refreshToken()
+        );
+    }
+
+    public GuestLoginResponse changeGuestNickname(AuthenticatedUser authenticatedUser, GuestLoginRequest request) {
+        authenticatedUser.requireGuest();
+
+        String nickname = request.nickname().trim();
+        TokenPair tokenPair = authTokenProvider.issueGuest(authenticatedUser.userId(), nickname);
+
+        return new GuestLoginResponse(
+                authenticatedUser.userId(),
+                GUEST_USER_TYPE,
+                nickname,
+                tokenPair.accessToken(),
+                tokenPair.refreshToken()
+        );
+    }
+
     @Transactional(readOnly = true)
     public RefreshResponse refresh(String authorizationHeader) {
         String refreshToken = getBearerToken(authorizationHeader);
@@ -69,9 +103,16 @@ public class AuthService {
         }
 
         Jwt refreshJwt = decodeRefreshToken(refreshToken);
-        Long userId = getUserId(refreshJwt);
+        AuthenticatedUser authenticatedUser = AuthenticatedUser.from(refreshJwt);
 
-        User user = userRepository.findById(userId)
+        if (authenticatedUser.userType() == AuthenticatedUserType.GUEST) {
+            return new RefreshResponse(authTokenProvider.issueGuestAccessToken(
+                    authenticatedUser.userId(),
+                    authenticatedUser.nickname()
+            ));
+        }
+
+        User user = userRepository.findById(authenticatedUser.userId())
                 .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
                 .orElseThrow(this::invalidToken);
 
@@ -125,12 +166,4 @@ public class AuthService {
         }
     }
 
-    private Long getUserId(Jwt jwt) {
-        Number userId = jwt.getClaim("userId");
-        if (userId == null) {
-            throw invalidToken();
-        }
-
-        return userId.longValue();
-    }
 }

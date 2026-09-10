@@ -5,6 +5,7 @@ import com.dogdog.nomat.domain.asset.entity.AssetProcessingStatus;
 import com.dogdog.nomat.domain.asset.entity.AssetStatus;
 import com.dogdog.nomat.domain.asset.entity.AssetType;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
@@ -40,9 +41,12 @@ public class UserService {
     private final AuthTokenProvider authTokenProvider;
 
     @Transactional(readOnly = true)
-    public MyInfoResponse getMyInfo(Long userId) {
-        User user = getAuthenticatedUser(userId);
+    public MyInfoResponse getMyInfo(AuthenticatedUser authenticatedUser) {
+        if (authenticatedUser.isGuest()) {
+            return MyInfoResponse.fromGuest(authenticatedUser);
+        }
 
+        User user = getAuthenticatedUser(authenticatedUser.userId());
         return MyInfoResponse.from(user);
     }
 

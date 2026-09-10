@@ -7,10 +7,13 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.dogdog.nomat.domain.auth.dto.GuestLoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginResponse;
 import com.dogdog.nomat.domain.auth.dto.RefreshResponse;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.auth.token.TokenPair;
 import com.dogdog.nomat.domain.user.entity.User;
@@ -148,6 +151,33 @@ class AuthServiceTest {
     }
 
     @Test
+    void refreshReturnsNewGuestAccessToken() {
+        Jwt refreshJwt = guestRefreshJwt(-1L, "손님");
+        given(authTokenProvider.decodeRefreshToken("guest-refresh-token")).willReturn(refreshJwt);
+        given(authTokenProvider.issueGuestAccessToken(-1L, "손님")).willReturn("new-guest-access-token");
+
+        RefreshResponse response = authService.refresh("Bearer guest-refresh-token");
+
+        assertThat(response.accessToken()).isEqualTo("new-guest-access-token");
+        verify(userRepository, never()).findById(any());
+    }
+
+    @Test
+    void changeGuestNicknameReturnsTokensForSameGuestUserId() {
+        AuthenticatedUser guest = new AuthenticatedUser(-1L, AuthenticatedUserType.GUEST, "손님");
+        given(authTokenProvider.issueGuest(-1L, "새손님"))
+                .willReturn(new TokenPair("new-access-token", "new-refresh-token"));
+
+        var response = authService.changeGuestNickname(guest, new GuestLoginRequest("새손님"));
+
+        assertThat(response.userId()).isEqualTo(-1L);
+        assertThat(response.userType()).isEqualTo("GUEST");
+        assertThat(response.nickname()).isEqualTo("새손님");
+        assertThat(response.accessToken()).isEqualTo("new-access-token");
+        assertThat(response.refreshToken()).isEqualTo("new-refresh-token");
+    }
+
+    @Test
     void refreshRejectsMissingBearerToken() {
         assertThatThrownBy(() -> authService.refresh(null))
                 .isInstanceOf(BusinessException.class)
@@ -184,6 +214,21 @@ class AuthServiceTest {
                 .issuedAt(now)
                 .expiresAt(now.plusSeconds(60))
                 .claim("userId", userId)
+                .claim("tokenType", "refresh")
+                .build();
+    }
+
+    private Jwt guestRefreshJwt(Long userId, String nickname) {
+        Instant now = Instant.now();
+        return Jwt.withTokenValue("guest-refresh-token")
+                .header("alg", "HS256")
+                .issuer("nomat")
+                .subject("guest:" + userId)
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(60))
+                .claim("userId", userId)
+                .claim("userType", "GUEST")
+                .claim("nickname", nickname)
                 .claim("tokenType", "refresh")
                 .build();
     }

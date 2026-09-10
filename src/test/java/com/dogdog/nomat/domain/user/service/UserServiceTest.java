@@ -7,6 +7,8 @@ import static org.mockito.BDDMockito.given;
 import com.dogdog.nomat.domain.asset.entity.Asset;
 import com.dogdog.nomat.domain.asset.entity.AssetProcessingStatus;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
@@ -55,19 +57,37 @@ class UserServiceTest {
         ReflectionTestUtils.setField(user, "id", 1L);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
 
-        MyInfoResponse response = userService.getMyInfo(1L);
+        AuthenticatedUser authenticatedUser = new AuthenticatedUser(1L, AuthenticatedUserType.MEMBER, null);
+
+        MyInfoResponse response = userService.getMyInfo(authenticatedUser);
 
         assertThat(response.userId()).isEqualTo(1L);
+        assertThat(response.userType()).isEqualTo("MEMBER");
         assertThat(response.nickname()).isEqualTo("tester");
         assertThat(response.profileImageUrl()).isNull();
         assertThat(response.email()).isEqualTo("tester@example.com");
     }
 
     @Test
+    void getMyInfoReturnsGuestInfoWithoutUserLookup() {
+        AuthenticatedUser guest = new AuthenticatedUser(-1L, AuthenticatedUserType.GUEST, "손님");
+
+        MyInfoResponse response = userService.getMyInfo(guest);
+
+        assertThat(response.userId()).isEqualTo(-1L);
+        assertThat(response.userType()).isEqualTo("GUEST");
+        assertThat(response.nickname()).isEqualTo("손님");
+        assertThat(response.profileImageUrl()).isNull();
+        assertThat(response.email()).isNull();
+    }
+
+    @Test
     void getMyInfoRejectsUnknownUserId() {
         given(userRepository.findById(1L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> userService.getMyInfo(1L))
+        AuthenticatedUser authenticatedUser = new AuthenticatedUser(1L, AuthenticatedUserType.MEMBER, null);
+
+        assertThatThrownBy(() -> userService.getMyInfo(authenticatedUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_token");
     }

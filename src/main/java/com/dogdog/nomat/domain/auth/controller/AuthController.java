@@ -1,5 +1,8 @@
 package com.dogdog.nomat.domain.auth.controller;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
+import com.dogdog.nomat.domain.auth.dto.GuestLoginRequest;
+import com.dogdog.nomat.domain.auth.dto.GuestLoginResponse;
 import com.dogdog.nomat.domain.auth.dto.LoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginResponse;
 import com.dogdog.nomat.domain.auth.dto.RefreshResponse;
@@ -13,8 +16,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -60,6 +66,29 @@ public class AuthController {
         LoginResponse loginResponse = authService.login(request);
         addAuthCookies(response, loginResponse.accessToken(), loginResponse.refreshToken());
         return ApiResponse.of("success_login", loginResponse);
+    }
+
+    @PostMapping("/guest")
+    @ResponseStatus(HttpStatus.OK)
+    public ApiResponse<GuestLoginResponse> loginGuest(
+            @Valid @RequestBody GuestLoginRequest request,
+            jakarta.servlet.http.HttpServletResponse response
+    ) {
+        GuestLoginResponse loginResponse = authService.loginGuest(request);
+        addAuthCookies(response, loginResponse.accessToken(), loginResponse.refreshToken());
+        return ApiResponse.of("success_guest_login", loginResponse);
+    }
+
+    @PatchMapping("/guest/nickname")
+    @ResponseStatus(HttpStatus.OK)
+    public ApiResponse<GuestLoginResponse> changeGuestNickname(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody GuestLoginRequest request,
+            jakarta.servlet.http.HttpServletResponse response
+    ) {
+        GuestLoginResponse loginResponse = authService.changeGuestNickname(AuthenticatedUser.from(jwt), request);
+        addAuthCookies(response, loginResponse.accessToken(), loginResponse.refreshToken());
+        return ApiResponse.of("success_modify_guest_nickname", loginResponse);
     }
 
     @PostMapping("/refresh")

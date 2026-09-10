@@ -1,5 +1,6 @@
 package com.dogdog.nomat.domain.user.controller;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
 import com.dogdog.nomat.domain.user.dto.ModifyPasswordRequest;
@@ -32,8 +33,7 @@ public class UserController {
 
     @GetMapping("/me")
     public ApiResponse<MyInfoResponse> getMyInfo(@AuthenticationPrincipal Jwt jwt) {
-        Long userId = getUserId(jwt);
-        return ApiResponse.of("success_get_my_info", userService.getMyInfo(userId));
+        return ApiResponse.of("success_get_my_info", userService.getMyInfo(AuthenticatedUser.from(jwt)));
     }
 
     @GetMapping("/login-id/availability")
