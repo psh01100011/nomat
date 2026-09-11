@@ -6,6 +6,7 @@ import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
 import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
+import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.model.RoomStatus;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
@@ -68,9 +69,8 @@ public class RoomGameProgressService {
     public void voteToSkip(Long userId, Long roomId, RoomSkipVoteRequest request) {
         RoomState room = roomRedisRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
-        if (!room.hasMember(userId)) {
-            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access");
-        }
+        RoomMember member = room.findMember(userId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access"));
         if (room.status() != RoomStatus.PLAYING) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "cannot_skip_question");
         }
@@ -95,6 +95,7 @@ public class RoomGameProgressService {
         RoomDomainEvent skipVoteUpdated = RoomDomainEvent.skipVoteUpdated(
                 roomId,
                 userId,
+                member.userType().name(),
                 question.questionNumber(),
                 room.memberCount(),
                 votedGameState.skipVoteCount(),

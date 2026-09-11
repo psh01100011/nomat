@@ -1,5 +1,6 @@
 package com.dogdog.nomat.global.config;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
 import com.dogdog.nomat.domain.room.service.RoomWebSocketSessionRegistry;
 import com.dogdog.nomat.global.exception.BusinessException;
@@ -93,11 +94,7 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
 
         try {
             Jwt jwt = jwtDecoder.decode(authorization.substring(BEARER_PREFIX.length()));
-            Number userId = jwt.getClaim("userId");
-            if (userId == null) {
-                throw new BadCredentialsException("invalid_token");
-            }
-            return userId.longValue();
+            return AuthenticatedUser.from(jwt).userId();
         } catch (JwtException exception) {
             throw new BadCredentialsException("invalid_token", exception);
         }

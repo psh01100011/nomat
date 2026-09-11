@@ -6,6 +6,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
 import com.dogdog.nomat.domain.room.dto.RoomSkipVoteRequest;
 import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
@@ -165,23 +166,26 @@ class RoomGameProgressServiceTest {
 
     @Test
     void voteToSkipSavesVoteAndPublishesVoteStatusBeforeThreshold() {
-        RoomState room = room(4);
+        RoomState room = room(3).withJoinedMember(
+                new RoomMember(-1L, "손님", null, AuthenticatedUserType.GUEST, false, now())
+        );
         RoomGameState gameState = gameState().withStartedQuestion(0, now(), 30);
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
 
-        roomGameProgressService.voteToSkip(4L, 25L, skipVoteRequest(1L, 1));
+        roomGameProgressService.voteToSkip(-1L, 25L, skipVoteRequest(1L, 1));
 
         ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
         verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
         RoomGameState savedGameState = gameStateCaptor.getValue();
-        assertThat(savedGameState.currentQuestionSkipVoterUserIds()).containsExactly(4L);
+        assertThat(savedGameState.currentQuestionSkipVoterUserIds()).containsExactly(-1L);
         assertThat(savedGameState.currentQuestionEndedAt()).isNull();
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
                         && events.getFirst().type() == RoomDomainEventType.SKIP_VOTE_UPDATED
-                        && events.getFirst().userId().equals(4L)
+                        && events.getFirst().userId().equals(-1L)
+                        && events.getFirst().userType().equals("GUEST")
                         && events.getFirst().questionNumber() == 1
                         && events.getFirst().memberCount() == 4
                         && events.getFirst().skipVoteCount() == 1

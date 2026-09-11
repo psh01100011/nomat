@@ -40,7 +40,15 @@ public class RoomMessageService {
         roomMessageRateLimiter.checkAllowed(roomId, userId, clientMessageId);
         LocalDateTime now = LocalDateTime.now();
         List<RoomDomainEvent> events = new ArrayList<>();
-        events.add(RoomDomainEvent.chatMessage(roomId, userId, member.nickname(), content, clientMessageId, now));
+        events.add(RoomDomainEvent.chatMessage(
+                roomId,
+                userId,
+                member.nickname(),
+                member.userType().name(),
+                content,
+                clientMessageId,
+                now
+        ));
         Integer endedQuestionIndex = null;
 
         if (room.status() == RoomStatus.PLAYING) {
@@ -52,6 +60,7 @@ public class RoomMessageService {
                         correctGameState,
                         userId,
                         member.nickname(),
+                        member.userType().name(),
                         content,
                         answerKey(content),
                         now,
@@ -70,6 +79,7 @@ public class RoomMessageService {
             RoomGameState gameState,
             Long userId,
             String nickname,
+            String userType,
             String content,
             String answerKey,
             LocalDateTime now,
@@ -91,8 +101,15 @@ public class RoomMessageService {
         RoomGameQuestion question = nextGameState.currentQuestion();
         int score = nextGameState.scores().getOrDefault(userId, 0);
 
-        events.add(RoomDomainEvent.correctAnswer(nextGameState.roomId(), userId, nickname, question.questionNumber(), now));
-        events.add(RoomDomainEvent.scoreUpdated(nextGameState.roomId(), userId, nickname, score, now));
+        events.add(RoomDomainEvent.correctAnswer(
+                nextGameState.roomId(),
+                userId,
+                nickname,
+                userType,
+                question.questionNumber(),
+                now
+        ));
+        events.add(RoomDomainEvent.scoreUpdated(nextGameState.roomId(), userId, nickname, userType, score, now));
         events.add(RoomDomainEvent.questionEnded(nextGameState.roomId(), question.questionNumber(), question.primaryAnswer(), now));
         return nextGameState.currentQuestionIndex();
     }

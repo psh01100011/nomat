@@ -8,6 +8,8 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
@@ -101,7 +103,7 @@ class RoomServiceTest {
         given(roomRedisRepository.nextRoomId()).willReturn(25L);
         given(roomRedisRepository.createRoom(org.mockito.ArgumentMatchers.any(RoomState.class))).willReturn(true);
 
-        CreateRoomResponse response = roomService.createRoom(3L, request);
+        CreateRoomResponse response = roomService.createRoom(memberAuth(3L), request);
 
         assertThat(response.roomId()).isEqualTo(25L);
         assertThat(response.status()).isEqualTo("WAITING");
@@ -143,7 +145,7 @@ class RoomServiceTest {
         given(passwordEncoder.encode("secret")).willReturn("encoded-secret");
         given(roomRedisRepository.createRoom(org.mockito.ArgumentMatchers.any(RoomState.class))).willReturn(true);
 
-        roomService.createRoom(3L, request);
+        roomService.createRoom(memberAuth(3L), request);
 
         ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
         verify(roomRedisRepository).createRoom(roomCaptor.capture());
@@ -161,7 +163,7 @@ class RoomServiceTest {
         given(roomRedisRepository.findJoinedRoomId(3L)).willReturn(Optional.of(99L));
         given(roomRedisRepository.findById(99L)).willReturn(Optional.of(room(99L, "참여 중인 방", 15L, 10)));
 
-        assertThatThrownBy(() -> roomService.createRoom(3L, request(15L, null, 10)))
+        assertThatThrownBy(() -> roomService.createRoom(memberAuth(3L), request(15L, null, 10)))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getMessageCode()).isEqualTo("already_joined_room");
                     assertThat(exception.getData()).isEqualTo(new CurrentRoomResponse(99L, "WAITING"));
@@ -177,7 +179,7 @@ class RoomServiceTest {
         given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
                 .willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> roomService.createRoom(3L, request(15L, null, 10)))
+        assertThatThrownBy(() -> roomService.createRoom(memberAuth(3L), request(15L, null, 10)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("map_not_found");
 
@@ -192,11 +194,36 @@ class RoomServiceTest {
         given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
                 .willReturn(Optional.of(map));
 
-        assertThatThrownBy(() -> roomService.createRoom(3L, request(15L, null, 10)))
+        assertThatThrownBy(() -> roomService.createRoom(memberAuth(3L), request(15L, null, 10)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_request");
 
         verify(roomRedisRepository, never()).findJoinedRoomId(3L);
+    }
+
+    @Test
+    void createRoomAllowsGuestHostWithoutUserLookup() {
+        QuizMap map = publishedPublicMap(15L, 20);
+        CreateRoomRequest request = request(15L, null, 10);
+        given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+        given(roomRedisRepository.findJoinedRoomId(-1L)).willReturn(Optional.empty());
+        given(roomRedisRepository.nextRoomId()).willReturn(25L);
+        given(roomRedisRepository.createRoom(org.mockito.ArgumentMatchers.any(RoomState.class))).willReturn(true);
+
+        CreateRoomResponse response = roomService.createRoom(guestAuth(-1L, "손님"), request);
+
+        assertThat(response.roomId()).isEqualTo(25L);
+        assertThat(response.hostUserId()).isEqualTo(-1L);
+
+        ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
+        verify(roomRedisRepository).createRoom(roomCaptor.capture());
+        RoomMember hostMember = roomCaptor.getValue().members().getFirst();
+        assertThat(hostMember.userId()).isEqualTo(-1L);
+        assertThat(hostMember.nickname()).isEqualTo("손님");
+        assertThat(hostMember.profileImageUrl()).isNull();
+        assertThat(hostMember.host()).isTrue();
+        verify(userRepository, never()).findById(-1L);
     }
 
     @Test
@@ -317,7 +344,7 @@ class RoomServiceTest {
         given(roomRedisRepository.findJoinedRoomId(3L)).willReturn(Optional.of(25L));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room(25L, "참여 중인 방", 15L, 10)));
 
-        CurrentRoomResponse response = roomService.getCurrentRoom(3L);
+        CurrentRoomResponse response = roomService.getCurrentRoom(memberAuth(3L));
 
         assertThat(response).isEqualTo(new CurrentRoomResponse(25L, "WAITING"));
     }
@@ -328,15 +355,28 @@ class RoomServiceTest {
         given(userRepository.findById(3L)).willReturn(Optional.of(user));
         given(roomRedisRepository.findJoinedRoomId(3L)).willReturn(Optional.empty());
 
-        CurrentRoomResponse response = roomService.getCurrentRoom(3L);
+        CurrentRoomResponse response = roomService.getCurrentRoom(memberAuth(3L));
 
         assertThat(response).isNull();
     }
 
     @Test
-    void getGameSnapshotReturnsCurrentGameStateForRoomMember() {
-        User user = user(4L);
-        RoomState room = room(25L, "참여 중인 방", 15L, 10).withJoinedMember(member(4L)).started("seed", now());
+    void getCurrentRoomAllowsGuestWithoutUserLookup() {
+        RoomState room = room(25L, "참여 중인 방", 15L, 10).withJoinedMember(guestMember(-2L, false));
+        given(roomRedisRepository.findJoinedRoomId(-2L)).willReturn(Optional.of(25L));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        CurrentRoomResponse response = roomService.getCurrentRoom(guestAuth(-2L, "손님2"));
+
+        assertThat(response).isEqualTo(new CurrentRoomResponse(25L, "WAITING"));
+        verify(userRepository, never()).findById(-2L);
+    }
+
+    @Test
+    void getGameSnapshotReturnsCurrentGameStateForGuestMember() {
+        RoomState room = room(25L, "참여 중인 방", 15L, 10)
+                .withJoinedMember(guestMember(-2L, false))
+                .started("seed", now());
         RoomGameQuestion question = new RoomGameQuestion(
                 100L,
                 1,
@@ -353,18 +393,17 @@ class RoomServiceTest {
                         25L,
                         "seed",
                         List.of(question),
-                        Map.of(3L, 100, 4L, 0),
+                        Map.of(3L, 100, -2L, 0),
                         now()
                 )
                 .withStartedQuestion(0, now(), 30)
                 .withHintRevealed()
-                .withSkipVote(4L);
+                .withSkipVote(-2L);
 
-        given(userRepository.findById(4L)).willReturn(Optional.of(user));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
 
-        RoomGameSnapshotResponse response = roomService.getGameSnapshot(4L, 25L);
+        RoomGameSnapshotResponse response = roomService.getGameSnapshot(guestAuth(-2L, "손님2"), 25L);
 
         assertThat(response.roomId()).isEqualTo(25L);
         assertThat(response.status()).isEqualTo("PLAYING");
@@ -376,6 +415,11 @@ class RoomServiceTest {
         assertThat(response.skipVoteThreshold()).isEqualTo(2);
         assertThat(response.currentUserSkipVoted()).isTrue();
         assertThat(response.scores()).hasSize(2);
+        assertThat(response.scores())
+                .filteredOn(score -> score.userId().equals(-2L))
+                .extracting(RoomGameSnapshotResponse.ScoreResponse::userType)
+                .containsExactly("GUEST");
+        verify(userRepository, never()).findById(-2L);
     }
 
     @Test
@@ -459,7 +503,7 @@ class RoomServiceTest {
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
         given(roomRedisRepository.saveJoinedRoom(any(RoomState.class), eq(4L))).willReturn(true);
 
-        RoomDetailResponse response = roomService.joinRoom(4L, 25L, new JoinRoomRequest(null));
+        RoomDetailResponse response = roomService.joinRoom(memberAuth(4L), 25L, new JoinRoomRequest(null));
 
         assertThat(response.roomId()).isEqualTo(25L);
         assertThat(response.memberCount()).isEqualTo(2);
@@ -482,13 +526,40 @@ class RoomServiceTest {
     }
 
     @Test
+    void joinRoomAllowsGuestWithoutUserLookup() {
+        RoomState room = room(25L, "아이돌 노래 맞히기", 15L, 10);
+        given(roomRedisRepository.findJoinedRoomId(-2L)).willReturn(Optional.empty());
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.saveJoinedRoom(any(RoomState.class), eq(-2L))).willReturn(true);
+
+        RoomDetailResponse response = roomService.joinRoom(guestAuth(-2L, "손님2"), 25L, new JoinRoomRequest(null));
+
+        assertThat(response.memberCount()).isEqualTo(2);
+        assertThat(response.members())
+                .extracting(RoomDetailResponse.MemberResponse::userId)
+                .containsExactly(3L, -2L);
+        assertThat(response.members())
+                .filteredOn(member -> member.userId().equals(-2L))
+                .extracting(RoomDetailResponse.MemberResponse::userType)
+                .containsExactly("GUEST");
+
+        ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
+        verify(roomRedisRepository).saveJoinedRoom(roomCaptor.capture(), eq(-2L));
+        RoomMember guestMember = roomCaptor.getValue().findMember(-2L).orElseThrow();
+        assertThat(guestMember.nickname()).isEqualTo("손님2");
+        assertThat(guestMember.profileImageUrl()).isNull();
+        assertThat(guestMember.host()).isFalse();
+        verify(userRepository, never()).findById(-2L);
+    }
+
+    @Test
     void joinRoomRejectsAlreadyJoinedUser() {
         User member = user(4L);
         given(userRepository.findById(4L)).willReturn(Optional.of(member));
         given(roomRedisRepository.findJoinedRoomId(4L)).willReturn(Optional.of(99L));
         given(roomRedisRepository.findById(99L)).willReturn(Optional.of(room(99L, "참여 중인 방", 15L, 10)));
 
-        assertThatThrownBy(() -> roomService.joinRoom(4L, 25L, new JoinRoomRequest(null)))
+        assertThatThrownBy(() -> roomService.joinRoom(memberAuth(4L), 25L, new JoinRoomRequest(null)))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getMessageCode()).isEqualTo("already_joined_room");
                     assertThat(exception.getData()).isEqualTo(new CurrentRoomResponse(99L, "WAITING"));
@@ -509,7 +580,7 @@ class RoomServiceTest {
         given(passwordEncoder.matches("secret", "encoded-secret")).willReturn(true);
         given(roomRedisRepository.saveJoinedRoom(any(RoomState.class), eq(4L))).willReturn(true);
 
-        RoomDetailResponse response = roomService.joinRoom(4L, 25L, new JoinRoomRequest("secret"));
+        RoomDetailResponse response = roomService.joinRoom(memberAuth(4L), 25L, new JoinRoomRequest("secret"));
 
         assertThat(response.memberCount()).isEqualTo(2);
         verify(roomRedisRepository).saveJoinedRoom(any(RoomState.class), eq(4L));
@@ -525,7 +596,7 @@ class RoomServiceTest {
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
         given(passwordEncoder.matches("wrong", "encoded-secret")).willReturn(false);
 
-        assertThatThrownBy(() -> roomService.joinRoom(4L, 25L, new JoinRoomRequest("wrong")))
+        assertThatThrownBy(() -> roomService.joinRoom(memberAuth(4L), 25L, new JoinRoomRequest("wrong")))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_room_password");
 
@@ -541,12 +612,12 @@ class RoomServiceTest {
         given(roomRedisRepository.findById(25L))
                 .willReturn(Optional.of(room(25L, "게임 중인 방", 15L, 10).started("seed", now())));
 
-        assertThatThrownBy(() -> roomService.joinRoom(4L, 25L, new JoinRoomRequest(null)))
+        assertThatThrownBy(() -> roomService.joinRoom(memberAuth(4L), 25L, new JoinRoomRequest(null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("cannot_join_room");
 
         given(roomRedisRepository.findById(26L)).willReturn(Optional.of(room(26L, "가득 찬 방", 15L, 1)));
-        assertThatThrownBy(() -> roomService.joinRoom(4L, 26L, new JoinRoomRequest(null)))
+        assertThatThrownBy(() -> roomService.joinRoom(memberAuth(4L), 26L, new JoinRoomRequest(null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("cannot_join_room");
 
@@ -562,7 +633,7 @@ class RoomServiceTest {
                 com.dogdog.nomat.domain.room.model.RoomCommand.kick(3L, 4L, now())
         ).room();
         given(roomRedisRepository.findById(27L)).willReturn(Optional.of(kickedRoom));
-        assertThatThrownBy(() -> roomService.joinRoom(4L, 27L, new JoinRoomRequest(null)))
+        assertThatThrownBy(() -> roomService.joinRoom(memberAuth(4L), 27L, new JoinRoomRequest(null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("room_access_denied");
 
@@ -576,7 +647,7 @@ class RoomServiceTest {
         given(userRepository.findById(4L)).willReturn(Optional.of(member));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
 
-        roomService.leaveRoom(4L, 25L);
+        roomService.leaveRoom(memberAuth(4L), 25L);
 
         ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
         verify(roomRedisRepository).saveLeftRoom(roomCaptor.capture(), eq(4L));
@@ -600,7 +671,7 @@ class RoomServiceTest {
         given(userRepository.findById(3L)).willReturn(Optional.of(host));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
 
-        roomService.leaveRoom(3L, 25L);
+        roomService.leaveRoom(memberAuth(3L), 25L);
 
         ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
         verify(roomRedisRepository).saveLeftRoom(roomCaptor.capture(), eq(3L));
@@ -625,7 +696,7 @@ class RoomServiceTest {
         given(userRepository.findById(3L)).willReturn(Optional.of(host));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
 
-        roomService.leaveRoom(3L, 25L);
+        roomService.leaveRoom(memberAuth(3L), 25L);
 
         ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
         verify(roomRedisRepository).saveLeftRoom(roomCaptor.capture(), eq(3L));
@@ -647,7 +718,7 @@ class RoomServiceTest {
         given(userRepository.findById(3L)).willReturn(Optional.of(host));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
 
-        RoomDetailResponse response = roomService.modifyRoomSettings(3L, 25L, request);
+        RoomDetailResponse response = roomService.modifyRoomSettings(memberAuth(3L), 25L, request);
 
         assertThat(response.hasPassword()).isFalse();
         assertThat(response.maxPlayers()).isEqualTo(8);
@@ -675,6 +746,19 @@ class RoomServiceTest {
     }
 
     @Test
+    void modifyRoomSettingsAllowsGuestHostWithoutUserLookup() {
+        RoomState room = guestHostRoom(25L, -1L);
+        ModifyRoomSettingsRequest request = new ModifyRoomSettingsRequest(null, 8, null, null);
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        RoomDetailResponse response = roomService.modifyRoomSettings(guestAuth(-1L, "손님"), 25L, request);
+
+        assertThat(response.maxPlayers()).isEqualTo(8);
+        verify(roomRedisRepository).saveRoom(any(RoomState.class));
+        verify(userRepository, never()).findById(-1L);
+    }
+
+    @Test
     void modifyRoomSettingsRejectsNonHost() {
         User member = user(4L);
         RoomState room = roomWithMember(25L, member(4L));
@@ -682,7 +766,7 @@ class RoomServiceTest {
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
 
         assertThatThrownBy(() -> roomService.modifyRoomSettings(
-                4L,
+                memberAuth(4L),
                 25L,
                 new ModifyRoomSettingsRequest(null, 8, null, null)
         ))
@@ -711,7 +795,7 @@ class RoomServiceTest {
         given(userRepository.findById(3L)).willReturn(Optional.of(host));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
 
-        roomService.closeRoom(3L, 25L);
+        roomService.closeRoom(memberAuth(3L), 25L);
 
         ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
         verify(roomRedisRepository).deleteRoom(roomCaptor.capture());
@@ -730,7 +814,7 @@ class RoomServiceTest {
         given(userRepository.findById(4L)).willReturn(Optional.of(member));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
 
-        assertThatThrownBy(() -> roomService.closeRoom(4L, 25L))
+        assertThatThrownBy(() -> roomService.closeRoom(memberAuth(4L), 25L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("forbidden_room_access");
 
@@ -739,7 +823,7 @@ class RoomServiceTest {
         given(roomRedisRepository.findById(26L)).willReturn(Optional.of(room(26L, "시작된 방", 15L, 10)
                 .started("seed", now())));
 
-        assertThatThrownBy(() -> roomService.closeRoom(3L, 26L))
+        assertThatThrownBy(() -> roomService.closeRoom(memberAuth(3L), 26L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("room_already_started");
 
@@ -753,7 +837,7 @@ class RoomServiceTest {
         given(userRepository.findById(3L)).willReturn(Optional.of(host));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
 
-        roomService.kickRoomMember(3L, 25L, 4L);
+        roomService.kickRoomMember(memberAuth(3L), 25L, 4L);
 
         ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
         verify(roomRedisRepository).saveKickedRoom(roomCaptor.capture(), eq(4L));
@@ -776,20 +860,20 @@ class RoomServiceTest {
         given(userRepository.findById(3L)).willReturn(Optional.of(host));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
 
-        assertThatThrownBy(() -> roomService.kickRoomMember(3L, 25L, 3L))
+        assertThatThrownBy(() -> roomService.kickRoomMember(memberAuth(3L), 25L, 3L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("cannot_kick_room_member");
 
         User member = user(4L);
         given(userRepository.findById(4L)).willReturn(Optional.of(member));
         given(roomRedisRepository.findById(26L)).willReturn(Optional.of(roomWithMember(26L, member(4L))));
-        assertThatThrownBy(() -> roomService.kickRoomMember(4L, 26L, 3L))
+        assertThatThrownBy(() -> roomService.kickRoomMember(memberAuth(4L), 26L, 3L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("forbidden_room_access");
 
         given(roomRedisRepository.findById(27L)).willReturn(Optional.of(roomWithMember(27L, member(4L))
                 .started("seed", now())));
-        assertThatThrownBy(() -> roomService.kickRoomMember(3L, 27L, 4L))
+        assertThatThrownBy(() -> roomService.kickRoomMember(memberAuth(3L), 27L, 4L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("cannot_kick_room_member");
 
@@ -797,12 +881,10 @@ class RoomServiceTest {
     }
 
     @Test
-    void startGameAllowsSingleHostAndSavesGameState() {
-        User host = user(3L);
+    void startGameAllowsGuestHostAndSavesGameState() {
         QuizMap map = publishedPublicMap(15L, 20);
-        RoomState room = room(25L, "혼자 하는 방", 15L, 10);
+        RoomState room = guestHostRoom(25L, -1L);
         List<Question> questions = questions(map, 10);
-        given(userRepository.findById(3L)).willReturn(Optional.of(host));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
         given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
                 .willReturn(Optional.of(map));
@@ -814,7 +896,7 @@ class RoomServiceTest {
         given(questionMediaRepository.findByQuestionIdIn(org.mockito.ArgumentMatchers.anyCollection()))
                 .willReturn(List.of());
 
-        RoomDetailResponse response = roomService.startGame(3L, 25L);
+        RoomDetailResponse response = roomService.startGame(guestAuth(-1L, "손님"), 25L);
 
         assertThat(response.status()).isEqualTo("PLAYING");
 
@@ -830,7 +912,7 @@ class RoomServiceTest {
         assertThat(gameState.randomSeed()).isEqualTo(savedRoom.randomSeed());
         assertThat(gameState.questions()).hasSize(10);
         assertThat(gameState.currentQuestionIndex()).isEqualTo(-1);
-        assertThat(gameState.scores()).containsEntry(3L, 0);
+        assertThat(gameState.scores()).containsEntry(-1L, 0);
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
@@ -838,6 +920,7 @@ class RoomServiceTest {
                         && events.getFirst().memberCount() == 1
         ));
         verify(roomGameProgressService).startFirstQuestion(savedRoom);
+        verify(userRepository, never()).findById(-1L);
     }
 
     @Test
@@ -848,7 +931,7 @@ class RoomServiceTest {
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
         given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
                 .willReturn(Optional.of(publishedPublicMap(15L, 20)));
-        assertThatThrownBy(() -> roomService.startGame(4L, 25L))
+        assertThatThrownBy(() -> roomService.startGame(memberAuth(4L), 25L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("forbidden_room_access");
 
@@ -858,14 +941,14 @@ class RoomServiceTest {
                 .started("seed", now())));
         given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
                 .willReturn(Optional.of(publishedPublicMap(15L, 20)));
-        assertThatThrownBy(() -> roomService.startGame(3L, 26L))
+        assertThatThrownBy(() -> roomService.startGame(memberAuth(3L), 26L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("cannot_start_game");
 
         given(roomRedisRepository.findById(27L)).willReturn(Optional.of(room(27L, "삭제된 맵 방", 15L, 10)));
         given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
                 .willReturn(Optional.empty());
-        assertThatThrownBy(() -> roomService.startGame(3L, 27L))
+        assertThatThrownBy(() -> roomService.startGame(memberAuth(3L), 27L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("map_not_found");
 
@@ -875,7 +958,7 @@ class RoomServiceTest {
                 .willReturn(Optional.of(map));
         given(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(15L, QuestionStatus.ACTIVE))
                 .willReturn(questions(map, 3));
-        assertThatThrownBy(() -> roomService.startGame(3L, 28L))
+        assertThatThrownBy(() -> roomService.startGame(memberAuth(3L), 28L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("cannot_start_game");
 
@@ -895,6 +978,14 @@ class RoomServiceTest {
                 true,
                 10
         );
+    }
+
+    private AuthenticatedUser memberAuth(Long userId) {
+        return new AuthenticatedUser(userId, AuthenticatedUserType.MEMBER, null);
+    }
+
+    private AuthenticatedUser guestAuth(Long userId, String nickname) {
+        return new AuthenticatedUser(userId, AuthenticatedUserType.GUEST, nickname);
     }
 
     private User user(Long id) {
@@ -974,6 +1065,36 @@ class RoomServiceTest {
 
     private RoomMember member(Long userId) {
         return new RoomMember(userId, "tester" + userId, null, false, now().plusSeconds(userId));
+    }
+
+    private RoomMember guestMember(Long userId, boolean host) {
+        return new RoomMember(userId, "손님", null, AuthenticatedUserType.GUEST, host, now());
+    }
+
+    private RoomState guestHostRoom(Long roomId, Long guestUserId) {
+        return RoomState.waiting(
+                roomId,
+                "게스트 방",
+                15L,
+                "20년대 아이돌 노래 맞히기",
+                "AUDIO",
+                "https://cdn.example.com/thumbnail.png",
+                7L,
+                "음악",
+                20,
+                3,
+                false,
+                null,
+                10,
+                10,
+                30,
+                TimeLimitMode.FIXED,
+                true,
+                true,
+                10,
+                guestMember(guestUserId, true),
+                now()
+        );
     }
 
     private RoomState room(Long roomId, String title, Long mapId, int maxPlayers, Long categoryId, String categoryName) {

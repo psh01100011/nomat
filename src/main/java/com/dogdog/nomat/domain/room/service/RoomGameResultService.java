@@ -31,6 +31,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -61,9 +62,9 @@ public class RoomGameResultService {
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
         QuizMap map = quizMapRepository.findById(room.mapId())
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "map_not_found"));
-        User endedByUser = endedByUserId == null
-                ? null
-                : userRepository.findById(endedByUserId).orElse(null);
+        User endedByUser = persistentMemberId(room, endedByUserId)
+                .flatMap(userRepository::findById)
+                .orElse(null);
 
         LocalDateTime endedAt = LocalDateTime.now();
         RoomTransitionResult result = roomStateMachine.transition(
@@ -79,7 +80,7 @@ public class RoomGameResultService {
                 endedByUser,
                 endedAt
         ));
-        saveQuestionResults(session, gameState);
+        saveQuestionResults(session, room, gameState);
         savePlayerResultsAndHistories(session, room, gameState, map, endedAt);
         map.increasePlayCount();
         roomRedisRepository.deleteRoom(result.room());
@@ -117,7 +118,7 @@ public class RoomGameResultService {
         );
     }
 
-    private void saveQuestionResults(GameSession session, RoomGameState gameState) {
+    private void saveQuestionResults(GameSession session, RoomState room, RoomGameState gameState) {
         List<RoomGameQuestionOutcome> outcomes = gameState.questionOutcomes().values().stream()
                 .sorted(Comparator.comparing(RoomGameQuestionOutcome::questionNumber))
                 .toList();
@@ -134,6 +135,7 @@ public class RoomGameResultService {
                         outcomes.stream()
                                 .map(RoomGameQuestionOutcome::winnerUserId)
                                 .filter(Objects::nonNull)
+                                .filter(userId -> persistentMemberId(room, userId).isPresent())
                                 .toList()
                 )
                 .stream()
@@ -163,8 +165,11 @@ public class RoomGameResultService {
             QuizMap map,
             LocalDateTime endedAt
     ) {
-        List<Long> userIds = room.members().stream().map(RoomMember::userId).toList();
-        Map<Long, User> usersById = userRepository.findAllById(userIds)
+        List<Long> persistentUserIds = room.members().stream()
+                .filter(member -> !member.isGuest())
+                .map(RoomMember::userId)
+                .toList();
+        Map<Long, User> usersById = userRepository.findAllById(persistentUserIds)
                 .stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
         Map<Long, Long> correctCounts = gameState.questionOutcomes().values().stream()
@@ -172,11 +177,12 @@ public class RoomGameResultService {
                 .filter(Objects::nonNull)
                 .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
 
-        List<PlayerScore> playerScores = userIds.stream()
-                .map(userId -> new PlayerScore(
-                        userId,
-                        gameState.scores().getOrDefault(userId, 0),
-                        correctCounts.getOrDefault(userId, 0L).intValue()
+        List<PlayerScore> playerScores = room.members().stream()
+                .map(RoomMember::userId)
+                .map(memberUserId -> new PlayerScore(
+                        memberUserId,
+                        gameState.scores().getOrDefault(memberUserId, 0),
+                        correctCounts.getOrDefault(memberUserId, 0L).intValue()
                 ))
                 .sorted(Comparator.comparing(PlayerScore::score).reversed()
                         .thenComparing(PlayerScore::userId))
@@ -186,6 +192,9 @@ public class RoomGameResultService {
                 .mapToObj(index -> {
                     PlayerScore playerScore = playerScores.get(index);
                     User user = usersById.get(playerScore.userId());
+                    if (user == null) {
+                        return null;
+                    }
                     updatePlayHistory(user, map, playerScore.score(), endedAt);
                     return GamePlayerResult.create(
                             session,
@@ -196,8 +205,19 @@ public class RoomGameResultService {
                             endedAt
                     );
                 })
+                .filter(Objects::nonNull)
                 .toList();
         gamePlayerResultRepository.saveAll(playerResults);
+    }
+
+    private Optional<Long> persistentMemberId(RoomState room, Long userId) {
+        if (userId == null) {
+            return Optional.empty();
+        }
+
+        return room.findMember(userId)
+                .filter(member -> !member.isGuest())
+                .map(RoomMember::userId);
     }
 
     private void updatePlayHistory(User user, QuizMap map, int score, LocalDateTime endedAt) {
