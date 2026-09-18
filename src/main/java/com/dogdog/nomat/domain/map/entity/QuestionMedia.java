@@ -68,6 +68,13 @@ public class QuestionMedia {
     @Column(name = "failure_message", length = 500)
     private String failureMessage;
 
+    @Column(name = "failure_code", length = 40)
+    @Enumerated(EnumType.STRING)
+    private AudioProcessingFailureCode failureCode;
+
+    @Column(name = "processing_requested_at")
+    private LocalDateTime processingRequestedAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -91,7 +98,8 @@ public class QuestionMedia {
         this.endTimeMs = endTimeMs;
         this.durationMs = durationMs;
         if (sourceType == QuestionMediaSourceType.YOUTUBE || sourceType == QuestionMediaSourceType.TTS) {
-            this.processingStatus = QuestionMediaProcessingStatus.PENDING;
+            this.processingStatus = QuestionMediaProcessingStatus.QUEUED;
+            this.processingRequestedAt = LocalDateTime.now();
         }
     }
 
@@ -122,19 +130,37 @@ public class QuestionMedia {
         this.endTimeMs = endTimeMs;
         this.durationMs = durationMs;
         this.failureMessage = null;
-        this.processingStatus = sourceType == QuestionMediaSourceType.YOUTUBE || sourceType == QuestionMediaSourceType.TTS
-                ? QuestionMediaProcessingStatus.PENDING
-                : QuestionMediaProcessingStatus.READY;
+        this.failureCode = null;
+        if (sourceType == QuestionMediaSourceType.YOUTUBE || sourceType == QuestionMediaSourceType.TTS) {
+            this.processingStatus = QuestionMediaProcessingStatus.QUEUED;
+            this.processingRequestedAt = LocalDateTime.now();
+        } else {
+            this.processingStatus = QuestionMediaProcessingStatus.READY;
+            this.processingRequestedAt = null;
+        }
     }
 
     public void startProcessing() {
         this.processingStatus = QuestionMediaProcessingStatus.PROCESSING;
         this.failureMessage = null;
+        this.failureCode = null;
     }
 
     public void resetProcessing() {
-        this.processingStatus = QuestionMediaProcessingStatus.PENDING;
+        this.processingStatus = QuestionMediaProcessingStatus.QUEUED;
         this.failureMessage = null;
+        this.failureCode = null;
+    }
+
+    public void requestReprocessing(LocalDateTime requestedAt) {
+        resetProcessing();
+        this.processingRequestedAt = requestedAt;
+    }
+
+    public void retryProcessing() {
+        this.processingStatus = QuestionMediaProcessingStatus.RETRYING;
+        this.failureMessage = null;
+        this.failureCode = null;
     }
 
     public void completeProcessing(Asset asset, Integer durationMs) {
@@ -142,11 +168,19 @@ public class QuestionMedia {
         this.durationMs = durationMs;
         this.processingStatus = QuestionMediaProcessingStatus.READY;
         this.failureMessage = null;
+        this.failureCode = null;
     }
 
-    public void failProcessing(String failureMessage) {
+    public void failProcessing(AudioProcessingFailureCode failureCode) {
         this.processingStatus = QuestionMediaProcessingStatus.FAILED;
-        this.failureMessage = truncate(failureMessage);
+        this.failureCode = failureCode;
+        this.failureMessage = failureCode.getUserMessage();
+    }
+
+    public boolean canRetry() {
+        return processingStatus == QuestionMediaProcessingStatus.FAILED
+                && failureCode != null
+                && failureCode.isManualRetryAllowed();
     }
 
     private String truncate(String value) {

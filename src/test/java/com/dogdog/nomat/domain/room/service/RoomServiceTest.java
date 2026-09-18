@@ -16,6 +16,7 @@ import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.Question;
 import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
+import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
@@ -184,6 +185,26 @@ class RoomServiceTest {
                 .hasMessageContaining("map_not_found");
 
         verify(roomRedisRepository, never()).findJoinedRoomId(3L);
+    }
+
+    @Test
+    void createRoomRejectsPublishedAudioMapWithUnreadyMedia() {
+        User host = user(3L);
+        QuizMap map = publishedPublicMap(15L, 20);
+        given(userRepository.findById(3L)).willReturn(Optional.of(host));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(15L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
+                .willReturn(Optional.of(map));
+        given(questionMediaRepository.existsByQuestionMapIdAndProcessingStatusNot(
+                15L,
+                QuestionMediaProcessingStatus.READY
+        )).willReturn(true);
+
+        assertThatThrownBy(() -> roomService.createRoom(memberAuth(3L), request(15L, null, 10)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("map_not_found");
+
+        verify(roomRedisRepository, never()).findJoinedRoomId(3L);
+        verify(roomRedisRepository, never()).createRoom(any(RoomState.class));
     }
 
     @Test

@@ -4,6 +4,7 @@ import com.dogdog.nomat.domain.asset.entity.Asset;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
 import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
@@ -25,9 +26,12 @@ public class AudioProcessingJobService {
     private final AssetRepository assetRepository;
 
     @Transactional(readOnly = true)
-    public List<Long> getPendingJobIds(int batchSize) {
+    public List<Long> getProcessableJobIds(int batchSize) {
         return audioProcessingJobRepository
-                .findByStatusOrderByCreatedAtAsc(AudioProcessingJobStatus.PENDING, PageRequest.of(0, batchSize))
+                .findByStatusInOrderByCreatedAtAsc(
+                        List.of(AudioProcessingJobStatus.QUEUED, AudioProcessingJobStatus.RETRYING),
+                        PageRequest.of(0, batchSize)
+                )
                 .stream()
                 .map(AudioProcessingJob::getId)
                 .toList();
@@ -47,21 +51,10 @@ public class AudioProcessingJobService {
     }
 
     @Transactional
-    public int recoverFailedJobs(int batchSize, int maxRetryAttempts) {
-        List<AudioProcessingJob> jobs = audioProcessingJobRepository
-                .findByStatusAndAttemptCountLessThanOrderByUpdatedAtAsc(
-                        AudioProcessingJobStatus.FAILED,
-                        maxRetryAttempts,
-                        PageRequest.of(0, batchSize)
-                );
-        jobs.forEach(AudioProcessingJob::retry);
-        return jobs.size();
-    }
-
-    @Transactional
     public AudioProcessingTask startJob(Long jobId) {
-        AudioProcessingJob job = audioProcessingJobRepository.findById(jobId)
-                .filter(foundJob -> foundJob.getStatus() == AudioProcessingJobStatus.PENDING)
+        AudioProcessingJob job = audioProcessingJobRepository.findByIdForUpdate(jobId)
+                .filter(foundJob -> foundJob.getStatus() == AudioProcessingJobStatus.QUEUED
+                        || foundJob.getStatus() == AudioProcessingJobStatus.RETRYING)
                 .orElse(null);
         if (job == null) {
             return null;
@@ -110,18 +103,37 @@ public class AudioProcessingJobService {
     }
 
     @Transactional
-    public void failJob(Long jobId, String failureMessage) {
+    public void handleJobFailure(
+            Long jobId,
+            AudioProcessingFailureCode failureCode,
+            String failureMessage,
+            int maxRetryAttempts
+    ) {
         audioProcessingJobRepository.findById(jobId)
-                .ifPresent(job -> job.fail(failureMessage));
+                .ifPresent(job -> retryOrFail(job, failureCode, failureMessage, maxRetryAttempts));
     }
 
     private void retryOrFail(AudioProcessingJob job, int maxRetryAttempts) {
-        if (job.canRetry(maxRetryAttempts)) {
-            job.retry();
+        retryOrFail(
+                job,
+                AudioProcessingFailureCode.PROCESSING_TIMEOUT,
+                "audio_processing_retry_exhausted",
+                maxRetryAttempts
+        );
+    }
+
+    private void retryOrFail(
+            AudioProcessingJob job,
+            AudioProcessingFailureCode failureCode,
+            String failureMessage,
+            int maxRetryAttempts
+    ) {
+        if (failureCode.isAutomaticRetryAllowed() && job.canAutomaticallyRetry(maxRetryAttempts)) {
+            job.scheduleRetry(failureCode, failureMessage);
             return;
         }
 
-        job.fail("audio_processing_retry_exhausted");
+        job.fail(failureCode, failureMessage);
     }
 
     private void publishMapIfAllMediaReady(QuestionMedia media) {

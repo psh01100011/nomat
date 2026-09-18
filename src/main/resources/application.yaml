@@ -36,6 +36,7 @@ app:
     fixed-delay-ms: 30000
     command-timeout-seconds: 300
     processing-timeout-minutes: 10
+    delayed-threshold-minutes: ${AUDIO_PROCESSING_DELAYED_THRESHOLD_MINUTES:30}
     max-retry-attempts: 3
     yt-dlp-path: ${YT_DLP_PATH:yt-dlp}
     ffmpeg-path: ${FFMPEG_PATH:ffmpeg}

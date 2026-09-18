@@ -5,6 +5,7 @@ import com.dogdog.nomat.domain.comment.dto.CreateMapCommentResponse;
 import com.dogdog.nomat.domain.comment.dto.MapCommentListResponse;
 import com.dogdog.nomat.domain.comment.service.CommentService;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
+import com.dogdog.nomat.domain.map.dto.AudioProcessingRetryResponse;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
@@ -124,6 +125,18 @@ public class MapController {
     ) {
         Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of("success_modify_map", mapService.modifyMap(userId, mapId, request));
+    }
+
+    @PostMapping("/{mapId}/audio-processing/retry")
+    public ApiResponse<AudioProcessingRetryResponse> retryAudioProcessing(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId
+    ) {
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
+        return ApiResponse.of(
+                "success_retry_audio_processing",
+                mapService.retryAudioProcessing(userId, mapId)
+        );
     }
 
     @DeleteMapping("/{mapId}")

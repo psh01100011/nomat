@@ -18,6 +18,9 @@ public interface QuestionMediaRepository extends JpaRepository<QuestionMedia, Lo
     @EntityGraph(attributePaths = {"asset"})
     List<QuestionMedia> findByQuestionIdIn(Collection<Long> questionIds);
 
+    @EntityGraph(attributePaths = {"question", "question.map"})
+    List<QuestionMedia> findByQuestionMapIdIn(Collection<Long> mapIds);
+
     Optional<QuestionMedia> findByQuestionId(Long questionId);
 
     void deleteByQuestionId(Long questionId);

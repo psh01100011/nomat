@@ -11,6 +11,7 @@ import com.dogdog.nomat.domain.asset.entity.AssetType;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
@@ -52,7 +53,7 @@ class AudioProcessingJobServiceTest {
     @Test
     void startJobMarksJobAndMediaProcessing() {
         AudioProcessingJob job = audioProcessingJob(1L);
-        given(audioProcessingJobRepository.findById(1L)).willReturn(Optional.of(job));
+        given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
 
         AudioProcessingTask task = audioProcessingJobService.startJob(1L);
 
@@ -126,17 +127,112 @@ class AudioProcessingJobServiceTest {
     }
 
     @Test
-    void failJobMarksJobAndMediaFailed() {
+    void handleJobFailureSchedulesRetryWhenAttemptsRemain() {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
         given(audioProcessingJobRepository.findById(1L)).willReturn(Optional.of(job));
 
-        audioProcessingJobService.failJob(1L, "extract failed");
+        audioProcessingJobService.handleJobFailure(
+                1L,
+                AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR,
+                "extract failed",
+                3
+        );
+
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.RETRYING);
+        assertThat(job.getFailureCode()).isEqualTo(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR);
+        assertThat(job.getFailureMessage()).isEqualTo("extract failed");
+        assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.RETRYING);
+        assertThat(job.getQuestionMedia().getFailureMessage()).isNull();
+        assertThat(job.canRetryManually()).isFalse();
+        assertThat(job.getQuestionMedia().canRetry()).isFalse();
+    }
+
+    @Test
+    void handleJobFailureMarksFinalFailureWhenRetryAttemptsAreExhausted() {
+        AudioProcessingJob job = audioProcessingJob(1L);
+        job.start();
+        job.scheduleRetry(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR, "first failure");
+        job.start();
+        given(audioProcessingJobRepository.findById(1L)).willReturn(Optional.of(job));
+
+        audioProcessingJobService.handleJobFailure(
+                1L,
+                AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR,
+                "extract failed",
+                2
+        );
 
         assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.FAILED);
+        assertThat(job.getFailureCode()).isEqualTo(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR);
         assertThat(job.getFailureMessage()).isEqualTo("extract failed");
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.FAILED);
-        assertThat(job.getQuestionMedia().getFailureMessage()).isEqualTo("extract failed");
+        assertThat(job.getQuestionMedia().getFailureCode()).isEqualTo(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR);
+        assertThat(job.getQuestionMedia().getFailureMessage())
+                .isEqualTo(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR.getUserMessage());
+        assertThat(job.canRetryManually()).isTrue();
+        assertThat(job.getQuestionMedia().canRetry()).isTrue();
+    }
+
+    @Test
+    void handleJobFailureImmediatelyFailsForSourceProblem() {
+        AudioProcessingJob job = audioProcessingJob(1L);
+        job.start();
+        given(audioProcessingJobRepository.findById(1L)).willReturn(Optional.of(job));
+
+        audioProcessingJobService.handleJobFailure(
+                1L,
+                AudioProcessingFailureCode.SOURCE_UNAVAILABLE,
+                "Video unavailable",
+                3
+        );
+
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.FAILED);
+        assertThat(job.getAttemptCount()).isEqualTo(1);
+        assertThat(job.getFailureCode()).isEqualTo(AudioProcessingFailureCode.SOURCE_UNAVAILABLE);
+        assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.FAILED);
+        assertThat(job.getQuestionMedia().getFailureCode()).isEqualTo(AudioProcessingFailureCode.SOURCE_UNAVAILABLE);
+        assertThat(job.getQuestionMedia().getFailureMessage())
+                .isEqualTo(AudioProcessingFailureCode.SOURCE_UNAVAILABLE.getUserMessage());
+        assertThat(job.canRetryManually()).isFalse();
+        assertThat(job.getQuestionMedia().canRetry()).isFalse();
+    }
+
+    @Test
+    void unknownFailureRetriesAutomaticallyThenAllowsManualRetry() {
+        AudioProcessingJob job = audioProcessingJob(1L);
+        job.start();
+        given(audioProcessingJobRepository.findById(1L)).willReturn(Optional.of(job));
+
+        audioProcessingJobService.handleJobFailure(
+                1L,
+                AudioProcessingFailureCode.UNKNOWN,
+                "unexpected exception detail",
+                2
+        );
+
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.RETRYING);
+        assertThat(job.getFailureCode()).isEqualTo(AudioProcessingFailureCode.UNKNOWN);
+        assertThat(job.canRetryManually()).isFalse();
+        assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.RETRYING);
+
+        job.start();
+        audioProcessingJobService.handleJobFailure(
+                1L,
+                AudioProcessingFailureCode.UNKNOWN,
+                "unexpected exception detail",
+                2
+        );
+
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.FAILED);
+        assertThat(job.getFailureCode()).isEqualTo(AudioProcessingFailureCode.UNKNOWN);
+        assertThat(job.canRetryManually()).isTrue();
+        assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.FAILED);
+        assertThat(job.getQuestionMedia().getFailureCode()).isEqualTo(AudioProcessingFailureCode.UNKNOWN);
+        assertThat(job.getQuestionMedia().getFailureMessage())
+                .isEqualTo(AudioProcessingFailureCode.UNKNOWN.getUserMessage());
+        assertThat(job.getQuestionMedia().getFailureMessage()).doesNotContain("unexpected exception detail");
+        assertThat(job.getQuestionMedia().canRetry()).isTrue();
     }
 
     @Test
@@ -153,17 +249,17 @@ class AudioProcessingJobServiceTest {
         int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 10, 3);
 
         assertThat(recoveredCount).isEqualTo(1);
-        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.PENDING);
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.RETRYING);
         assertThat(job.getAttemptCount()).isEqualTo(1);
         assertThat(job.getStartedAt()).isNull();
-        assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PENDING);
+        assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.RETRYING);
     }
 
     @Test
     void recoverStaleProcessingJobsFailsJobWhenRetryAttemptsAreExhausted() {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
-        job.retry();
+        job.scheduleRetry(AudioProcessingFailureCode.PROCESSING_TIMEOUT, "first failure");
         job.start();
         ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
         given(audioProcessingJobRepository.findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
@@ -181,24 +277,33 @@ class AudioProcessingJobServiceTest {
     }
 
     @Test
-    void recoverFailedJobsRetriesFailedJobsWithinMaxAttempts() {
+    void startJobStartsRetryingJob() {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
-        job.fail("extract failed");
-        given(audioProcessingJobRepository.findByStatusAndAttemptCountLessThanOrderByUpdatedAtAsc(
-                any(),
-                any(Integer.class),
-                any()
-        )).willReturn(List.of(job));
+        job.scheduleRetry(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR, "extract failed");
+        given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
 
-        int recoveredCount = audioProcessingJobService.recoverFailedJobs(5, 3);
+        AudioProcessingTask task = audioProcessingJobService.startJob(1L);
 
-        assertThat(recoveredCount).isEqualTo(1);
-        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.PENDING);
-        assertThat(job.getAttemptCount()).isEqualTo(1);
+        assertThat(task).isNotNull();
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.PROCESSING);
+        assertThat(job.getAttemptCount()).isEqualTo(2);
         assertThat(job.getFailureMessage()).isNull();
-        assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PENDING);
+        assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PROCESSING);
         assertThat(job.getQuestionMedia().getFailureMessage()).isNull();
+    }
+
+    @Test
+    void startJobSkipsJobAlreadyClaimedByAnotherWorker() {
+        AudioProcessingJob job = audioProcessingJob(1L);
+        job.start();
+        given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
+
+        AudioProcessingTask task = audioProcessingJobService.startJob(1L);
+
+        assertThat(task).isNull();
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.PROCESSING);
+        assertThat(job.getAttemptCount()).isEqualTo(1);
     }
 
     private AudioProcessingJob audioProcessingJob(Long id) {

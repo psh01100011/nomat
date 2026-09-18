@@ -207,6 +207,12 @@ public class QuizMap {
         this.publishedAt = LocalDateTime.now();
     }
 
+    public void resumeProcessingIfPublished() {
+        if (status == MapStatus.PUBLISHED) {
+            this.status = MapStatus.PROCESSING;
+        }
+    }
+
     public void modify(
             Category category,
             Asset thumbnailAsset,

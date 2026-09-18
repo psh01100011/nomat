@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.map.service;
 
 import com.dogdog.nomat.domain.asset.config.AssetS3Properties;
 import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,17 +31,13 @@ public class AudioProcessingService {
     private final AssetS3Properties s3Properties;
     private final AudioProcessingProperties processingProperties;
 
-    public int processPendingJobs() {
+    public int processAvailableJobs() {
         audioProcessingJobService.recoverStaleProcessingJobs(
                 processingProperties.getBatchSize(),
                 processingProperties.getProcessingTimeoutMinutes(),
                 processingProperties.getMaxRetryAttempts()
         );
-        audioProcessingJobService.recoverFailedJobs(
-                processingProperties.getBatchSize(),
-                processingProperties.getMaxRetryAttempts()
-        );
-        List<Long> jobIds = audioProcessingJobService.getPendingJobIds(processingProperties.getBatchSize());
+        List<Long> jobIds = audioProcessingJobService.getProcessableJobIds(processingProperties.getBatchSize());
         int processedCount = 0;
         for (Long jobId : jobIds) {
             processJob(jobId);
@@ -87,17 +84,33 @@ public class AudioProcessingService {
                 deleteFromS3Quietly(storageKey);
                 throw exception;
             }
-        } catch (Exception exception) {
-            audioProcessingJobService.failJob(task.jobId(), exception.getMessage());
+        } catch (AudioProcessingException exception) {
+            audioProcessingJobService.handleJobFailure(
+                    task.jobId(),
+                    exception.getFailureCode(),
+                    exception.getMessage(),
+                    processingProperties.getMaxRetryAttempts()
+            );
             log.warn("Failed to process youtube audio. jobId={}", task.jobId(), exception);
+        } catch (Exception exception) {
+            audioProcessingJobService.handleJobFailure(
+                    task.jobId(),
+                    AudioProcessingFailureCode.UNKNOWN,
+                    exception.getMessage(),
+                    processingProperties.getMaxRetryAttempts()
+            );
+            log.warn("Failed to process youtube audio with unknown error. jobId={}", task.jobId(), exception);
         } finally {
             deleteWorkingDirectoryQuietly(workingDirectory);
         }
     }
 
-    private void validateS3Configuration() {
+    private void validateS3Configuration() throws AudioProcessingException {
         if (!StringUtils.hasText(s3Properties.getBucket())) {
-            throw new IllegalStateException("S3 bucket must be configured.");
+            throw new AudioProcessingException(
+                    AudioProcessingFailureCode.INTERNAL_ERROR,
+                    "S3 bucket must be configured."
+            );
         }
     }
 
@@ -128,7 +141,11 @@ public class AudioProcessingService {
         try {
             s3Client.putObject(request, RequestBody.fromFile(outputFile));
         } catch (SdkException exception) {
-            throw new IOException("Failed to upload processed audio to S3.", exception);
+            throw new AudioProcessingException(
+                    AudioProcessingFailureCode.STORAGE_ERROR,
+                    "Failed to upload processed audio to S3.",
+                    exception
+            );
         }
     }
 

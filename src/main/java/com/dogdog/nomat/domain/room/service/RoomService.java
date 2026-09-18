@@ -9,6 +9,7 @@ import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.Question;
 import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
+import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
@@ -504,12 +505,21 @@ public class RoomService {
     }
 
     private QuizMap getPublicPublishedMap(Long mapId) {
-        return quizMapRepository.findByIdAndStatusAndVisibility(
+        QuizMap map = quizMapRepository.findByIdAndStatusAndVisibility(
                         mapId,
                         MapStatus.PUBLISHED,
                         MapVisibility.PUBLIC
                 )
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "map_not_found"));
+        if (map.getQuestionType() == QuestionType.AUDIO
+                && questionMediaRepository.existsByQuestionMapIdAndProcessingStatusNot(
+                        mapId,
+                        QuestionMediaProcessingStatus.READY
+                )) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "map_not_found");
+        }
+
+        return map;
     }
 
     private void validateQuestionCount(Integer selectedQuestionCount, QuizMap map) {
