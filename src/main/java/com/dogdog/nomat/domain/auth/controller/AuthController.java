@@ -6,11 +6,16 @@ import com.dogdog.nomat.domain.auth.dto.GuestLoginResponse;
 import com.dogdog.nomat.domain.auth.dto.LoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginResponse;
 import com.dogdog.nomat.domain.auth.dto.RefreshResponse;
+import com.dogdog.nomat.domain.auth.dto.ResetPasswordRequest;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
 import com.dogdog.nomat.domain.auth.service.AuthService;
 import com.dogdog.nomat.domain.emailverification.dto.ConfirmEmailVerificationRequest;
 import com.dogdog.nomat.domain.emailverification.dto.EmailVerificationConfirmedResponse;
 import com.dogdog.nomat.domain.emailverification.dto.EmailVerificationSentResponse;
+import com.dogdog.nomat.domain.emailverification.dto.LoginIdRecoveryResponse;
+import com.dogdog.nomat.domain.emailverification.dto.PasswordResetConfirmedResponse;
+import com.dogdog.nomat.domain.emailverification.dto.ConfirmPasswordResetVerificationRequest;
+import com.dogdog.nomat.domain.emailverification.dto.SendPasswordResetVerificationRequest;
 import com.dogdog.nomat.domain.emailverification.dto.SendEmailVerificationRequest;
 import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
 import com.dogdog.nomat.global.dto.ApiResponse;
@@ -82,6 +87,58 @@ public class AuthController {
                 "success_confirm_email_verification",
                 emailVerificationService.confirmSignupCode(request.email(), request.code())
         );
+    }
+
+    @PostMapping("/login-id-recovery/email-verifications")
+    public ApiResponse<EmailVerificationSentResponse> sendLoginIdRecoveryEmailVerification(
+            @Valid @RequestBody SendEmailVerificationRequest request,
+            jakarta.servlet.http.HttpServletRequest servletRequest
+    ) {
+        return ApiResponse.of(
+                "success_send_account_recovery_email",
+                emailVerificationService.sendLoginIdRecoveryCode(request.email(), servletRequest.getRemoteAddr())
+        );
+    }
+
+    @PostMapping("/login-id-recovery/email-verifications/confirm")
+    public ApiResponse<LoginIdRecoveryResponse> confirmLoginIdRecoveryEmailVerification(
+            @Valid @RequestBody ConfirmEmailVerificationRequest request
+    ) {
+        return ApiResponse.of(
+                "success_recover_login_id",
+                emailVerificationService.confirmLoginIdRecoveryCode(request.email(), request.code())
+        );
+    }
+
+    @PostMapping("/password-reset/email-verifications")
+    public ApiResponse<EmailVerificationSentResponse> sendPasswordResetEmailVerification(
+            @Valid @RequestBody SendPasswordResetVerificationRequest request,
+            jakarta.servlet.http.HttpServletRequest servletRequest
+    ) {
+        return ApiResponse.of(
+                "success_send_account_recovery_email",
+                emailVerificationService.sendPasswordResetCode(
+                        request.loginId(),
+                        request.email(),
+                        servletRequest.getRemoteAddr()
+                )
+        );
+    }
+
+    @PostMapping("/password-reset/email-verifications/confirm")
+    public ApiResponse<PasswordResetConfirmedResponse> confirmPasswordResetEmailVerification(
+            @Valid @RequestBody ConfirmPasswordResetVerificationRequest request
+    ) {
+        return ApiResponse.of(
+                "success_confirm_password_reset_email",
+                emailVerificationService.confirmPasswordResetCode(request.loginId(), request.email(), request.code())
+        );
+    }
+
+    @PostMapping("/password-reset")
+    public ApiResponse<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        authService.resetPassword(request);
+        return ApiResponse.success("success_reset_password");
     }
 
     @PostMapping("/login")

@@ -32,8 +32,8 @@ app:
     code-validity-minutes: 10
     completion-token-validity-minutes: 30
     max-verification-attempts: 5
-    max-sends-per-email-hour: 5
-    max-sends-per-ip-hour: 20
+    max-sends-per-email-hour: 10
+    max-sends-per-ip-hour: 30
   asset:
     cleanup:
       enabled: true

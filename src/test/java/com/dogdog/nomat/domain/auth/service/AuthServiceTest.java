@@ -11,6 +11,7 @@ import com.dogdog.nomat.domain.auth.dto.GuestLoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginResponse;
 import com.dogdog.nomat.domain.auth.dto.RefreshResponse;
+import com.dogdog.nomat.domain.auth.dto.ResetPasswordRequest;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
@@ -21,6 +22,7 @@ import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -142,6 +144,31 @@ class AuthServiceTest {
                 .hasMessageContaining("duplicate_nickname");
 
         verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void resetPasswordChangesPasswordAfterEmailTokenIsConsumed() {
+        User user = User.create("testuser", "old-password-hash", "tester");
+        ReflectionTestUtils.setField(user, "id", 1L);
+        user.verifyEmail("tester@example.com", LocalDateTime.now());
+        ResetPasswordRequest request = new ResetPasswordRequest(
+                "testuser",
+                " Tester@Example.COM ",
+                "completion-token",
+                "newPassword123!",
+                "newPassword123!"
+        );
+        given(userRepository.findByLoginId("testuser")).willReturn(Optional.of(user));
+        given(emailVerificationService.consumePasswordResetToken(
+                "testuser",
+                "tester@example.com",
+                "completion-token"
+        )).willReturn(1L);
+        given(passwordEncoder.encode("newPassword123!")).willReturn("new-password-hash");
+
+        authService.resetPassword(request);
+
+        assertThat(user.getPasswordHash()).isEqualTo("new-password-hash");
     }
 
     @Test

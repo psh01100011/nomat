@@ -5,6 +5,7 @@ import com.dogdog.nomat.domain.auth.dto.GuestLoginResponse;
 import com.dogdog.nomat.domain.auth.dto.LoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginResponse;
 import com.dogdog.nomat.domain.auth.dto.RefreshResponse;
+import com.dogdog.nomat.domain.auth.dto.ResetPasswordRequest;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
@@ -24,6 +25,7 @@ import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
@@ -57,6 +59,25 @@ public class AuthService {
         }
 
         userRepository.save(user);
+    }
+
+    @Transactional
+    public void resetPassword(ResetPasswordRequest request) {
+        String email = normalizeEmail(request.email());
+        User user = userRepository.findByLoginId(request.loginId())
+                .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
+                .filter(User::hasVerifiedEmail)
+                .filter(foundUser -> Objects.equals(foundUser.getEmail(), email))
+                .orElseThrow(this::invalidEmailVerificationToken);
+        Long verifiedUserId = emailVerificationService.consumePasswordResetToken(
+                request.loginId(),
+                email,
+                request.emailVerificationToken()
+        );
+        if (!Objects.equals(user.getId(), verifiedUserId)) {
+            throw invalidEmailVerificationToken();
+        }
+        user.changePassword(passwordEncoder.encode(request.password()));
     }
 
     @Transactional(readOnly = true)
@@ -152,6 +173,10 @@ public class AuthService {
 
     private BusinessException invalidIdOrPassword() {
         return new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_id_or_password");
+    }
+
+    private BusinessException invalidEmailVerificationToken() {
+        return new BusinessException(HttpStatus.BAD_REQUEST, "invalid_email_verification_token");
     }
 
     private BusinessException invalidToken() {

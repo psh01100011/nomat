@@ -2,6 +2,8 @@ package com.dogdog.nomat.domain.emailverification.service;
 
 import com.dogdog.nomat.domain.emailverification.dto.EmailVerificationConfirmedResponse;
 import com.dogdog.nomat.domain.emailverification.dto.EmailVerificationSentResponse;
+import com.dogdog.nomat.domain.emailverification.dto.LoginIdRecoveryResponse;
+import com.dogdog.nomat.domain.emailverification.dto.PasswordResetConfirmedResponse;
 import com.dogdog.nomat.global.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -53,6 +55,60 @@ public class EmailVerificationService {
         return requestLock.execute(
                 challengeKey,
                 () -> challengeManager.confirmProfileChangeCode(userId, normalizedEmail, code)
+        );
+    }
+
+    public EmailVerificationSentResponse sendLoginIdRecoveryCode(String email, String clientAddress) {
+        String normalizedEmail = requireEmail(email);
+        String challengeKey = challengeManager.loginIdRecoveryChallengeKey(normalizedEmail);
+        try {
+            return requestLock.execute(challengeKey, () -> {
+                rateLimiter.checkAndRecord(normalizedEmail, clientAddress);
+                return challengeManager.issueLoginIdRecoveryCode(normalizedEmail);
+            });
+        } catch (EmailVerificationMailException exception) {
+            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "email_verification_delivery_failed");
+        }
+    }
+
+    public LoginIdRecoveryResponse confirmLoginIdRecoveryCode(String email, String code) {
+        String normalizedEmail = requireEmail(email);
+        String challengeKey = challengeManager.loginIdRecoveryChallengeKey(normalizedEmail);
+        return requestLock.execute(
+                challengeKey,
+                () -> challengeManager.confirmLoginIdRecoveryCode(normalizedEmail, code)
+        );
+    }
+
+    public EmailVerificationSentResponse sendPasswordResetCode(String loginId, String email, String clientAddress) {
+        String normalizedEmail = requireEmail(email);
+        String challengeKey = challengeManager.passwordResetChallengeKey(loginId, normalizedEmail);
+        try {
+            return requestLock.execute(challengeKey, () -> {
+                rateLimiter.checkAndRecord(normalizedEmail, clientAddress);
+                return challengeManager.issuePasswordResetCode(loginId, normalizedEmail);
+            });
+        } catch (EmailVerificationMailException exception) {
+            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "email_verification_delivery_failed");
+        }
+    }
+
+    public PasswordResetConfirmedResponse confirmPasswordResetCode(String loginId, String email, String code) {
+        String normalizedEmail = requireEmail(email);
+        String challengeKey = challengeManager.passwordResetChallengeKey(loginId, normalizedEmail);
+        return requestLock.execute(
+                challengeKey,
+                () -> challengeManager.confirmPasswordResetCode(loginId, normalizedEmail, code)
+        );
+    }
+
+    public Long consumePasswordResetToken(String loginId, String email, String completionToken) {
+        requireCompletionToken(completionToken);
+        String normalizedEmail = requireEmail(email);
+        String challengeKey = challengeManager.passwordResetChallengeKey(loginId, normalizedEmail);
+        return requestLock.execute(
+                challengeKey,
+                () -> challengeManager.consumePasswordResetToken(loginId, normalizedEmail, completionToken)
         );
     }
 
