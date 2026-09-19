@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -35,6 +36,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.util.matcher.RegexRequestMatcher;
 
 @Configuration
+@Slf4j
 public class SecurityConfig {
 
     private static final String ACCESS_TOKEN_TYPE = "access";
@@ -85,6 +87,11 @@ public class SecurityConfig {
                         .jwt(jwt -> jwt.decoder(jwtDecoder))
                 )
                 .exceptionHandling(exception -> exception.authenticationEntryPoint((request, response, authException) -> {
+                    log.debug(
+                            "event=http_authentication_rejected method={} path={}",
+                            request.getMethod(),
+                            request.getRequestURI()
+                    );
                     response.setStatus(HttpStatus.UNAUTHORIZED.value());
                     response.setContentType(MediaType.APPLICATION_JSON_VALUE);
                     response.setCharacterEncoding(StandardCharsets.UTF_8.name());

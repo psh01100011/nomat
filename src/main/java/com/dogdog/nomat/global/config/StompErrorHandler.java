@@ -65,7 +65,7 @@ public class StompErrorHandler extends StompSubProtocolErrorHandler {
     private void logStompError(Message<byte[]> clientMessage, String messageCode, Throwable exception) {
         StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(clientMessage, StompHeaderAccessor.class);
         log.warn(
-                "STOMP client message processing failed. messageCode={}, command={}, destination={}, sessionId={}",
+                "event=stomp_message_failed code={} command={} destination={} sessionId={}",
                 messageCode,
                 accessor == null ? null : accessor.getCommand(),
                 accessor == null ? null : accessor.getDestination(),

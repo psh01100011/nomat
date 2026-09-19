@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.http.HttpStatus;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class RoomMessageRateLimiter {
 
     private static final String KEY_PREFIX = "rooms:message-rate:";
@@ -78,6 +80,10 @@ public class RoomMessageRateLimiter {
         );
 
         if (retryAfterSeconds != null && retryAfterSeconds > 0) {
+            log.warn(
+                    "event=room_message_rate_limited roomId={} userId={} retryAfterSeconds={}",
+                    roomId, userId, retryAfterSeconds
+            );
             throw new BusinessException(
                     HttpStatus.TOO_MANY_REQUESTS,
                     "message_rate_limited",

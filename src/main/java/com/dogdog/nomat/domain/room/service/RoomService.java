@@ -52,6 +52,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -60,6 +61,7 @@ import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RoomService {
 
     private static final TimeLimitMode DEFAULT_TIME_LIMIT_MODE = TimeLimitMode.FIXED;
@@ -122,6 +124,10 @@ public class RoomService {
             throw new BusinessException(HttpStatus.CONFLICT, "already_joined_room");
         }
 
+        log.info(
+                "event=room_created roomId={} mapId={} userId={} userType={} hasPassword={} maxPlayers={}",
+                roomId, map.getId(), userId, authenticatedUser.userType(), room.hasPassword(), room.maxPlayers()
+        );
         return CreateRoomResponse.from(room);
     }
 
@@ -262,6 +268,7 @@ public class RoomService {
 
         String inviteToken = roomRedisRepository.getOrCreateInviteToken(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        log.debug("event=room_invite_created roomId={} userId={}", roomId, userId);
         return new RoomInviteResponse(inviteToken);
     }
 
@@ -310,6 +317,10 @@ public class RoomService {
         }
 
         roomEventPublisher.publish(result.events());
+        log.info(
+                "event=room_joined roomId={} userId={} userType={} memberCount={}",
+                room.roomId(), userId, authenticatedUser.userType(), result.room().memberCount()
+        );
         return RoomDetailResponse.from(result.room());
     }
 
@@ -328,6 +339,7 @@ public class RoomService {
 
         roomRedisRepository.saveLeftRoom(result.room(), userId);
         roomEventPublisher.publish(result.events());
+        log.info("event=room_left roomId={} userId={} reason=REQUESTED", roomId, userId);
     }
 
     @Transactional
@@ -361,6 +373,7 @@ public class RoomService {
 
         roomRedisRepository.saveRoom(updatedRoom);
         roomEventPublisher.publish(List.of(RoomDomainEvent.roomSettingsUpdated(updatedRoom, LocalDateTime.now())));
+        log.info("event=room_settings_changed roomId={} userId={}", roomId, userId);
         return RoomDetailResponse.from(updatedRoom);
     }
 
@@ -385,6 +398,7 @@ public class RoomService {
 
         roomRedisRepository.deleteRoom(result.room());
         roomEventPublisher.publish(result.events());
+        log.info("event=room_closed roomId={} userId={}", roomId, userId);
     }
 
     @Transactional
@@ -402,6 +416,10 @@ public class RoomService {
 
         roomRedisRepository.saveKickedRoom(result.room(), targetUserId);
         roomEventPublisher.publish(result.events());
+        log.info(
+                "event=room_member_kicked roomId={} hostUserId={} targetUserId={}",
+                roomId, hostUserId, targetUserId
+        );
     }
 
     @Transactional
@@ -434,6 +452,10 @@ public class RoomService {
         roomRedisRepository.saveStartedRoom(result.room(), gameState);
         roomEventPublisher.publish(result.events());
         roomGameProgressService.startFirstQuestion(result.room());
+        log.info(
+                "event=room_game_started roomId={} mapId={} hostUserId={} memberCount={} questionCount={}",
+                roomId, room.mapId(), hostUserId, room.memberCount(), gameState.questions().size()
+        );
         return RoomDetailResponse.from(result.room());
     }
 
@@ -450,6 +472,7 @@ public class RoomService {
 
         roomRedisRepository.saveLeftRoom(result.room(), userId);
         roomEventPublisher.publish(result.events());
+        log.info("event=room_left roomId={} userId={} reason=DISCONNECTED", roomId, userId);
     }
 
     private void validateMinimumPlayers(RoomState room) {

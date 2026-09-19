@@ -16,12 +16,14 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RoomGameProgressService {
 
     private static final long NEXT_QUESTION_DELAY_SECONDS = 3;
@@ -111,6 +113,10 @@ public class RoomGameProgressService {
                     RoomDomainEvent.questionEnded(roomId, question.questionNumber(), question.primaryAnswer(), now)
             ));
             scheduleQuestionAdvance(roomId, votedGameState.currentQuestionIndex());
+            log.info(
+                    "event=room_question_skipped roomId={} questionNumber={} voteCount={} threshold={}",
+                    roomId, question.questionNumber(), votedGameState.skipVoteCount(), skipVoteThreshold
+            );
             return;
         }
 
@@ -138,6 +144,7 @@ public class RoomGameProgressService {
                 RoomAnswerHint.from(question.primaryAnswer()),
                 LocalDateTime.now()
         )));
+        log.debug("event=room_question_hint_revealed roomId={} questionNumber={}", roomId, question.questionNumber());
     }
 
     public void endQuestionByTimeout(Long roomId, int questionIndex) {
@@ -158,6 +165,7 @@ public class RoomGameProgressService {
                 question.primaryAnswer(),
                 LocalDateTime.now()
         )));
+        log.debug("event=room_question_timed_out roomId={} questionNumber={}", roomId, question.questionNumber());
         scheduleQuestionAdvance(roomId, questionIndex);
     }
 
@@ -183,6 +191,10 @@ public class RoomGameProgressService {
                 nextGameState.currentQuestionEndsAt(),
                 startedAt
         )));
+        log.debug(
+                "event=room_question_started roomId={} questionId={} questionNumber={} durationSeconds={}",
+                room.roomId(), question.questionId(), question.questionNumber(), durationSeconds
+        );
         scheduleHint(room, questionIndex, durationSeconds);
         scheduleQuestionTimeout(room, questionIndex, durationSeconds);
     }

@@ -25,6 +25,13 @@ server:
   servlet:
     context-path: /api
 
+logging:
+  level:
+    root: INFO
+    com.dogdog.nomat: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} level=%-5level requestId=%X{requestId:-none} logger=%logger{36} message=%msg%n%ex"
+
 app:
   email-verification:
     delivery-mode: ${EMAIL_DELIVERY_MODE:smtp}

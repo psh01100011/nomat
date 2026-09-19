@@ -202,7 +202,11 @@ class AudioProcessingServiceTest {
     private AudioProcessingTask audioProcessingTask(Long jobId) {
         return new AudioProcessingTask(
                 jobId,
+                100L,
+                20L,
                 10L,
+                1,
+                500L,
                 "https://youtube.com/watch?v=---",
                 60000,
                 102000,

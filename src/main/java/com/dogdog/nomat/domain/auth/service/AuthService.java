@@ -18,6 +18,7 @@ import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -29,6 +30,7 @@ import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AuthService {
 
     private static final String BEARER_PREFIX = "Bearer ";
@@ -59,6 +61,7 @@ public class AuthService {
         }
 
         userRepository.save(user);
+        log.info("event=member_signup_succeeded userId={} emailVerified={}", user.getId(), email != null);
     }
 
     @Transactional
@@ -78,19 +81,27 @@ public class AuthService {
             throw invalidEmailVerificationToken();
         }
         user.changePassword(passwordEncoder.encode(request.password()));
+        log.info("event=password_reset_succeeded userId={}", user.getId());
     }
 
     @Transactional(readOnly = true)
     public LoginResponse login(LoginRequest request) {
         User user = userRepository.findByLoginId(request.loginId())
                 .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
-                .orElseThrow(this::invalidIdOrPassword);
+                .orElse(null);
+
+        if (user == null) {
+            log.warn("event=member_login_rejected reason=invalid_credentials");
+            throw invalidIdOrPassword();
+        }
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+            log.warn("event=member_login_rejected userId={} reason=invalid_credentials", user.getId());
             throw invalidIdOrPassword();
         }
 
         TokenPair tokenPair = authTokenProvider.issue(user);
+        log.info("event=member_login_succeeded userId={}", user.getId());
         return new LoginResponse(user.getId(), tokenPair.accessToken(), tokenPair.refreshToken());
     }
 
@@ -98,6 +109,7 @@ public class AuthService {
         String nickname = request.nickname().trim();
         Long guestUserId = authTokenProvider.generateGuestUserId();
         TokenPair tokenPair = authTokenProvider.issueGuest(guestUserId, nickname);
+        log.info("event=guest_login_succeeded userId={}", guestUserId);
 
         return new GuestLoginResponse(
                 guestUserId,
@@ -113,6 +125,7 @@ public class AuthService {
 
         String nickname = request.nickname().trim();
         TokenPair tokenPair = authTokenProvider.issueGuest(authenticatedUser.userId(), nickname);
+        log.info("event=guest_nickname_changed userId={}", authenticatedUser.userId());
 
         return new GuestLoginResponse(
                 authenticatedUser.userId(),
@@ -139,6 +152,7 @@ public class AuthService {
         AuthenticatedUser authenticatedUser = AuthenticatedUser.from(refreshJwt);
 
         if (authenticatedUser.userType() == AuthenticatedUserType.GUEST) {
+            log.debug("event=access_token_refreshed userId={} userType=GUEST", authenticatedUser.userId());
             return new RefreshResponse(authTokenProvider.issueGuestAccessToken(
                     authenticatedUser.userId(),
                     authenticatedUser.nickname()
@@ -149,6 +163,7 @@ public class AuthService {
                 .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
                 .orElseThrow(this::invalidToken);
 
+        log.debug("event=access_token_refreshed userId={} userType=MEMBER", user.getId());
         return new RefreshResponse(authTokenProvider.issueAccessToken(user));
     }
 

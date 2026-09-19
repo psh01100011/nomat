@@ -17,6 +17,10 @@ spring:
     redis:
       url: redis://localhost:6379
 
+logging:
+  level:
+    com.dogdog.nomat: DEBUG
+
 app:
   email-verification:
     delivery-mode: ${EMAIL_DELIVERY_MODE:smtp}

@@ -14,12 +14,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RoomMessageService {
 
     private static final int CORRECT_ANSWER_SCORE = 100;
@@ -70,7 +72,9 @@ public class RoomMessageService {
         }
 
         roomEventPublisher.publish(events);
+        log.debug("event=room_message_published roomId={} userId={} eventCount={}", roomId, userId, events.size());
         if (endedQuestionIndex != null) {
+            log.info("event=room_correct_answer roomId={} userId={}", roomId, userId);
             roomGameProgressService.scheduleQuestionAdvance(roomId, endedQuestionIndex);
         }
     }

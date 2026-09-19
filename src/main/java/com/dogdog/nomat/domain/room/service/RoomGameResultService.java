@@ -35,12 +35,14 @@ import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RoomGameResultService {
 
     private final RoomRedisRepository roomRedisRepository;
@@ -87,6 +89,15 @@ public class RoomGameResultService {
         roomEventPublisher.publish(result.events().isEmpty()
                 ? List.of(RoomDomainEvent.gameEnded(result.room(), reason, endedAt))
                 : result.events());
+        log.info(
+                "event=room_game_ended roomId={} gameSessionId={} mapId={} reason={} memberCount={} completedQuestions={}",
+                roomId,
+                session.getId(),
+                map.getId(),
+                reason,
+                room.memberCount(),
+                gameState.questionOutcomes().size()
+        );
     }
 
     private GameSession toGameSession(

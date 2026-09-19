@@ -11,14 +11,17 @@ import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
 import com.dogdog.nomat.domain.user.entity.User;
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AudioProcessingJobService {
 
     private final AudioProcessingJobRepository audioProcessingJobRepository;
@@ -46,7 +49,17 @@ public class AudioProcessingJobService {
                         threshold,
                         PageRequest.of(0, batchSize)
                 );
-        jobs.forEach(job -> retryOrFail(job, maxRetryAttempts));
+        jobs.forEach(job -> {
+            retryOrFail(job, maxRetryAttempts);
+            log.warn(
+                    "event=audio_job_stale_recovered jobId={} mapId={} status={} attempt={} failureCode={}",
+                    job.getId(),
+                    job.getQuestionMedia().getQuestion().getMap().getId(),
+                    job.getStatus(),
+                    job.getAttemptCount(),
+                    job.getFailureCode()
+            );
+        });
         return jobs.size();
     }
 
@@ -62,9 +75,21 @@ public class AudioProcessingJobService {
 
         job.start();
         QuestionMedia media = job.getQuestionMedia();
+        Long mapId = media.getQuestion().getMap().getId();
+        long queueWaitMs = job.getCreatedAt() == null
+                ? 0
+                : Duration.between(job.getCreatedAt(), job.getStartedAt()).toMillis();
+        log.info(
+                "event=audio_job_claimed jobId={} mapId={} questionId={} mediaId={} attempt={} queueWaitMs={}",
+                job.getId(), mapId, media.getQuestion().getId(), media.getId(), job.getAttemptCount(), queueWaitMs
+        );
         return new AudioProcessingTask(
                 job.getId(),
+                mapId,
+                media.getQuestion().getId(),
                 media.getId(),
+                job.getAttemptCount(),
+                queueWaitMs,
                 media.getSourceUrl(),
                 media.getStartTimeMs(),
                 media.getEndTimeMs(),
@@ -100,17 +125,38 @@ public class AudioProcessingJobService {
         media.completeProcessing(asset, durationMs);
         job.succeed();
         publishMapIfAllMediaReady(media);
+        long duration = job.getStartedAt() == null
+                ? 0
+                : Duration.between(job.getStartedAt(), job.getCompletedAt()).toMillis();
+        log.info(
+                "event=audio_job_succeeded jobId={} mapId={} questionId={} mediaId={} attempt={} queueWaitMs={} durationMs={} sizeBytes={}",
+                jobId,
+                media.getQuestion().getMap().getId(),
+                media.getQuestion().getId(),
+                media.getId(),
+                job.getAttemptCount(),
+                job.getCreatedAt() == null || job.getStartedAt() == null
+                        ? 0
+                        : Duration.between(job.getCreatedAt(), job.getStartedAt()).toMillis(),
+                duration,
+                sizeBytes
+        );
     }
 
     @Transactional
-    public void handleJobFailure(
+    public AudioProcessingJobStatus handleJobFailure(
             Long jobId,
             AudioProcessingFailureCode failureCode,
             String failureMessage,
             int maxRetryAttempts
     ) {
-        audioProcessingJobRepository.findById(jobId)
-                .ifPresent(job -> retryOrFail(job, failureCode, failureMessage, maxRetryAttempts));
+        AudioProcessingJob job = audioProcessingJobRepository.findById(jobId).orElse(null);
+        if (job == null) {
+            log.error("event=audio_job_failure_state_missing jobId={} failureCode={}", jobId, failureCode);
+            return null;
+        }
+        retryOrFail(job, failureCode, failureMessage, maxRetryAttempts);
+        return job.getStatus();
     }
 
     private void retryOrFail(AudioProcessingJob job, int maxRetryAttempts) {

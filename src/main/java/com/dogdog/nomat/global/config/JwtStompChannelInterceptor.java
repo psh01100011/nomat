@@ -65,7 +65,7 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
         accessor.setUser(new StompUserPrincipal(userId));
         if (command == StompCommand.CONNECT) {
             String sessionId = connectSessionId(accessor);
-            log.debug("Authenticated STOMP CONNECT. sessionId={}, userId={}", sessionId, userId);
+            log.debug("event=stomp_connected sessionId={} userId={}", sessionId, userId);
             sessionRegistry.connect(sessionId, userId);
         }
         authorizeSubscription(accessor, userId);
@@ -113,7 +113,7 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
         boolean member = roomRedisRepository.findById(roomId.get())
                 .orElseThrow(() -> {
                     log.warn(
-                            "STOMP room subscription rejected because room was not found. sessionId={}, userId={}, destination={}",
+                            "event=stomp_subscription_rejected reason=room_not_found sessionId={} userId={} destination={}",
                             accessor.getSessionId(),
                             userId,
                             accessor.getDestination()
@@ -123,7 +123,7 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
                 .hasMember(userId);
         if (!member) {
             log.warn(
-                    "STOMP room subscription rejected because user is not a room member. sessionId={}, userId={}, destination={}",
+                    "event=stomp_subscription_rejected reason=not_room_member sessionId={} userId={} destination={}",
                     accessor.getSessionId(),
                     userId,
                     accessor.getDestination()
@@ -135,7 +135,7 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
     private String connectSessionId(StompHeaderAccessor accessor) {
         String sessionId = accessor.getSessionId();
         if (!StringUtils.hasText(sessionId)) {
-            log.warn("STOMP CONNECT rejected because sessionId is missing.");
+            log.warn("event=stomp_connection_rejected reason=missing_session_id");
             throw new BusinessException(HttpStatus.BAD_REQUEST, "websocket_session_unavailable");
         }
 

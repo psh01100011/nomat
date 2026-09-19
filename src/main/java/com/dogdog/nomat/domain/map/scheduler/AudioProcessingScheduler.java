@@ -22,7 +22,7 @@ public class AudioProcessingScheduler {
     public void processAvailableAudioJobs() {
         int processedCount = audioProcessingService.processAvailableJobs();
         if (processedCount > 0) {
-            log.info("Processed queued audio jobs. count={}", processedCount);
+            log.info("event=audio_job_batch_processed count={}", processedCount);
         }
     }
 }

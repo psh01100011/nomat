@@ -22,7 +22,7 @@ public class AssetCleanupScheduler {
     public void cleanupExpiredTempAssets() {
         int cleanedCount = assetCleanupService.cleanupExpiredTempAssets();
         if (cleanedCount > 0) {
-            log.info("Cleaned up expired TEMP assets. count={}", cleanedCount);
+            log.info("event=expired_assets_cleaned count={}", cleanedCount);
         }
     }
 }

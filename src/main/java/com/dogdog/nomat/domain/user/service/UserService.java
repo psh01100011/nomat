@@ -23,6 +23,7 @@ import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -33,6 +34,7 @@ import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class UserService {
 
     private final UserRepository userRepository;
@@ -75,9 +77,11 @@ public class UserService {
         User user = getAuthenticatedUser(userId);
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+            log.warn("event=password_verification_rejected userId={} reason=invalid_credentials", userId);
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_id_or_password");
         }
 
+        log.debug("event=password_verification_succeeded userId={}", userId);
         return new PasswordVerificationResponse(authTokenProvider.issuePasswordVerificationToken(user));
     }
 
@@ -88,6 +92,8 @@ public class UserService {
         String nickname = getNicknameToUpdate(user, request.nickname());
         Asset profileImageAsset = getProfileImageToUpdate(user, request.profileImageAssetId());
         String email = getEmailToUpdate(user, request.email());
+        boolean nicknameChanged = !Objects.equals(user.getNickname(), nickname);
+        boolean profileImageChanged = !Objects.equals(user.getProfileImageAsset(), profileImageAsset);
         boolean emailChanged = !Objects.equals(user.getEmail(), email);
         if (emailChanged && email != null) {
             emailVerificationService.consumeProfileChangeToken(
@@ -101,12 +107,20 @@ public class UserService {
         if (emailChanged && email != null) {
             user.verifyEmail(email, LocalDateTime.now());
         }
+        log.info(
+                "event=member_profile_changed userId={} nicknameChanged={} profileImageChanged={} emailChanged={}",
+                userId,
+                nicknameChanged,
+                profileImageChanged,
+                emailChanged
+        );
     }
 
     @Transactional
     public void removeProfileImage(Long userId) {
         User user = getAuthenticatedUser(userId);
         user.removeProfileImage();
+        log.info("event=member_profile_image_removed userId={}", userId);
     }
 
     @Transactional
@@ -115,6 +129,7 @@ public class UserService {
         validatePasswordVerificationToken(user, request.passwordVerificationToken());
 
         user.changePassword(passwordEncoder.encode(request.password()));
+        log.info("event=member_password_changed userId={}", userId);
     }
 
     @Transactional
@@ -122,6 +137,7 @@ public class UserService {
         User user = getAuthenticatedUser(userId);
 
         user.delete();
+        log.info("event=member_account_deleted userId={}", userId);
     }
 
     private User getAuthenticatedUser(Long userId) {

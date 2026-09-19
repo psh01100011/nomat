@@ -3,6 +3,8 @@ package com.dogdog.nomat.domain.map.service;
 import com.dogdog.nomat.domain.asset.config.AssetS3Properties;
 import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureType;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -52,6 +54,7 @@ public class AudioProcessingService {
         if (task == null) {
             return;
         }
+        long processingStartedAt = System.nanoTime();
 
         Path workingDirectory = null;
         String storageKey = null;
@@ -85,23 +88,56 @@ public class AudioProcessingService {
                 throw exception;
             }
         } catch (AudioProcessingException exception) {
-            audioProcessingJobService.handleJobFailure(
+            AudioProcessingJobStatus status = audioProcessingJobService.handleJobFailure(
                     task.jobId(),
                     exception.getFailureCode(),
                     exception.getMessage(),
                     processingProperties.getMaxRetryAttempts()
             );
-            log.warn("Failed to process youtube audio. jobId={}", task.jobId(), exception);
+            logProcessingFailure(task, exception.getFailureCode(), status, exception, processingStartedAt);
         } catch (Exception exception) {
-            audioProcessingJobService.handleJobFailure(
+            AudioProcessingJobStatus status = audioProcessingJobService.handleJobFailure(
                     task.jobId(),
                     AudioProcessingFailureCode.UNKNOWN,
                     exception.getMessage(),
                     processingProperties.getMaxRetryAttempts()
             );
-            log.warn("Failed to process youtube audio with unknown error. jobId={}", task.jobId(), exception);
+            logProcessingFailure(task, AudioProcessingFailureCode.UNKNOWN, status, exception, processingStartedAt);
         } finally {
             deleteWorkingDirectoryQuietly(workingDirectory);
+        }
+    }
+
+    private void logProcessingFailure(
+            AudioProcessingTask task,
+            AudioProcessingFailureCode failureCode,
+            AudioProcessingJobStatus status,
+            Exception exception,
+            long processingStartedAt
+    ) {
+        long durationMs = (System.nanoTime() - processingStartedAt) / 1_000_000;
+        String message = "event=audio_job_attempt_failed jobId={} mapId={} questionId={} mediaId={} attempt={} queueWaitMs={} durationMs={} status={} failureCode={} errorType={}";
+        if (status == AudioProcessingJobStatus.RETRYING) {
+            log.warn(
+                    message,
+                    task.jobId(), task.mapId(), task.questionId(), task.questionMediaId(),
+                    task.attemptCount(), task.queueWaitMs(), durationMs, status, failureCode,
+                    exception.getClass().getSimpleName()
+            );
+        } else if (failureCode.getFailureType() == AudioProcessingFailureType.SOURCE) {
+            log.info(
+                    message,
+                    task.jobId(), task.mapId(), task.questionId(), task.questionMediaId(),
+                    task.attemptCount(), task.queueWaitMs(), durationMs, status, failureCode,
+                    exception.getClass().getSimpleName()
+            );
+        } else {
+            log.error(
+                    message,
+                    task.jobId(), task.mapId(), task.questionId(), task.questionMediaId(),
+                    task.attemptCount(), task.queueWaitMs(), durationMs, status, failureCode,
+                    exception.getClass().getSimpleName()
+            );
         }
     }
 
@@ -158,8 +194,7 @@ public class AudioProcessingService {
         try {
             s3Client.deleteObject(request);
         } catch (SdkException exception) {
-            log.warn("Failed to delete S3 object after audio processing save failure. bucket={}, key={}",
-                    s3Properties.getBucket(),
+            log.warn("event=orphaned_audio_asset_cleanup_failed storageKey={}",
                     storageKey,
                     exception
             );
@@ -177,11 +212,11 @@ public class AudioProcessingService {
                         try {
                             Files.deleteIfExists(path);
                         } catch (IOException exception) {
-                            log.warn("Failed to delete audio processing temp file. path={}", path, exception);
+                            log.warn("event=audio_temp_file_cleanup_failed", exception);
                         }
                     });
         } catch (IOException exception) {
-            log.warn("Failed to clean audio processing temp directory. path={}", workingDirectory, exception);
+            log.warn("event=audio_temp_directory_cleanup_failed", exception);
         }
     }
 }

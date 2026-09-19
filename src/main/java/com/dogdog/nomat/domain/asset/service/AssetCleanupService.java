@@ -56,9 +56,8 @@ public class AssetCleanupService {
             s3Client.deleteObject(request);
             return true;
         } catch (SdkException exception) {
-            log.warn("Failed to delete expired TEMP asset from S3. assetId={}, bucket={}, key={}",
+            log.warn("event=expired_asset_cleanup_failed assetId={} storageKey={}",
                     asset.getId(),
-                    s3Properties.getBucket(),
                     asset.getStorageKey(),
                     exception
             );

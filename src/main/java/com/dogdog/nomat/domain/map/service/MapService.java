@@ -63,6 +63,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -74,6 +75,7 @@ import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class MapService {
 
     private static final int MIN_MAP_TITLE_LENGTH = 2;
@@ -135,6 +137,10 @@ public class MapService {
             saveQuestion(savedMap, questionType, request.questions().get(index), index + 1, creator);
         }
 
+        log.info(
+                "event=map_created mapId={} userId={} status={} questionType={} questionCount={}",
+                savedMap.getId(), userId, savedMap.getStatus(), questionType, request.questions().size()
+        );
         return CreateMapResponse.from(savedMap);
     }
 
@@ -168,6 +174,10 @@ public class MapService {
         }
 
         LocalDateTime savedAt = savedMap.getUpdatedAt() == null ? LocalDateTime.now() : savedMap.getUpdatedAt();
+        log.info(
+                "event=map_draft_saved mapId={} userId={} questionType={} questionCount={}",
+                savedMap.getId(), userId, questionType, questions.size()
+        );
         return SaveMapDraftResponse.of(savedMap, savedAt);
     }
 
@@ -269,6 +279,15 @@ public class MapService {
         );
 
         LocalDateTime updatedAt = map.getUpdatedAt() == null ? LocalDateTime.now() : map.getUpdatedAt();
+        log.info(
+                "event=map_modified mapId={} userId={} status={} createdQuestions={} updatedQuestions={} deletedQuestions={}",
+                mapId,
+                userId,
+                status,
+                createdQuestionResponses.size(),
+                questionChanges.updateRequests().size(),
+                deletedQuestionIds.size()
+        );
         return ModifyMapResponse.of(map, createdQuestionResponses, updatedAt);
     }
 
@@ -313,6 +332,10 @@ public class MapService {
         List<Long> retriedQuestionIds = retryableJobs.stream()
                 .map(job -> job.getQuestionMedia().getQuestion().getId())
                 .toList();
+        log.info(
+                "event=audio_processing_manual_retry_requested mapId={} userId={} jobCount={}",
+                mapId, userId, retryableJobs.size()
+        );
         return AudioProcessingRetryResponse.of(mapId, retriedQuestionIds, requestedAt);
     }
 
@@ -328,6 +351,7 @@ public class MapService {
 
         audioProcessingJobRepository.deleteByQuestionMediaQuestionMapId(mapId);
         map.delete();
+        log.info("event=map_deleted mapId={} userId={}", mapId, userId);
     }
 
     @Transactional
@@ -342,6 +366,7 @@ public class MapService {
 
         mapLikeRepository.save(MapLike.create(map, user));
         map.increaseLikeCount();
+        log.debug("event=map_liked mapId={} userId={}", mapId, userId);
 
         return new MapLikeResponse(map.getId(), true, map.getLikeCount());
     }
@@ -357,6 +382,7 @@ public class MapService {
                     mapLikeRepository.delete(like);
                     map.decreaseLikeCount();
                 });
+        log.debug("event=map_unliked mapId={} userId={}", mapId, userId);
 
         return new MapLikeResponse(map.getId(), false, map.getLikeCount());
     }
@@ -373,6 +399,7 @@ public class MapService {
 
         mapFavoriteRepository.save(MapFavorite.create(map, user));
         map.increaseFavoriteCount();
+        log.debug("event=map_favorited mapId={} userId={}", mapId, userId);
 
         return new MapFavoriteResponse(map.getId(), true, map.getFavoriteCount());
     }
@@ -388,6 +415,7 @@ public class MapService {
                     mapFavoriteRepository.delete(favorite);
                     map.decreaseFavoriteCount();
                 });
+        log.debug("event=map_unfavorited mapId={} userId={}", mapId, userId);
 
         return new MapFavoriteResponse(map.getId(), false, map.getFavoriteCount());
     }
