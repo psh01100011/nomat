@@ -38,8 +38,11 @@ public class User {
     @Column(name = "nickname", length = 50, nullable = false, unique = true)
     private String nickname;
 
-    @Column(name = "email", length = 254)
+    @Column(name = "email", length = 254, unique = true)
     private String email;
+
+    @Column(name = "email_verified_at")
+    private LocalDateTime emailVerifiedAt;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "profile_image_asset_id")
@@ -76,7 +79,19 @@ public class User {
     public void changeProfile(String nickname, Asset profileImageAsset, String email) {
         this.nickname = nickname;
         this.profileImageAsset = profileImageAsset;
+        if (!java.util.Objects.equals(this.email, email)) {
+            this.email = email;
+            this.emailVerifiedAt = null;
+        }
+    }
+
+    public void verifyEmail(String email, LocalDateTime verifiedAt) {
         this.email = email;
+        this.emailVerifiedAt = verifiedAt;
+    }
+
+    public boolean hasVerifiedEmail() {
+        return email != null && emailVerifiedAt != null;
     }
 
     public void removeProfileImage() {
@@ -96,6 +111,7 @@ public class User {
         this.passwordHash = "deleted";
         this.nickname = "deleted_user_" + id;
         this.email = null;
+        this.emailVerifiedAt = null;
         this.profileImageAsset = null;
         this.status = UserStatus.DELETED;
         this.deletedAt = LocalDateTime.now();

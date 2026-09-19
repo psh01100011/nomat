@@ -10,6 +10,8 @@ import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.auth.token.TokenPair;
+import com.dogdog.nomat.domain.emailverification.service.EmailAddressNormalizer;
+import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
@@ -21,6 +23,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
@@ -32,17 +35,26 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthTokenProvider authTokenProvider;
+    private final EmailVerificationService emailVerificationService;
 
     @Transactional
     public void signup(SignupRequest request) {
         validateUniqueUser(request);
+        String email = normalizeEmail(request.email());
+        if (email != null) {
+            emailVerificationService.consumeSignupToken(email, request.emailVerificationToken());
+        } else if (request.emailVerificationToken() != null && !request.emailVerificationToken().isBlank()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_email_verification_token");
+        }
 
         User user = User.create(
                 request.loginId(),
                 passwordEncoder.encode(request.password()),
-                request.nickname(),
-                normalizeEmail(request.email())
+                request.nickname()
         );
+        if (email != null) {
+            user.verifyEmail(email, LocalDateTime.now());
+        }
 
         userRepository.save(user);
     }
@@ -127,14 +139,15 @@ public class AuthService {
         if (userRepository.existsByNickname(request.nickname())) {
             throw new BusinessException(HttpStatus.CONFLICT, "duplicate_nickname");
         }
+
+        String email = normalizeEmail(request.email());
+        if (email != null && userRepository.existsByEmail(email)) {
+            throw new BusinessException(HttpStatus.CONFLICT, "duplicate_email");
+        }
     }
 
     private String normalizeEmail(String email) {
-        if (email == null || email.isBlank()) {
-            return null;
-        }
-
-        return email.trim();
+        return EmailAddressNormalizer.normalizeNullable(email);
     }
 
     private BusinessException invalidIdOrPassword() {

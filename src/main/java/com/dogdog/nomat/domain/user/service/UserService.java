@@ -7,6 +7,8 @@ import com.dogdog.nomat.domain.asset.entity.AssetType;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
+import com.dogdog.nomat.domain.emailverification.service.EmailAddressNormalizer;
+import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
 import com.dogdog.nomat.domain.user.dto.ModifyPasswordRequest;
@@ -18,8 +20,8 @@ import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
+import java.time.LocalDateTime;
 import java.util.Objects;
-import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -33,12 +35,11 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class UserService {
 
-    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
-
     private final UserRepository userRepository;
     private final AssetRepository assetRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthTokenProvider authTokenProvider;
+    private final EmailVerificationService emailVerificationService;
 
     @Transactional(readOnly = true)
     public MyInfoResponse getMyInfo(AuthenticatedUser authenticatedUser) {
@@ -87,8 +88,19 @@ public class UserService {
         String nickname = getNicknameToUpdate(user, request.nickname());
         Asset profileImageAsset = getProfileImageToUpdate(user, request.profileImageAssetId());
         String email = getEmailToUpdate(user, request.email());
+        boolean emailChanged = !Objects.equals(user.getEmail(), email);
+        if (emailChanged && email != null) {
+            emailVerificationService.consumeProfileChangeToken(
+                    userId,
+                    email,
+                    request.emailVerificationToken()
+            );
+        }
 
         user.changeProfile(nickname, profileImageAsset, email);
+        if (emailChanged && email != null) {
+            user.verifyEmail(email, LocalDateTime.now());
+        }
     }
 
     @Transactional
@@ -165,13 +177,21 @@ public class UserService {
             return user.getEmail();
         }
 
-        String normalizedEmail = email.trim();
-        if (normalizedEmail.isBlank()) {
+        String normalizedEmail = EmailAddressNormalizer.normalizeNullable(email);
+        if (normalizedEmail == null) {
+            if (user.getEmail() != null) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "email_removal_not_allowed");
+            }
             return null;
         }
 
-        if (normalizedEmail.length() > 254 || !EMAIL_PATTERN.matcher(normalizedEmail).matches()) {
+        if (!EmailAddressNormalizer.isValid(normalizedEmail)) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
+        }
+
+        if (!normalizedEmail.equals(user.getEmail())
+                && userRepository.existsByEmailAndIdNot(normalizedEmail, user.getId())) {
+            throw new BusinessException(HttpStatus.CONFLICT, "duplicate_email");
         }
 
         return normalizedEmail;

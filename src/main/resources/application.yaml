@@ -1,6 +1,17 @@
 spring:
   application:
     name: nomat
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${GMAIL_USERNAME:}
+    password: ${GMAIL_APP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:true}
+          starttls:
+            enable: ${MAIL_SMTP_STARTTLS_ENABLE:true}
   servlet:
     multipart:
       max-file-size: 10MB
@@ -15,6 +26,14 @@ server:
     context-path: /api
 
 app:
+  email-verification:
+    delivery-mode: ${EMAIL_DELIVERY_MODE:smtp}
+    mail-from: ${MAIL_FROM:${GMAIL_USERNAME:no-reply@nomat.local}}
+    code-validity-minutes: 10
+    completion-token-validity-minutes: 30
+    max-verification-attempts: 5
+    max-sends-per-email-hour: 5
+    max-sends-per-ip-hour: 20
   asset:
     cleanup:
       enabled: true

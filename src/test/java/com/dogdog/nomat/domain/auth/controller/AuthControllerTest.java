@@ -8,6 +8,7 @@ import com.dogdog.nomat.domain.auth.dto.LoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginResponse;
 import com.dogdog.nomat.domain.auth.dto.RefreshResponse;
 import com.dogdog.nomat.domain.auth.service.AuthService;
+import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,11 +26,14 @@ class AuthControllerTest {
     @Mock
     private AuthService authService;
 
+    @Mock
+    private EmailVerificationService emailVerificationService;
+
     private AuthController authController;
 
     @BeforeEach
     void setUp() {
-        authController = new AuthController(authService);
+        authController = new AuthController(authService, emailVerificationService);
         ReflectionTestUtils.setField(authController, "accessTokenValiditySeconds", 1800L);
         ReflectionTestUtils.setField(authController, "refreshTokenValiditySeconds", 1209600L);
         ReflectionTestUtils.setField(authController, "cookieSecure", false);

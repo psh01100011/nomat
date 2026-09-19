@@ -16,6 +16,7 @@ import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.auth.token.TokenPair;
+import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
@@ -44,6 +45,9 @@ class AuthServiceTest {
     @Mock
     private AuthTokenProvider authTokenProvider;
 
+    @Mock
+    private EmailVerificationService emailVerificationService;
+
     @InjectMocks
     private AuthService authService;
 
@@ -54,7 +58,8 @@ class AuthServiceTest {
                 "password123!",
                 "password123!",
                 "tester",
-                " tester@example.com "
+                " Tester@Example.COM ",
+                "email-verification-token"
         );
         given(passwordEncoder.encode("password123!")).willReturn("encoded-password");
         given(userRepository.save(any(User.class))).willAnswer(invocation -> invocation.getArgument(0));
@@ -69,6 +74,50 @@ class AuthServiceTest {
         assertThat(savedUser.getPasswordHash()).isEqualTo("encoded-password");
         assertThat(savedUser.getNickname()).isEqualTo("tester");
         assertThat(savedUser.getEmail()).isEqualTo("tester@example.com");
+        assertThat(savedUser.getEmailVerifiedAt()).isNotNull();
+        verify(emailVerificationService).consumeSignupToken(
+                "tester@example.com",
+                "email-verification-token"
+        );
+    }
+
+    @Test
+    void signupAllowsMissingEmailWithoutVerification() {
+        SignupRequest request = new SignupRequest(
+                "testuser",
+                "password123!",
+                "password123!",
+                "tester",
+                null
+        );
+        given(passwordEncoder.encode("password123!")).willReturn("encoded-password");
+
+        authService.signup(request);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(userCaptor.capture());
+        assertThat(userCaptor.getValue().getEmail()).isNull();
+        verify(emailVerificationService, never()).consumeSignupToken(any(), any());
+    }
+
+    @Test
+    void signupRejectsDuplicateNormalizedEmail() {
+        SignupRequest request = new SignupRequest(
+                "testuser",
+                "password123!",
+                "password123!",
+                "tester",
+                " Tester@Example.COM ",
+                "email-verification-token"
+        );
+        given(userRepository.existsByEmail("tester@example.com")).willReturn(true);
+
+        assertThatThrownBy(() -> authService.signup(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("duplicate_email");
+
+        verify(userRepository, never()).save(any(User.class));
+        verify(emailVerificationService, never()).consumeSignupToken(any(), any());
     }
 
     @Test

@@ -713,6 +713,19 @@ class MapServiceTest {
     }
 
     @Test
+    void saveMapDraftRejectsUserWithoutVerifiedEmail() {
+        User creator = unverifiedUser(1L);
+        SaveMapDraftRequest request = new SaveMapDraftRequest(null, null, null, null, null, null, null);
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+
+        assertThatThrownBy(() -> mapService.saveMapDraft(1L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("email_verification_required");
+
+        verify(quizMapRepository, never()).save(any(QuizMap.class));
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void saveMapDraftStoresPartialQuestionAndYoutubeMediaWithoutProcessingJob() {
         User creator = activeUser(1L);
@@ -908,9 +921,33 @@ class MapServiceTest {
     }
 
     @Test
+    void modifyMapRejectsUnverifiedUserDraft() {
+        User creator = unverifiedUser(1L);
+        QuizMap map = QuizMap.draft(
+                creator,
+                null,
+                null,
+                null,
+                null,
+                null,
+                MapVisibility.PRIVATE,
+                0
+        );
+        ReflectionTestUtils.setField(map, "id", 100L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+
+        assertThatThrownBy(() -> mapService.modifyMap(1L, 100L, new ModifyMapRequest(1, null, null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("email_verification_required");
+
+        verify(questionRepository, never()).findByMapIdAndStatusOrderByQuestionOrderAsc(any(), any());
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
-    void modifyMapUpdatesQuestionWithYoutubeMediaAndKeepsMapProcessing() {
-        User creator = activeUser(1L);
+    void modifyPublishedMapAllowsUserWithoutVerifiedEmail() {
+        User creator = unverifiedUser(1L);
         Category category = category(10L);
         QuizMap map = quizMap(100L, creator, category, MapStatus.PUBLISHED);
         Question question = question(200L, map);
@@ -1724,6 +1761,18 @@ class MapServiceTest {
     }
 
     @Test
+    void createMapRejectsUserWithoutVerifiedEmail() {
+        User creator = unverifiedUser(1L);
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+
+        assertThatThrownBy(() -> mapService.createMap(1L, audioYoutubeMapRequest(null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("email_verification_required");
+
+        verify(quizMapRepository, never()).save(any(QuizMap.class));
+    }
+
+    @Test
     void createMapRejectsInactiveCategory() {
         User creator = activeUser(1L);
         Category category = category(10L);
@@ -1864,6 +1913,13 @@ class MapServiceTest {
     }
 
     private User activeUser(Long id) {
+        User user = User.create("testuser" + id, "encoded-password", "tester" + id);
+        ReflectionTestUtils.setField(user, "id", id);
+        user.verifyEmail("tester" + id + "@example.com", LocalDateTime.of(2026, 8, 1, 12, 0));
+        return user;
+    }
+
+    private User unverifiedUser(Long id) {
         User user = User.create("testuser" + id, "encoded-password", "tester" + id);
         ReflectionTestUtils.setField(user, "id", id);
         return user;

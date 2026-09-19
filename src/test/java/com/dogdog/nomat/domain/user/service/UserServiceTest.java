@@ -3,6 +3,7 @@ package com.dogdog.nomat.domain.user.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.asset.entity.Asset;
 import com.dogdog.nomat.domain.asset.entity.AssetProcessingStatus;
@@ -10,6 +11,7 @@ import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
+import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
 import com.dogdog.nomat.domain.user.dto.ModifyPasswordRequest;
@@ -47,6 +49,9 @@ class UserServiceTest {
 
     @Mock
     private AuthTokenProvider authTokenProvider;
+
+    @Mock
+    private EmailVerificationService emailVerificationService;
 
     @InjectMocks
     private UserService userService;
@@ -260,20 +265,31 @@ class UserServiceTest {
         User user = activeUser(1L);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
 
-        userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, null, "  tester@example.com  "));
+        userService.modifyMyInfo(
+                1L,
+                new ModifyMyInfoRequest(null, null, "  Tester@Example.COM  ", "email-verification-token")
+        );
 
         assertThat(user.getEmail()).isEqualTo("tester@example.com");
+        assertThat(user.getEmailVerifiedAt()).isNotNull();
+        verify(emailVerificationService).consumeProfileChangeToken(
+                1L,
+                "tester@example.com",
+                "email-verification-token"
+        );
     }
 
     @Test
-    void modifyMyInfoClearsEmailWhenBlankEmailIsRequested() {
+    void modifyMyInfoRejectsRemovingRegisteredEmail() {
         User user = User.create("testuser1", "encoded-password", "tester1", "tester@example.com");
         ReflectionTestUtils.setField(user, "id", 1L);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
 
-        userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, null, " "));
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, null, " ")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("email_removal_not_allowed");
 
-        assertThat(user.getEmail()).isNull();
+        assertThat(user.getEmail()).isEqualTo("tester@example.com");
     }
 
     @Test

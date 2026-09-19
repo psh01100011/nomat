@@ -100,7 +100,7 @@ public class MapService {
 
     @Transactional
     public CreateMapResponse createMap(Long userId, CreateMapRequest request) {
-        User creator = getAuthenticatedUser(userId);
+        User creator = getVerifiedMapCreator(userId);
         Category category = getActiveCategory(request.categoryId());
         QuestionType questionType = parseQuestionType(request.questionType());
         MapVisibility visibility = parseVisibility(request.visibility());
@@ -140,7 +140,7 @@ public class MapService {
 
     @Transactional
     public SaveMapDraftResponse saveMapDraft(Long userId, SaveMapDraftRequest request) {
-        User creator = getAuthenticatedUser(userId);
+        User creator = getVerifiedMapCreator(userId);
         Category category = getActiveCategoryOrNull(request.categoryId());
         QuestionType questionType = parseQuestionTypeOrNull(request.questionType());
         MapVisibility visibility = parseVisibilityForDraft(request.visibility());
@@ -179,6 +179,9 @@ public class MapService {
 
         if (!Objects.equals(map.getCreator().getId(), userId)) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_map_access");
+        }
+        if (map.getStatus() == MapStatus.DRAFT && !creator.hasVerifiedEmail()) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "email_verification_required");
         }
 
         if (map.getVersion() != request.version()) {
@@ -1108,6 +1111,14 @@ public class MapService {
         return userRepository.findById(userId)
                 .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
+    }
+
+    private User getVerifiedMapCreator(Long userId) {
+        User user = getAuthenticatedUser(userId);
+        if (!user.hasVerifiedEmail()) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "email_verification_required");
+        }
+        return user;
     }
 
     private Category getActiveCategory(Long categoryId) {

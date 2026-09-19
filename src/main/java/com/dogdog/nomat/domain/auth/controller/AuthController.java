@@ -8,6 +8,11 @@ import com.dogdog.nomat.domain.auth.dto.LoginResponse;
 import com.dogdog.nomat.domain.auth.dto.RefreshResponse;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
 import com.dogdog.nomat.domain.auth.service.AuthService;
+import com.dogdog.nomat.domain.emailverification.dto.ConfirmEmailVerificationRequest;
+import com.dogdog.nomat.domain.emailverification.dto.EmailVerificationConfirmedResponse;
+import com.dogdog.nomat.domain.emailverification.dto.EmailVerificationSentResponse;
+import com.dogdog.nomat.domain.emailverification.dto.SendEmailVerificationRequest;
+import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
 import com.dogdog.nomat.global.dto.ApiResponse;
 import jakarta.validation.Valid;
 import java.time.Duration;
@@ -37,6 +42,7 @@ public class AuthController {
     private static final String REFRESH_TOKEN_COOKIE_NAME = "refresh_token";
 
     private final AuthService authService;
+    private final EmailVerificationService emailVerificationService;
 
     @Value("${app.auth.jwt.access-token-validity-seconds}")
     private long accessTokenValiditySeconds;
@@ -55,6 +61,27 @@ public class AuthController {
     public ApiResponse<Void> signup(@Valid @RequestBody SignupRequest request) {
         authService.signup(request);
         return ApiResponse.success("success_register");
+    }
+
+    @PostMapping("/email-verifications")
+    public ApiResponse<EmailVerificationSentResponse> sendSignupEmailVerification(
+            @Valid @RequestBody SendEmailVerificationRequest request,
+            jakarta.servlet.http.HttpServletRequest servletRequest
+    ) {
+        return ApiResponse.of(
+                "success_send_email_verification",
+                emailVerificationService.sendSignupCode(request.email(), servletRequest.getRemoteAddr())
+        );
+    }
+
+    @PostMapping("/email-verifications/confirm")
+    public ApiResponse<EmailVerificationConfirmedResponse> confirmSignupEmailVerification(
+            @Valid @RequestBody ConfirmEmailVerificationRequest request
+    ) {
+        return ApiResponse.of(
+                "success_confirm_email_verification",
+                emailVerificationService.confirmSignupCode(request.email(), request.code())
+        );
     }
 
     @PostMapping("/login")

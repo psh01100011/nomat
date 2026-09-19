@@ -18,6 +18,8 @@ spring:
       url: redis://localhost:6379
 
 app:
+  email-verification:
+    delivery-mode: ${EMAIL_DELIVERY_MODE:smtp}
   asset:
     cleanup:
       enabled: false

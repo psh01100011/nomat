@@ -1,6 +1,11 @@
 package com.dogdog.nomat.domain.user.controller;
 
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
+import com.dogdog.nomat.domain.emailverification.dto.ConfirmEmailVerificationRequest;
+import com.dogdog.nomat.domain.emailverification.dto.EmailVerificationConfirmedResponse;
+import com.dogdog.nomat.domain.emailverification.dto.EmailVerificationSentResponse;
+import com.dogdog.nomat.domain.emailverification.dto.SendEmailVerificationRequest;
+import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
 import com.dogdog.nomat.domain.user.dto.ModifyPasswordRequest;
@@ -30,6 +35,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class UserController {
 
     private final UserService userService;
+    private final EmailVerificationService emailVerificationService;
 
     @GetMapping("/me")
     public ApiResponse<MyInfoResponse> getMyInfo(@AuthenticationPrincipal Jwt jwt) {
@@ -58,6 +64,31 @@ public class UserController {
     ) {
         Long userId = getUserId(jwt);
         return ApiResponse.of("success_verify_password", userService.verifyPassword(userId, request));
+    }
+
+    @PostMapping("/me/email-verifications")
+    public ApiResponse<EmailVerificationSentResponse> sendProfileEmailVerification(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody SendEmailVerificationRequest request,
+            jakarta.servlet.http.HttpServletRequest servletRequest
+    ) {
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
+        return ApiResponse.of(
+                "success_send_email_verification",
+                emailVerificationService.sendProfileChangeCode(userId, request.email(), servletRequest.getRemoteAddr())
+        );
+    }
+
+    @PostMapping("/me/email-verifications/confirm")
+    public ApiResponse<EmailVerificationConfirmedResponse> confirmProfileEmailVerification(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody ConfirmEmailVerificationRequest request
+    ) {
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
+        return ApiResponse.of(
+                "success_confirm_email_verification",
+                emailVerificationService.confirmProfileChangeCode(userId, request.email(), request.code())
+        );
     }
 
     @PatchMapping("/me")

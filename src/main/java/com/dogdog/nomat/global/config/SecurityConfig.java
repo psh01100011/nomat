@@ -53,6 +53,8 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/signup").permitAll()
+                        .requestMatchers("/auth/email-verifications").permitAll()
+                        .requestMatchers("/auth/email-verifications/confirm").permitAll()
                         .requestMatchers("/auth/login").permitAll()
                         .requestMatchers("/auth/guest").permitAll()
                         .requestMatchers("/auth/refresh").permitAll()
