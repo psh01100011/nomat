@@ -8,6 +8,7 @@ import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.ModifyRoomSettingsRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
+import com.dogdog.nomat.domain.room.dto.RoomInviteResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.service.RoomService;
 import com.dogdog.nomat.global.dto.ApiResponse;
@@ -92,6 +93,28 @@ public class RoomController {
             @Valid @RequestBody(required = false) JoinRoomRequest request
     ) {
         return ApiResponse.of("success_join_room", roomService.joinRoom(AuthenticatedUser.from(jwt), roomId, request));
+    }
+
+    @PostMapping("/{roomId}/invite")
+    public ApiResponse<RoomInviteResponse> createRoomInvite(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long roomId
+    ) {
+        return ApiResponse.of(
+                "success_create_room_invite",
+                roomService.createRoomInvite(AuthenticatedUser.from(jwt), roomId)
+        );
+    }
+
+    @PostMapping("/invites/{inviteToken}/join")
+    public ApiResponse<RoomDetailResponse> joinRoomByInvite(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable String inviteToken
+    ) {
+        return ApiResponse.of(
+                "success_join_room",
+                roomService.joinRoomByInvite(AuthenticatedUser.from(jwt), inviteToken)
+        );
     }
 
     @PostMapping("/{roomId}/leave")

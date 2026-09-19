@@ -24,6 +24,8 @@ public class RoomRedisRepository {
     private static final String ROOM_ID_SEQUENCE_KEY = "rooms:sequence";
     private static final String ROOM_KEY_PREFIX = "rooms:";
     private static final String ROOM_GAME_KEY_PREFIX = "rooms:games:";
+    private static final String ROOM_INVITE_KEY_PREFIX = "rooms:invites:";
+    private static final String ROOM_INVITE_TOKEN_KEY_PREFIX = "rooms:invite-tokens:";
     private static final String ROOM_GAME_CORRECT_ANSWER_LOCK_SUFFIX = ":correct-answer-lock:";
     private static final String USER_ROOM_KEY_PREFIX = "users:rooms:";
     private static final String ROOM_CREATED_AT_INDEX_KEY = "rooms:index:created-at";
@@ -84,6 +86,7 @@ public class RoomRedisRepository {
         }
 
         redisTemplate.opsForValue().set(roomKey(room.roomId()), serialize(room), ROOM_TTL);
+        getOrCreateInviteToken(room.roomId());
         redisTemplate.opsForZSet().add(
                 ROOM_CREATED_AT_INDEX_KEY,
                 String.valueOf(room.roomId()),
@@ -95,6 +98,37 @@ public class RoomRedisRepository {
                 room.memberCount()
         );
         return true;
+    }
+
+    public Optional<String> getOrCreateInviteToken(Long roomId) {
+        Optional<Duration> remainingRoomTtl = remainingTtl(roomKey(roomId));
+        if (remainingRoomTtl.isEmpty()) {
+            return Optional.empty();
+        }
+
+        String inviteKey = roomInviteKey(roomId);
+        String inviteToken = redisTemplate.opsForValue().get(inviteKey);
+        if (inviteToken == null) {
+            String candidate = UUID.randomUUID().toString().replace("-", "");
+            Boolean created = redisTemplate.opsForValue().setIfAbsent(inviteKey, candidate, remainingRoomTtl.get());
+            inviteToken = Boolean.TRUE.equals(created)
+                    ? candidate
+                    : redisTemplate.opsForValue().get(inviteKey);
+        }
+        if (inviteToken == null) {
+            return Optional.empty();
+        }
+
+        redisTemplate.opsForValue().set(inviteTokenKey(inviteToken), String.valueOf(roomId), remainingRoomTtl.get());
+        return Optional.of(inviteToken);
+    }
+
+    public Optional<Long> findRoomIdByInviteToken(String inviteToken) {
+        String roomId = redisTemplate.opsForValue().get(inviteTokenKey(inviteToken));
+        if (roomId == null) {
+            return Optional.empty();
+        }
+        return Optional.of(Long.valueOf(roomId));
     }
 
     public boolean saveJoinedRoom(RoomState room, Long joinedUserId) {
@@ -185,8 +219,13 @@ public class RoomRedisRepository {
     }
 
     public void deleteRoom(RoomState room) {
+        String inviteToken = redisTemplate.opsForValue().get(roomInviteKey(room.roomId()));
         redisTemplate.delete(roomKey(room.roomId()));
         redisTemplate.delete(roomGameKey(room.roomId()));
+        redisTemplate.delete(roomInviteKey(room.roomId()));
+        if (inviteToken != null) {
+            redisTemplate.delete(inviteTokenKey(inviteToken));
+        }
         redisTemplate.opsForZSet().remove(ROOM_CREATED_AT_INDEX_KEY, String.valueOf(room.roomId()));
         redisTemplate.opsForZSet().remove(ROOM_MEMBER_COUNT_INDEX_KEY, String.valueOf(room.roomId()));
         room.members().forEach(member -> redisTemplate.delete(userRoomKey(member.userId())));
@@ -252,6 +291,14 @@ public class RoomRedisRepository {
 
     private String roomGameKey(Long roomId) {
         return ROOM_GAME_KEY_PREFIX + roomId;
+    }
+
+    private String roomInviteKey(Long roomId) {
+        return ROOM_INVITE_KEY_PREFIX + roomId;
+    }
+
+    private String inviteTokenKey(String inviteToken) {
+        return ROOM_INVITE_TOKEN_KEY_PREFIX + inviteToken;
     }
 
     private String correctAnswerLockKey(Long roomId, int questionIndex) {

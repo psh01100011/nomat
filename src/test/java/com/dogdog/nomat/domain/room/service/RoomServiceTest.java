@@ -31,6 +31,7 @@ import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.ModifyRoomSettingsRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
+import com.dogdog.nomat.domain.room.dto.RoomInviteResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
@@ -659,6 +660,53 @@ class RoomServiceTest {
                 .hasMessageContaining("room_access_denied");
 
         verify(roomRedisRepository, never()).saveJoinedRoom(any(RoomState.class), eq(4L));
+    }
+
+    @Test
+    void createRoomInviteAllowsWaitingRoomMember() {
+        RoomState room = roomWithMember(25L, member(4L));
+        given(userRepository.findById(4L)).willReturn(Optional.of(user(4L)));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.getOrCreateInviteToken(25L))
+                .willReturn(Optional.of("0123456789abcdef0123456789abcdef"));
+
+        RoomInviteResponse response = roomService.createRoomInvite(memberAuth(4L), 25L);
+
+        assertThat(response.inviteToken()).isEqualTo("0123456789abcdef0123456789abcdef");
+    }
+
+    @Test
+    void createRoomInviteAllowsUserIndexedToCurrentRoom() {
+        RoomState room = room(25L, "아이돌 노래 맞히기", 15L, 10);
+        given(userRepository.findById(4L)).willReturn(Optional.of(user(4L)));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findJoinedRoomId(4L)).willReturn(Optional.of(25L));
+        given(roomRedisRepository.getOrCreateInviteToken(25L))
+                .willReturn(Optional.of("0123456789abcdef0123456789abcdef"));
+
+        RoomInviteResponse response = roomService.createRoomInvite(memberAuth(4L), 25L);
+
+        assertThat(response.inviteToken()).isEqualTo("0123456789abcdef0123456789abcdef");
+    }
+
+    @Test
+    void joinRoomByInviteBypassesRoomPasswordForGuest() {
+        RoomState room = passwordRoom(25L, "encoded-secret");
+        given(roomRedisRepository.findRoomIdByInviteToken("0123456789abcdef0123456789abcdef"))
+                .willReturn(Optional.of(25L));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findJoinedRoomId(-2L)).willReturn(Optional.empty());
+        given(roomRedisRepository.saveJoinedRoom(any(RoomState.class), eq(-2L))).willReturn(true);
+
+        RoomDetailResponse response = roomService.joinRoomByInvite(
+                guestAuth(-2L, "손님2"),
+                "0123456789abcdef0123456789abcdef"
+        );
+
+        assertThat(response.roomId()).isEqualTo(25L);
+        assertThat(response.memberCount()).isEqualTo(2);
+        verify(passwordEncoder, never()).matches(any(), any());
+        verify(roomRedisRepository).saveJoinedRoom(any(RoomState.class), eq(-2L));
     }
 
     @Test

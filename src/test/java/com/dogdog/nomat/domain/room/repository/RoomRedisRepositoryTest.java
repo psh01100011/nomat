@@ -30,6 +30,8 @@ import tools.jackson.databind.ObjectMapper;
 @ExtendWith(MockitoExtension.class)
 class RoomRedisRepositoryTest {
 
+    private static final LocalDateTime TEST_NOW = LocalDateTime.now();
+
     @Mock
     private StringRedisTemplate redisTemplate;
 
@@ -86,6 +88,22 @@ class RoomRedisRepositoryTest {
         roomRedisRepository.saveGameState(gameState);
 
         verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(10));
+    }
+
+    @Test
+    void getOrCreateInviteTokenReusesTokenWithRoomRemainingTtl() {
+        given(redisTemplate.opsForValue()).willReturn(valueOperations);
+        given(redisTemplate.getExpire("rooms:25", TimeUnit.SECONDS)).willReturn(600L);
+        given(valueOperations.get("rooms:invites:25")).willReturn("0123456789abcdef0123456789abcdef");
+
+        Optional<String> result = roomRedisRepository.getOrCreateInviteToken(25L);
+
+        assertThat(result).contains("0123456789abcdef0123456789abcdef");
+        verify(valueOperations).set(
+                "rooms:invite-tokens:0123456789abcdef0123456789abcdef",
+                "25",
+                Duration.ofMinutes(10)
+        );
     }
 
     @Test
@@ -186,6 +204,6 @@ class RoomRedisRepositoryTest {
     }
 
     private LocalDateTime now() {
-        return LocalDateTime.of(2026, 8, 21, 20, 0);
+        return TEST_NOW;
     }
 }

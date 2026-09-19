@@ -24,6 +24,7 @@ import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.ModifyRoomSettingsRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
+import com.dogdog.nomat.domain.room.dto.RoomInviteResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomCommand;
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
@@ -45,6 +46,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
@@ -237,6 +239,65 @@ public class RoomService {
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
 
         validateRoomPassword(room, request);
+
+        return joinRoom(authenticatedUser, user, userId, room);
+    }
+
+    @Transactional
+    public RoomInviteResponse createRoomInvite(AuthenticatedUser authenticatedUser, Long roomId) {
+        validateAuthenticatedUser(authenticatedUser);
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        if (room.status() != RoomStatus.WAITING) {
+            throw new BusinessException(HttpStatus.CONFLICT, "room_invite_not_available");
+        }
+        Long userId = authenticatedUser.userId();
+        boolean isCurrentRoomMember = room.hasMember(userId)
+                || roomRedisRepository.findJoinedRoomId(userId)
+                .filter(joinedRoomId -> Objects.equals(joinedRoomId, roomId))
+                .isPresent();
+        if (!isCurrentRoomMember) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access");
+        }
+
+        String inviteToken = roomRedisRepository.getOrCreateInviteToken(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        return new RoomInviteResponse(inviteToken);
+    }
+
+    @Transactional
+    public RoomDetailResponse joinRoomByInvite(AuthenticatedUser authenticatedUser, String inviteToken) {
+        validateAuthenticatedUser(authenticatedUser);
+        if (inviteToken == null || !inviteToken.matches("^[a-f0-9]{32}$")) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "room_invite_invalid");
+        }
+
+        Long roomId = roomRedisRepository.findRoomIdByInviteToken(inviteToken)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_invite_invalid"));
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_invite_invalid"));
+        Long userId = authenticatedUser.userId();
+        Optional<Long> joinedRoomId = roomRedisRepository.findJoinedRoomId(userId);
+        if (joinedRoomId.isPresent()) {
+            if (Objects.equals(joinedRoomId.get(), roomId) && room.hasMember(userId)) {
+                return RoomDetailResponse.from(room);
+            }
+            CurrentRoomResponse currentRoom = roomRedisRepository.findById(joinedRoomId.get())
+                    .map(CurrentRoomResponse::from)
+                    .orElseGet(() -> CurrentRoomResponse.of(joinedRoomId.get(), null));
+            throw new BusinessException(HttpStatus.CONFLICT, "already_joined_room", currentRoom);
+        }
+
+        User user = authenticatedUser.isMember() ? getAuthenticatedUser(userId) : null;
+        return joinRoom(authenticatedUser, user, userId, room);
+    }
+
+    private RoomDetailResponse joinRoom(
+            AuthenticatedUser authenticatedUser,
+            User user,
+            Long userId,
+            RoomState room
+    ) {
 
         LocalDateTime now = LocalDateTime.now();
         RoomTransitionResult result = roomStateMachine.transition(

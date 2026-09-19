@@ -31,6 +31,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class RoomMessageServiceTest {
 
+    private static final LocalDateTime TEST_NOW = LocalDateTime.now();
+
     @Mock
     private RoomRedisRepository roomRedisRepository;
 
@@ -299,6 +301,6 @@ class RoomMessageServiceTest {
     }
 
     private LocalDateTime now() {
-        return LocalDateTime.of(2026, 8, 21, 20, 0);
+        return TEST_NOW;
     }
 }
