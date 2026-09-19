@@ -215,7 +215,7 @@ class UserServiceTest {
         User user = activeUser(1L);
         Asset asset = imageAsset(10L, user);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
-        given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
+        given(assetRepository.findByIdForUpdate(10L)).willReturn(Optional.of(asset));
 
         userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null));
 
@@ -227,7 +227,7 @@ class UserServiceTest {
     void modifyMyInfoRejectsUnknownProfileImageAssetId() {
         User user = activeUser(1L);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
-        given(assetRepository.findById(10L)).willReturn(Optional.empty());
+        given(assetRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null)))
                 .isInstanceOf(BusinessException.class)
@@ -240,7 +240,7 @@ class UserServiceTest {
         User otherUser = activeUser(2L);
         Asset asset = imageAsset(10L, otherUser);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
-        given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
+        given(assetRepository.findByIdForUpdate(10L)).willReturn(Optional.of(asset));
 
         assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null)))
                 .isInstanceOf(BusinessException.class)
@@ -253,7 +253,7 @@ class UserServiceTest {
         Asset asset = imageAsset(10L, user);
         ReflectionTestUtils.setField(asset, "processingStatus", AssetProcessingStatus.PROCESSING);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
-        given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
+        given(assetRepository.findByIdForUpdate(10L)).willReturn(Optional.of(asset));
 
         assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null)))
                 .isInstanceOf(BusinessException.class)

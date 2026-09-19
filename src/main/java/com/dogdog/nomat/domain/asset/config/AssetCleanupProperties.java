@@ -20,11 +20,20 @@ public class AssetCleanupProperties {
     private long tempRetentionHours;
 
     @Positive
+    private long orphanRetentionHours;
+
+    @Positive
     private int batchSize;
+
+    @Positive
+    private int scanBatchSize;
 
     @Positive
     private long initialDelayMs;
 
     @Positive
     private long fixedDelayMs;
+
+    @Positive
+    private long lockTtlMinutes;
 }

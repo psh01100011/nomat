@@ -1733,7 +1733,7 @@ class MapServiceTest {
 
         given(userRepository.findById(1L)).willReturn(Optional.of(creator));
         given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
-        given(assetRepository.findById(20L)).willReturn(Optional.of(thumbnail));
+        given(assetRepository.findByIdForUpdate(20L)).willReturn(Optional.of(thumbnail));
         given(quizMapRepository.save(any(QuizMap.class))).willAnswer(invocation -> {
             QuizMap map = invocation.getArgument(0);
             ReflectionTestUtils.setField(map, "id", 100L);
@@ -1845,7 +1845,7 @@ class MapServiceTest {
 
         given(userRepository.findById(1L)).willReturn(Optional.of(creator));
         given(categoryRepository.findById(10L)).willReturn(Optional.of(category));
-        given(assetRepository.findById(20L)).willReturn(Optional.of(thumbnail));
+        given(assetRepository.findByIdForUpdate(20L)).willReturn(Optional.of(thumbnail));
 
         assertThatThrownBy(() -> mapService.createMap(1L, audioYoutubeMapRequest(20L)))
                 .isInstanceOf(BusinessException.class)

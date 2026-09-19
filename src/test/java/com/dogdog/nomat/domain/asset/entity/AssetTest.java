@@ -57,6 +57,32 @@ class AssetTest {
     }
 
     @Test
+    void attachRestoresOrphanedAsset() {
+        Asset asset = imageAsset();
+        asset.attach();
+        asset.markOrphaned(LocalDateTime.now());
+
+        asset.attach();
+
+        assertThat(asset.getStatus()).isEqualTo(AssetStatus.ATTACHED);
+        assertThat(asset.getOrphanedAt()).isNull();
+    }
+
+    @Test
+    void markOrphanedStartsGracePeriodOnlyForAttachedAsset() {
+        Asset asset = imageAsset();
+        LocalDateTime orphanedAt = LocalDateTime.now();
+
+        asset.markOrphaned(orphanedAt);
+        assertThat(asset.getStatus()).isEqualTo(AssetStatus.TEMP);
+
+        asset.attach();
+        asset.markOrphaned(orphanedAt);
+        assertThat(asset.getStatus()).isEqualTo(AssetStatus.ORPHANED);
+        assertThat(asset.getOrphanedAt()).isEqualTo(orphanedAt);
+    }
+
+    @Test
     void attachRejectsDeletedAsset() {
         Asset asset = imageAsset();
         asset.delete();

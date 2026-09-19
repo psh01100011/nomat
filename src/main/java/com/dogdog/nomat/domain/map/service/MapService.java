@@ -1251,7 +1251,7 @@ public class MapService {
             return null;
         }
 
-        Asset asset = assetRepository.findById(assetId)
+        Asset asset = assetRepository.findByIdForUpdate(assetId)
                 .orElseThrow(this::invalidRequest);
         validateAttachableAsset(asset, uploader, AssetType.IMAGE);
         asset.attach();
@@ -1270,7 +1270,7 @@ public class MapService {
             case TEXT -> throw invalidRequest();
         };
 
-        Asset asset = assetRepository.findById(assetId)
+        Asset asset = assetRepository.findByIdForUpdate(assetId)
                 .orElseThrow(this::invalidRequest);
         validateAttachableAsset(asset, uploader, assetType);
         asset.attach();
@@ -1283,7 +1283,7 @@ public class MapService {
             return null;
         }
 
-        Asset asset = assetRepository.findById(assetId)
+        Asset asset = assetRepository.findByIdForUpdate(assetId)
                 .orElseThrow(this::invalidRequest);
         if (questionType == QuestionType.IMAGE) {
             validateAttachableAsset(asset, uploader, AssetType.IMAGE);

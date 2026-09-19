@@ -9,6 +9,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
@@ -21,7 +22,13 @@ import lombok.NoArgsConstructor;
 
 @Getter
 @Entity
-@Table(name = "assets")
+@Table(
+        name = "assets",
+        indexes = {
+                @Index(name = "idx_assets_status_id", columnList = "status, id"),
+                @Index(name = "idx_assets_status_orphaned_id", columnList = "status, orphaned_at, id")
+        }
+)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Asset {
 
@@ -71,6 +78,9 @@ public class Asset {
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    @Column(name = "orphaned_at")
+    private LocalDateTime orphanedAt;
 
     private Asset(
             User uploader,
@@ -143,6 +153,16 @@ public class Asset {
         }
 
         this.status = AssetStatus.ATTACHED;
+        this.orphanedAt = null;
+    }
+
+    public void markOrphaned(LocalDateTime orphanedAt) {
+        if (status != AssetStatus.ATTACHED) {
+            return;
+        }
+
+        this.status = AssetStatus.ORPHANED;
+        this.orphanedAt = orphanedAt;
     }
 
     public void delete() {
@@ -151,6 +171,7 @@ public class Asset {
         }
 
         this.status = AssetStatus.DELETED;
+        this.orphanedAt = null;
         this.deletedAt = LocalDateTime.now();
     }
 

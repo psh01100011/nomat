@@ -180,7 +180,7 @@ public class UserService {
             return user.getProfileImageAsset();
         }
 
-        Asset asset = assetRepository.findById(profileImageAssetId)
+        Asset asset = assetRepository.findByIdForUpdate(profileImageAssetId)
                 .orElseThrow(this::invalidRequest);
         validateProfileImageAsset(user, asset);
         asset.attach();

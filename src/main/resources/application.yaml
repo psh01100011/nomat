@@ -53,9 +53,12 @@ app:
     cleanup:
       enabled: true
       temp-retention-hours: 24
+      orphan-retention-hours: 168
       batch-size: 100
+      scan-batch-size: 500
       initial-delay-ms: 60000
       fixed-delay-ms: 3600000
+      lock-ttl-minutes: 30
     s3:
       bucket: ${AWS_S3_BUCKET}
       region: ${AWS_REGION:ap-northeast-2}
