@@ -209,6 +209,7 @@ public class MapService {
         Map<Long, QuestionMedia> mediaByQuestionId = questionMediaRepository.findByQuestionIdIn(existingQuestionIds)
                 .stream()
                 .collect(Collectors.toMap(media -> media.getQuestion().getId(), Function.identity()));
+        boolean hadSourceFailures = hasSourceFailures(existingQuestions, mediaByQuestionId);
 
         Set<Long> deletedQuestionIds = new HashSet<>(questionChanges.deleteQuestionIds());
         deleteQuestions(existingQuestionsById, deletedQuestionIds, answersByQuestionId, mediaByQuestionId);
@@ -248,10 +249,11 @@ public class MapService {
                 answersByQuestionId,
                 mediaByQuestionId
         );
+        if (hadSourceFailures && !hasSourceFailures(activeQuestions, mediaByQuestionId)) {
+            retryFailedServerJobs(mapId, LocalDateTime.now());
+        }
 
-        MapStatus status = hasUnreadyMedia(activeQuestions, mediaByQuestionId)
-                ? MapStatus.PROCESSING
-                : MapStatus.PUBLISHED;
+        MapStatus status = resolveProcessingStatus(activeQuestions, mediaByQuestionId);
         map.modify(
                 patchState.category(),
                 patchState.thumbnailAsset(),
@@ -304,7 +306,7 @@ public class MapService {
 
         LocalDateTime requestedAt = LocalDateTime.now();
         retryableJobs.forEach(job -> job.retryManually(requestedAt));
-        map.resumeProcessingIfPublished();
+        map.resumeProcessing();
         List<Long> retriedQuestionIds = retryableJobs.stream()
                 .map(job -> job.getQuestionMedia().getQuestion().getId())
                 .toList();
@@ -403,7 +405,13 @@ public class MapService {
         QuestionType questionType = parseQuestionTypeOrNull(questionTypeValue);
         boolean viewingOwnMaps = userId != null && Objects.equals(userId, creatorId);
         Collection<MapStatus> statuses = viewingOwnMaps
-                ? List.of(MapStatus.DRAFT, MapStatus.PROCESSING, MapStatus.PUBLISHED, MapStatus.BLOCKED)
+                ? List.of(
+                        MapStatus.DRAFT,
+                        MapStatus.PROCESSING,
+                        MapStatus.PROCESSING_FAILED,
+                        MapStatus.PUBLISHED,
+                        MapStatus.BLOCKED
+                )
                 : List.of(MapStatus.PUBLISHED);
         MapVisibility visibility = viewingOwnMaps ? null : MapVisibility.PUBLIC;
         Pageable pageable = PageRequest.of(page, size, sortBy(sort));
@@ -1056,6 +1064,44 @@ public class MapService {
                 .map(question -> mediaByQuestionId.get(question.getId()))
                 .filter(Objects::nonNull)
                 .anyMatch(media -> media.getProcessingStatus() != QuestionMediaProcessingStatus.READY);
+    }
+
+    private MapStatus resolveProcessingStatus(
+            List<Question> activeQuestions,
+            Map<Long, QuestionMedia> mediaByQuestionId
+    ) {
+        boolean hasFailedMedia = activeQuestions.stream()
+                .map(question -> mediaByQuestionId.get(question.getId()))
+                .filter(Objects::nonNull)
+                .anyMatch(media -> media.getProcessingStatus() == QuestionMediaProcessingStatus.FAILED);
+        if (hasFailedMedia) {
+            return MapStatus.PROCESSING_FAILED;
+        }
+        return hasUnreadyMedia(activeQuestions, mediaByQuestionId)
+                ? MapStatus.PROCESSING
+                : MapStatus.PUBLISHED;
+    }
+
+    private boolean hasSourceFailures(
+            List<Question> activeQuestions,
+            Map<Long, QuestionMedia> mediaByQuestionId
+    ) {
+        return activeQuestions.stream()
+                .map(question -> mediaByQuestionId.get(question.getId()))
+                .filter(Objects::nonNull)
+                .anyMatch(media -> media.getProcessingStatus() == QuestionMediaProcessingStatus.FAILED
+                        && media.getFailureCode() != null
+                        && media.getFailureCode().getFailureType() == AudioProcessingFailureType.SOURCE);
+    }
+
+    private void retryFailedServerJobs(Long mapId, LocalDateTime requestedAt) {
+        audioProcessingJobRepository.findByQuestionMediaQuestionMapIdAndStatusOrderByIdAsc(
+                        mapId,
+                        AudioProcessingJobStatus.FAILED
+                )
+                .stream()
+                .filter(AudioProcessingJob::canRetryManually)
+                .forEach(job -> job.retryManually(requestedAt));
     }
 
     private User getAuthenticatedUser(Long userId) {

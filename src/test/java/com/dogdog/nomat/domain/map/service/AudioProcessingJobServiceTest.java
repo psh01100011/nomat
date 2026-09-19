@@ -170,6 +170,8 @@ class AudioProcessingJobServiceTest {
         assertThat(job.getQuestionMedia().getFailureCode()).isEqualTo(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR);
         assertThat(job.getQuestionMedia().getFailureMessage())
                 .isEqualTo(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR.getUserMessage());
+        assertThat(job.getQuestionMedia().getQuestion().getMap().getStatus())
+                .isEqualTo(MapStatus.PROCESSING_FAILED);
         assertThat(job.canRetryManually()).isTrue();
         assertThat(job.getQuestionMedia().canRetry()).isTrue();
     }
@@ -194,6 +196,8 @@ class AudioProcessingJobServiceTest {
         assertThat(job.getQuestionMedia().getFailureCode()).isEqualTo(AudioProcessingFailureCode.SOURCE_UNAVAILABLE);
         assertThat(job.getQuestionMedia().getFailureMessage())
                 .isEqualTo(AudioProcessingFailureCode.SOURCE_UNAVAILABLE.getUserMessage());
+        assertThat(job.getQuestionMedia().getQuestion().getMap().getStatus())
+                .isEqualTo(MapStatus.PROCESSING_FAILED);
         assertThat(job.canRetryManually()).isFalse();
         assertThat(job.getQuestionMedia().canRetry()).isFalse();
     }

@@ -199,7 +199,7 @@ public class QuizMap {
     }
 
     public void publishIfProcessing() {
-        if (status != MapStatus.PROCESSING) {
+        if (status != MapStatus.PROCESSING && status != MapStatus.PROCESSING_FAILED) {
             return;
         }
 
@@ -207,9 +207,15 @@ public class QuizMap {
         this.publishedAt = LocalDateTime.now();
     }
 
-    public void resumeProcessingIfPublished() {
-        if (status == MapStatus.PUBLISHED) {
+    public void resumeProcessing() {
+        if (status == MapStatus.PUBLISHED || status == MapStatus.PROCESSING_FAILED) {
             this.status = MapStatus.PROCESSING;
+        }
+    }
+
+    public void failProcessing() {
+        if (status == MapStatus.PROCESSING) {
+            this.status = MapStatus.PROCESSING_FAILED;
         }
     }
 

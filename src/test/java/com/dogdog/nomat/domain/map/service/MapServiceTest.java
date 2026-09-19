@@ -373,7 +373,13 @@ class MapServiceTest {
         );
 
         assertThat(statusesCaptor.getValue())
-                .containsExactly(MapStatus.DRAFT, MapStatus.PROCESSING, MapStatus.PUBLISHED, MapStatus.BLOCKED);
+                .containsExactly(
+                        MapStatus.DRAFT,
+                        MapStatus.PROCESSING,
+                        MapStatus.PROCESSING_FAILED,
+                        MapStatus.PUBLISHED,
+                        MapStatus.BLOCKED
+                );
         assertThat(visibilityCaptor.getValue()).isNull();
         assertThat(creatorIdCaptor.getValue()).isEqualTo(1L);
     }
@@ -1071,16 +1077,23 @@ class MapServiceTest {
     }
 
     @Test
-    void modifyMapAcceptsRangeChangeForInvalidRangeFailure() {
+    void modifyMapRetriesServerFailuresWhenLastSourceFailureIsResolved() {
         User creator = activeUser(1L);
-        QuizMap map = quizMap(100L, creator, category(10L), MapStatus.PROCESSING);
+        QuizMap map = quizMap(100L, creator, category(10L), MapStatus.PROCESSING_FAILED);
         Question question = question(200L, map);
+        Question serverQuestion = question(201L, map);
         QuestionAnswer answer = QuestionAnswer.create(question, "정답", "정답", true);
+        QuestionAnswer serverAnswer = QuestionAnswer.create(serverQuestion, "서버 정답", "서버정답", true);
         QuestionMedia media = youtubeMedia(question);
+        QuestionMedia serverMedia = youtubeMedia(serverQuestion);
         ReflectionTestUtils.setField(media, "id", 300L);
+        ReflectionTestUtils.setField(serverMedia, "id", 301L);
         AudioProcessingJob job = AudioProcessingJob.create(media);
+        AudioProcessingJob serverJob = AudioProcessingJob.create(serverMedia);
         job.start();
         job.fail(AudioProcessingFailureCode.INVALID_AUDIO_RANGE, "invalid duration");
+        serverJob.start();
+        serverJob.fail(AudioProcessingFailureCode.UNKNOWN, "unexpected exception");
         LocalDateTime previousRequestedAt = media.getProcessingRequestedAt();
         ModifyMapRequest request = youtubeQuestionUpdateRequest(
                 200L,
@@ -1092,11 +1105,16 @@ class MapServiceTest {
         given(userRepository.findById(1L)).willReturn(Optional.of(creator));
         given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
         given(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(100L, QuestionStatus.ACTIVE))
-                .willReturn(List.of(question));
-        given(questionAnswerRepository.findByQuestionIdInOrderByQuestionIdAscIdAsc(List.of(200L)))
-                .willReturn(List.of(answer));
-        given(questionMediaRepository.findByQuestionIdIn(List.of(200L))).willReturn(List.of(media));
+                .willReturn(List.of(question, serverQuestion));
+        given(questionAnswerRepository.findByQuestionIdInOrderByQuestionIdAscIdAsc(List.of(200L, 201L)))
+                .willReturn(List.of(answer, serverAnswer));
+        given(questionMediaRepository.findByQuestionIdIn(List.of(200L, 201L)))
+                .willReturn(List.of(media, serverMedia));
         given(audioProcessingJobRepository.findByQuestionMediaId(300L)).willReturn(Optional.of(job));
+        given(audioProcessingJobRepository.findByQuestionMediaQuestionMapIdAndStatusOrderByIdAsc(
+                100L,
+                AudioProcessingJobStatus.FAILED
+        )).willReturn(List.of(serverJob));
 
         mapService.modifyMap(1L, 100L, request);
 
@@ -1106,12 +1124,16 @@ class MapServiceTest {
         assertThat(media.getProcessingRequestedAt()).isAfterOrEqualTo(previousRequestedAt);
         assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
         assertThat(job.getAttemptCount()).isZero();
+        assertThat(serverJob.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
+        assertThat(serverJob.getAttemptCount()).isZero();
+        assertThat(serverMedia.getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.QUEUED);
+        assertThat(map.getStatus()).isEqualTo(MapStatus.PROCESSING);
     }
 
     @Test
     void retryAudioProcessingQueuesAllFinalServerFailuresAsOneRequest() {
         User creator = activeUser(1L);
-        QuizMap map = quizMap(100L, creator, category(10L), MapStatus.PUBLISHED);
+        QuizMap map = quizMap(100L, creator, category(10L), MapStatus.PROCESSING_FAILED);
         Question storageQuestion = question(200L, map);
         Question unknownQuestion = question(201L, map);
         QuestionMedia storageMedia = youtubeMedia(storageQuestion);

@@ -134,6 +134,7 @@ public class AudioProcessingJobService {
         }
 
         job.fail(failureCode, failureMessage);
+        job.getQuestionMedia().getQuestion().getMap().failProcessing();
     }
 
     private void publishMapIfAllMediaReady(QuestionMedia media) {
