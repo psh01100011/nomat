@@ -24,7 +24,7 @@ import org.springframework.util.StringUtils;
 @Slf4j
 public class RoomMessageService {
 
-    private static final int CORRECT_ANSWER_SCORE = 100;
+    private static final int CORRECT_ANSWER_SCORE = 1;
 
     private final RoomRedisRepository roomRedisRepository;
     private final RoomEventPublisher roomEventPublisher;

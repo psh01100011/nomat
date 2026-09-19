@@ -100,17 +100,17 @@ class RoomMessageServiceTest {
     void sendMessageRecordsGuestCorrectAnswerInPlayingRoom() {
         RoomState playingRoom = guestRoom().started("seed", now());
         RoomGameState gameState = gameState(-1L);
-        RoomGameState savedGameState = gameState.withCorrectAnswer(-1L, "정 답", 100);
+        RoomGameState savedGameState = gameState.withCorrectAnswer(-1L, "정 답", 1);
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(playingRoom));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
-        given(roomRedisRepository.tryRecordCorrectAnswer(25L, 0, "정답", -1L, "정 답", 100))
+        given(roomRedisRepository.tryRecordCorrectAnswer(25L, 0, "정답", -1L, "정 답", 1))
                 .willReturn(Optional.of(savedGameState));
 
         roomMessageService.sendMessage(-1L, 25L, new RoomChatMessageRequest("정 답"));
 
         assertThat(savedGameState.currentQuestionWinnerUserId()).isEqualTo(-1L);
         assertThat(savedGameState.currentQuestionWinnerAnswer()).isEqualTo("정 답");
-        assertThat(savedGameState.scores()).containsEntry(-1L, 100);
+        assertThat(savedGameState.scores()).containsEntry(-1L, 1);
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 4
@@ -120,7 +120,7 @@ class RoomMessageServiceTest {
                         && events.get(1).userType().equals("GUEST")
                         && events.get(2).type() == RoomDomainEventType.SCORE_UPDATED
                         && events.get(2).userType().equals("GUEST")
-                        && events.get(2).score() == 100
+                        && events.get(2).score() == 1
                         && events.get(3).type() == RoomDomainEventType.QUESTION_ENDED
         ));
         verify(roomGameProgressService).scheduleQuestionAdvance(25L, 0);
@@ -132,7 +132,7 @@ class RoomMessageServiceTest {
         RoomGameState gameState = gameState();
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(playingRoom));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
-        given(roomRedisRepository.tryRecordCorrectAnswer(25L, 0, "정답", 3L, "정답", 100))
+        given(roomRedisRepository.tryRecordCorrectAnswer(25L, 0, "정답", 3L, "정답", 1))
                 .willReturn(Optional.empty());
 
         roomMessageService.sendMessage(3L, 25L, new RoomChatMessageRequest("정답"));
