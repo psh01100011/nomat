@@ -36,5 +36,5 @@ public class EmailVerificationProperties {
     private int maxSendsPerEmailHour = 10;
 
     @Positive
-    private int maxSendsPerIpHour = 30;
+    private int maxSendsPerIpHour = 20;
 }
