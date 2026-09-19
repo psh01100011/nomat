@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -26,7 +27,7 @@ public class RoomRedisRepository {
     private static final String ROOM_GAME_KEY_PREFIX = "rooms:games:";
     private static final String ROOM_INVITE_KEY_PREFIX = "rooms:invites:";
     private static final String ROOM_INVITE_TOKEN_KEY_PREFIX = "rooms:invite-tokens:";
-    private static final String ROOM_GAME_CORRECT_ANSWER_LOCK_SUFFIX = ":correct-answer-lock:";
+    private static final String ROOM_GAME_QUESTION_RESOLUTION_LOCK_SUFFIX = ":question-resolution-lock:";
     private static final String USER_ROOM_KEY_PREFIX = "users:rooms:";
     private static final String ROOM_CREATED_AT_INDEX_KEY = "rooms:index:created-at";
     private static final String ROOM_MEMBER_COUNT_INDEX_KEY = "rooms:index:member-count";
@@ -197,7 +198,33 @@ public class RoomRedisRepository {
             String answer,
             int scoreToAdd
     ) {
-        String lockKey = correctAnswerLockKey(roomId, questionIndex);
+        return withQuestionResolutionLock(roomId, questionIndex, gameState -> {
+            if (!canRecordCorrectAnswer(gameState, questionIndex, answerKey)) {
+                return null;
+            }
+            return gameState.withCorrectAnswer(userId, answer, scoreToAdd);
+        });
+    }
+
+    public Optional<RoomGameState> tryEndQuestionForAudioLoadFailure(
+            Long roomId,
+            int questionIndex,
+            Long questionId
+    ) {
+        return withQuestionResolutionLock(roomId, questionIndex, gameState -> {
+            if (!canRecordAudioLoadFailure(gameState, questionIndex, questionId)) {
+                return null;
+            }
+            return gameState.withAudioLoadFailed(java.time.LocalDateTime.now());
+        });
+    }
+
+    private Optional<RoomGameState> withQuestionResolutionLock(
+            Long roomId,
+            int questionIndex,
+            Function<RoomGameState, RoomGameState> transition
+    ) {
+        String lockKey = questionResolutionLockKey(roomId, questionIndex);
         String lockValue = UUID.randomUUID().toString();
         Boolean locked = redisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, CORRECT_ANSWER_LOCK_TTL);
         if (!Boolean.TRUE.equals(locked)) {
@@ -206,11 +233,10 @@ public class RoomRedisRepository {
 
         try {
             RoomGameState gameState = findGameState(roomId).orElse(null);
-            if (!canRecordCorrectAnswer(gameState, questionIndex, answerKey)) {
+            RoomGameState nextGameState = transition.apply(gameState);
+            if (nextGameState == null) {
                 return Optional.empty();
             }
-
-            RoomGameState nextGameState = gameState.withCorrectAnswer(userId, answer, scoreToAdd);
             saveGameState(nextGameState);
             return Optional.of(nextGameState);
         } finally {
@@ -238,6 +264,16 @@ public class RoomRedisRepository {
                 && !gameState.hasCurrentQuestionWinner()
                 && !gameState.hasCurrentQuestionEnded()
                 && gameState.currentQuestion().answerKeys().contains(answerKey);
+    }
+
+    private boolean canRecordAudioLoadFailure(RoomGameState gameState, int questionIndex, Long questionId) {
+        return gameState != null
+                && gameState.hasCurrentQuestion()
+                && gameState.currentQuestionIndex() == questionIndex
+                && !gameState.hasCurrentQuestionWinner()
+                && !gameState.hasCurrentQuestionEnded()
+                && gameState.currentQuestion().questionId().equals(questionId)
+                && gameState.currentQuestion().mediaUrl() != null;
     }
 
     private void releaseLock(String lockKey, String lockValue) {
@@ -301,8 +337,8 @@ public class RoomRedisRepository {
         return ROOM_INVITE_TOKEN_KEY_PREFIX + inviteToken;
     }
 
-    private String correctAnswerLockKey(Long roomId, int questionIndex) {
-        return roomGameKey(roomId) + ROOM_GAME_CORRECT_ANSWER_LOCK_SUFFIX + questionIndex;
+    private String questionResolutionLockKey(Long roomId, int questionIndex) {
+        return roomGameKey(roomId) + ROOM_GAME_QUESTION_RESOLUTION_LOCK_SUFFIX + questionIndex;
     }
 
     private String userRoomKey(Long userId) {

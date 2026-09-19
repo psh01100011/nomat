@@ -273,6 +273,43 @@ public record RoomGameState(
         );
     }
 
+    public RoomGameState withAudioLoadFailed(LocalDateTime endedAt) {
+        RoomGameQuestion question = currentQuestion();
+        Map<Integer, RoomGameQuestionOutcome> nextOutcomes = new java.util.HashMap<>(questionOutcomes);
+        if (question != null) {
+            nextOutcomes.put(question.questionNumber(), new RoomGameQuestionOutcome(
+                    question.questionId(),
+                    question.questionNumber(),
+                    null,
+                    null,
+                    0,
+                    null,
+                    "AUDIO_LOAD_FAILED",
+                    currentQuestionStartedAt,
+                    endedAt
+            ));
+        }
+
+        return new RoomGameState(
+                roomId,
+                randomSeed,
+                questions,
+                currentQuestionIndex,
+                currentQuestionStartedAt,
+                currentQuestionDurationSeconds,
+                currentQuestionEndsAt,
+                endedAt,
+                hintRevealed,
+                null,
+                null,
+                currentQuestionSkipVoterUserIds,
+                scores,
+                nextOutcomes,
+                startedAt,
+                this.endedAt
+        );
+    }
+
     private Integer answeredMs(LocalDateTime endedAt) {
         if (currentQuestionStartedAt == null || endedAt == null) {
             return null;

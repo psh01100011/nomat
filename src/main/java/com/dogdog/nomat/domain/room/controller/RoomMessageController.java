@@ -1,5 +1,6 @@
 package com.dogdog.nomat.domain.room.controller;
 
+import com.dogdog.nomat.domain.room.dto.RoomAudioLoadFailureRequest;
 import com.dogdog.nomat.domain.room.dto.RoomChatMessageRequest;
 import com.dogdog.nomat.domain.room.dto.RoomSkipVoteRequest;
 import com.dogdog.nomat.domain.room.service.RoomGameProgressService;
@@ -35,6 +36,15 @@ public class RoomMessageController {
             @Valid RoomSkipVoteRequest request
     ) {
         roomGameProgressService.voteToSkip(userId(principal), roomId, request);
+    }
+
+    @MessageMapping("/rooms/{roomId}/audio-load-failures")
+    public void reportAudioLoadFailure(
+            Principal principal,
+            @DestinationVariable Long roomId,
+            @Valid RoomAudioLoadFailureRequest request
+    ) {
+        roomGameProgressService.reportAudioLoadFailure(userId(principal), roomId, request);
     }
 
     private Long userId(Principal principal) {

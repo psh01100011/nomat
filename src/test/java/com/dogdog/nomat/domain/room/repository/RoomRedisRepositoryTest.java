@@ -49,7 +49,7 @@ class RoomRedisRepositoryTest {
         RoomGameState gameState = gameState();
         given(redisTemplate.opsForValue()).willReturn(valueOperations);
         given(valueOperations.setIfAbsent(
-                eq("rooms:games:25:correct-answer-lock:0"),
+                eq("rooms:games:25:question-resolution-lock:0"),
                 anyString(),
                 eq(Duration.ofSeconds(3))
         )).willReturn(true);
@@ -73,7 +73,7 @@ class RoomRedisRepositoryTest {
         verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(30));
         verify(redisTemplate).execute(
                 ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of("rooms:games:25:correct-answer-lock:0")),
+                eq(List.of("rooms:games:25:question-resolution-lock:0")),
                 anyString()
         );
     }
@@ -110,7 +110,7 @@ class RoomRedisRepositoryTest {
     void tryRecordCorrectAnswerReturnsEmptyWhenLockIsAlreadyHeld() {
         given(redisTemplate.opsForValue()).willReturn(valueOperations);
         given(valueOperations.setIfAbsent(
-                eq("rooms:games:25:correct-answer-lock:0"),
+                eq("rooms:games:25:question-resolution-lock:0"),
                 anyString(),
                 eq(Duration.ofSeconds(3))
         )).willReturn(false);
@@ -138,7 +138,7 @@ class RoomRedisRepositoryTest {
         RoomGameState gameState = gameState().withCorrectAnswer(4L, "정답", 100);
         given(redisTemplate.opsForValue()).willReturn(valueOperations);
         given(valueOperations.setIfAbsent(
-                eq("rooms:games:25:correct-answer-lock:0"),
+                eq("rooms:games:25:question-resolution-lock:0"),
                 anyString(),
                 eq(Duration.ofSeconds(3))
         )).willReturn(true);
@@ -162,8 +162,51 @@ class RoomRedisRepositoryTest {
         );
         verify(redisTemplate).execute(
                 ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of("rooms:games:25:correct-answer-lock:0")),
+                eq(List.of("rooms:games:25:question-resolution-lock:0")),
                 anyString()
+        );
+    }
+
+    @Test
+    void tryEndQuestionForAudioLoadFailureSavesFailureWhenLockIsAcquired() throws Exception {
+        RoomGameState gameState = audioGameState();
+        given(redisTemplate.opsForValue()).willReturn(valueOperations);
+        given(valueOperations.setIfAbsent(
+                eq("rooms:games:25:question-resolution-lock:0"),
+                anyString(),
+                eq(Duration.ofSeconds(3))
+        )).willReturn(true);
+        given(valueOperations.get("rooms:games:25")).willReturn("game-state");
+        given(objectMapper.readValue("game-state", RoomGameState.class)).willReturn(gameState);
+        given(objectMapper.writeValueAsString(ArgumentMatchers.any(RoomGameState.class))).willReturn("saved-game-state");
+
+        Optional<RoomGameState> result = roomRedisRepository.tryEndQuestionForAudioLoadFailure(25L, 0, 1L);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().hasCurrentQuestionEnded()).isTrue();
+        assertThat(result.get().questionOutcomes().get(1).endedReason()).isEqualTo("AUDIO_LOAD_FAILED");
+        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(30));
+    }
+
+    @Test
+    void tryEndQuestionForAudioLoadFailureDoesNotOverwriteEndedQuestion() throws Exception {
+        RoomGameState gameState = audioGameState().withAudioLoadFailed(now());
+        given(redisTemplate.opsForValue()).willReturn(valueOperations);
+        given(valueOperations.setIfAbsent(
+                eq("rooms:games:25:question-resolution-lock:0"),
+                anyString(),
+                eq(Duration.ofSeconds(3))
+        )).willReturn(true);
+        given(valueOperations.get("rooms:games:25")).willReturn("game-state");
+        given(objectMapper.readValue("game-state", RoomGameState.class)).willReturn(gameState);
+
+        Optional<RoomGameState> result = roomRedisRepository.tryEndQuestionForAudioLoadFailure(25L, 0, 1L);
+
+        assertThat(result).isEmpty();
+        verify(valueOperations, never()).set(
+                eq("rooms:games:25"),
+                anyString(),
+                ArgumentMatchers.any(Duration.class)
         );
     }
 
@@ -172,6 +215,27 @@ class RoomRedisRepositoryTest {
                 25L,
                 "seed",
                 List.of(question()),
+                0,
+                now(),
+                30,
+                now().plusSeconds(30),
+                null,
+                false,
+                null,
+                null,
+                Set.of(),
+                Map.of(3L, 0, 4L, 0),
+                Map.of(),
+                now(),
+                null
+        );
+    }
+
+    private RoomGameState audioGameState() {
+        return new RoomGameState(
+                25L,
+                "seed",
+                List.of(audioQuestion()),
                 0,
                 now(),
                 30,
@@ -200,6 +264,21 @@ class RoomRedisRepositoryTest {
                 null,
                 null,
                 null
+        );
+    }
+
+    private RoomGameQuestion audioQuestion() {
+        return new RoomGameQuestion(
+                1L,
+                1,
+                "문제",
+                List.of("정답"),
+                "정답",
+                "https://example.com/audio.mp3",
+                "YOUTUBE",
+                null,
+                null,
+                30_000
         );
     }
 

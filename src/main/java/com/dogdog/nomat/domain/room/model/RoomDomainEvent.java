@@ -238,6 +238,22 @@ public record RoomDomainEvent(
                 .build();
     }
 
+    public static RoomDomainEvent questionAudioLoadFailed(
+            Long roomId,
+            Long questionId,
+            Integer questionNumber,
+            LocalDateTime occurredAt
+    ) {
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.QUESTION_AUDIO_LOAD_FAILED)
+                .roomId(roomId)
+                .questionId(questionId)
+                .questionNumber(questionNumber)
+                .content("오디오 파일을 불러올 수 없어 해당 문제를 건너뜁니다.")
+                .occurredAt(occurredAt)
+                .build();
+    }
+
     public static RoomDomainEvent gameEnded(
             RoomState room,
             RoomEndedReason reason,

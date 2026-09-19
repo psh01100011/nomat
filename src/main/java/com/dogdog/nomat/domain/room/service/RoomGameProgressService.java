@@ -1,5 +1,6 @@
 package com.dogdog.nomat.domain.room.service;
 
+import com.dogdog.nomat.domain.room.dto.RoomAudioLoadFailureRequest;
 import com.dogdog.nomat.domain.room.dto.RoomSkipVoteRequest;
 import com.dogdog.nomat.domain.room.model.RoomAnswerHint;
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
@@ -124,6 +125,48 @@ public class RoomGameProgressService {
             roomRedisRepository.saveGameState(votedGameState);
         }
         roomEventPublisher.publish(List.of(skipVoteUpdated));
+    }
+
+    public void reportAudioLoadFailure(Long userId, Long roomId, RoomAudioLoadFailureRequest request) {
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        room.findMember(userId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access"));
+        if (room.status() != RoomStatus.PLAYING || !"AUDIO".equals(room.questionType())) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "cannot_report_audio_load_failure");
+        }
+
+        RoomGameState gameState = roomRedisRepository.findGameState(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        RoomGameQuestion question = gameState.currentQuestion();
+        if (question == null
+                || !question.questionId().equals(request.questionId())
+                || question.questionNumber() != request.questionNumber()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "stale_question");
+        }
+
+        RoomGameState failedGameState = roomRedisRepository.tryEndQuestionForAudioLoadFailure(
+                        roomId,
+                        gameState.currentQuestionIndex(),
+                        question.questionId()
+                )
+                .orElse(null);
+        if (failedGameState == null) {
+            return;
+        }
+
+        LocalDateTime now = failedGameState.currentQuestionEndedAt();
+        roomEventPublisher.publish(List.of(RoomDomainEvent.questionAudioLoadFailed(
+                roomId,
+                question.questionId(),
+                question.questionNumber(),
+                now
+        )));
+        scheduleQuestionAdvance(roomId, failedGameState.currentQuestionIndex());
+        log.warn(
+                "event=room_question_audio_load_failed roomId={} questionId={} questionNumber={} reportedByUserId={}",
+                roomId, question.questionId(), question.questionNumber(), userId
+        );
     }
 
     public void revealHint(Long roomId, int questionIndex) {

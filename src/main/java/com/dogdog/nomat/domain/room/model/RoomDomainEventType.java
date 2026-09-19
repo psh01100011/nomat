@@ -14,6 +14,7 @@ public enum RoomDomainEventType {
     CORRECT_ANSWER,
     SCORE_UPDATED,
     SKIP_VOTE_UPDATED,
+    QUESTION_AUDIO_LOAD_FAILED,
     QUESTION_ENDED,
     GAME_ENDED
 }

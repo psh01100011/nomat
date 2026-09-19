@@ -5,9 +5,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
+import com.dogdog.nomat.domain.room.dto.RoomAudioLoadFailureRequest;
 import com.dogdog.nomat.domain.room.dto.RoomSkipVoteRequest;
 import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
 import com.dogdog.nomat.domain.room.model.RoomEndedReason;
@@ -238,6 +240,45 @@ class RoomGameProgressServiceTest {
     }
 
     @Test
+    void reportAudioLoadFailureEndsOnlyCurrentQuestionWithoutRevealingAnswer() {
+        RoomState room = room();
+        RoomGameState gameState = gameState(audioQuestion(30_000)).withStartedQuestion(0, now(), 30);
+        RoomGameState failedGameState = gameState.withAudioLoadFailed(now().plusSeconds(1));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        given(roomRedisRepository.tryEndQuestionForAudioLoadFailure(25L, 0, 1L))
+                .willReturn(Optional.of(failedGameState));
+
+        roomGameProgressService.reportAudioLoadFailure(3L, 25L, audioLoadFailureRequest(1L, 1));
+
+        assertThat(failedGameState.questionOutcomes().get(1).endedReason()).isEqualTo("AUDIO_LOAD_FAILED");
+        assertThat(failedGameState.questionOutcomes().get(1).winnerAnswer()).isNull();
+        verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
+                events.size() == 1
+                        && events.getFirst().type() == RoomDomainEventType.QUESTION_AUDIO_LOAD_FAILED
+                        && events.getFirst().questionId().equals(1L)
+                        && events.getFirst().questionNumber() == 1
+                        && events.getFirst().content().contains("오디오 파일")
+        ));
+        verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
+    }
+
+    @Test
+    void reportAudioLoadFailureDoesNothingWhenQuestionWasAlreadyEnded() {
+        RoomState room = room();
+        RoomGameState gameState = gameState(audioQuestion(30_000)).withStartedQuestion(0, now(), 30);
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        given(roomRedisRepository.tryEndQuestionForAudioLoadFailure(25L, 0, 1L))
+                .willReturn(Optional.empty());
+
+        roomGameProgressService.reportAudioLoadFailure(3L, 25L, audioLoadFailureRequest(1L, 1));
+
+        verify(roomEventPublisher, never()).publish(any());
+        verify(taskScheduler, never()).schedule(any(Runnable.class), any(Instant.class));
+    }
+
+    @Test
     void continueAfterQuestionEndedStartsNextQuestion() {
         RoomState room = room();
         RoomGameState endedGameState = twoQuestionGameState()
@@ -286,6 +327,7 @@ class RoomGameProgressServiceTest {
                 "방",
                 15L,
                 "맵",
+                "AUDIO",
                 null,
                 7L,
                 "음악",
@@ -374,6 +416,10 @@ class RoomGameProgressServiceTest {
 
     private RoomSkipVoteRequest skipVoteRequest(Long questionId, Integer questionNumber) {
         return new RoomSkipVoteRequest(questionId, questionNumber);
+    }
+
+    private RoomAudioLoadFailureRequest audioLoadFailureRequest(Long questionId, Integer questionNumber) {
+        return new RoomAudioLoadFailureRequest(questionId, questionNumber);
     }
 
     private LocalDateTime now() {
