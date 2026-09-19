@@ -9,6 +9,7 @@ import com.dogdog.nomat.domain.map.entity.QuestionMedia;
 import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
+import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import com.dogdog.nomat.domain.user.entity.User;
 import java.time.LocalDateTime;
 import java.time.Duration;
@@ -27,6 +28,7 @@ public class AudioProcessingJobService {
     private final AudioProcessingJobRepository audioProcessingJobRepository;
     private final QuestionMediaRepository questionMediaRepository;
     private final AssetRepository assetRepository;
+    private final AudioProcessingMetrics processingMetrics;
 
     @Transactional(readOnly = true)
     public List<Long> getProcessableJobIds(int batchSize) {
@@ -51,6 +53,7 @@ public class AudioProcessingJobService {
                 );
         jobs.forEach(job -> {
             retryOrFail(job, maxRetryAttempts);
+            processingMetrics.recordStaleRecovery(job.getStatus());
             log.warn(
                     "event=audio_job_stale_recovered jobId={} mapId={} status={} attempt={} failureCode={}",
                     job.getId(),

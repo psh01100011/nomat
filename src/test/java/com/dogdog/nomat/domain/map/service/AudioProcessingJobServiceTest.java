@@ -23,6 +23,7 @@ import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
+import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import com.dogdog.nomat.domain.user.entity.User;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -46,6 +47,9 @@ class AudioProcessingJobServiceTest {
 
     @Mock
     private AssetRepository assetRepository;
+
+    @Mock
+    private AudioProcessingMetrics processingMetrics;
 
     @InjectMocks
     private AudioProcessingJobService audioProcessingJobService;

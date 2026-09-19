@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import com.dogdog.nomat.domain.asset.config.AssetS3Properties;
 import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
+import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import java.nio.file.Files;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,6 +37,9 @@ class AudioProcessingServiceTest {
     @Mock
     private S3Client s3Client;
 
+    @Mock
+    private AudioProcessingMetrics processingMetrics;
+
     private AssetS3Properties s3Properties;
     private AudioProcessingProperties processingProperties;
     private AudioProcessingService audioProcessingService;
@@ -59,7 +63,8 @@ class AudioProcessingServiceTest {
                 audioExtractionCommandRunner,
                 s3Client,
                 s3Properties,
-                processingProperties
+                processingProperties,
+                processingMetrics
         );
     }
 

@@ -31,6 +31,7 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.util.matcher.RegexRequestMatcher;
@@ -48,6 +49,7 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             BearerTokenResolver bearerTokenResolver,
+            AdminApiKeyAuthenticationFilter adminApiKeyAuthenticationFilter,
             @Qualifier("jwtDecoder") JwtDecoder jwtDecoder
     ) throws Exception {
         return http
@@ -80,6 +82,8 @@ public class SecurityConfig {
                         .requestMatchers("/ws").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
+                        .requestMatchers("/actuator/prometheus").hasRole("ADMIN")
+                        .requestMatchers("/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )
                 .oauth2ResourceServer(oauth2 -> oauth2
@@ -97,6 +101,7 @@ public class SecurityConfig {
                     response.setCharacterEncoding(StandardCharsets.UTF_8.name());
                     response.getWriter().write("{\"message\":\"invalid_token\",\"data\":null}");
                 }))
+                .addFilterAfter(adminApiKeyAuthenticationFilter, BearerTokenAuthenticationFilter.class)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .build();

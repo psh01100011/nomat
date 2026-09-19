@@ -15,6 +15,12 @@ public interface QuestionMediaRepository extends JpaRepository<QuestionMedia, Lo
             QuestionMediaProcessingStatus processingStatus
     );
 
+    boolean existsByQuestionMapIdAndProcessingStatusAndIdNot(
+            Long mapId,
+            QuestionMediaProcessingStatus processingStatus,
+            Long id
+    );
+
     @EntityGraph(attributePaths = {"asset"})
     List<QuestionMedia> findByQuestionIdIn(Collection<Long> questionIds);
 

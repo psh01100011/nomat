@@ -5,6 +5,7 @@ import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureType;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
+import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,6 +33,7 @@ public class AudioProcessingService {
     private final S3Client s3Client;
     private final AssetS3Properties s3Properties;
     private final AudioProcessingProperties processingProperties;
+    private final AudioProcessingMetrics processingMetrics;
 
     public int processAvailableJobs() {
         audioProcessingJobService.recoverStaleProcessingJobs(
@@ -54,6 +56,7 @@ public class AudioProcessingService {
         if (task == null) {
             return;
         }
+        processingMetrics.recordClaim(task.queueWaitMs());
         long processingStartedAt = System.nanoTime();
 
         Path workingDirectory = null;
@@ -83,6 +86,11 @@ public class AudioProcessingService {
                         Files.size(outputFile),
                         task.durationMs()
                 );
+                processingMetrics.recordAttempt(
+                        AudioProcessingJobStatus.SUCCEEDED,
+                        null,
+                        elapsedMillis(processingStartedAt)
+                );
             } catch (RuntimeException exception) {
                 deleteFromS3Quietly(storageKey);
                 throw exception;
@@ -94,6 +102,7 @@ public class AudioProcessingService {
                     exception.getMessage(),
                     processingProperties.getMaxRetryAttempts()
             );
+            processingMetrics.recordAttempt(status, exception.getFailureCode(), elapsedMillis(processingStartedAt));
             logProcessingFailure(task, exception.getFailureCode(), status, exception, processingStartedAt);
         } catch (Exception exception) {
             AudioProcessingJobStatus status = audioProcessingJobService.handleJobFailure(
@@ -101,6 +110,11 @@ public class AudioProcessingService {
                     AudioProcessingFailureCode.UNKNOWN,
                     exception.getMessage(),
                     processingProperties.getMaxRetryAttempts()
+            );
+            processingMetrics.recordAttempt(
+                    status,
+                    AudioProcessingFailureCode.UNKNOWN,
+                    elapsedMillis(processingStartedAt)
             );
             logProcessingFailure(task, AudioProcessingFailureCode.UNKNOWN, status, exception, processingStartedAt);
         } finally {
@@ -115,7 +129,7 @@ public class AudioProcessingService {
             Exception exception,
             long processingStartedAt
     ) {
-        long durationMs = (System.nanoTime() - processingStartedAt) / 1_000_000;
+        long durationMs = elapsedMillis(processingStartedAt);
         String message = "event=audio_job_attempt_failed jobId={} mapId={} questionId={} mediaId={} attempt={} queueWaitMs={} durationMs={} status={} failureCode={} errorType={}";
         if (status == AudioProcessingJobStatus.RETRYING) {
             log.warn(
@@ -139,6 +153,10 @@ public class AudioProcessingService {
                     exception.getClass().getSimpleName()
             );
         }
+    }
+
+    private long elapsedMillis(long startedAt) {
+        return (System.nanoTime() - startedAt) / 1_000_000;
     }
 
     private void validateS3Configuration() throws AudioProcessingException {
