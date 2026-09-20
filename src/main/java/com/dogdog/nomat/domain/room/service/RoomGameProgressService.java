@@ -51,13 +51,13 @@ public class RoomGameProgressService {
     }
 
     public void scheduleQuestionAdvance(Long roomId, int questionIndex) {
-        roomGameTimerRepository.removeQuestionTimers(roomId, questionIndex);
         scheduleTimer(new RoomGameTimer(
                 roomId,
                 questionIndex,
                 RoomGameTimerType.NEXT_QUESTION,
                 Instant.now().plus(Duration.ofSeconds(NEXT_QUESTION_DELAY_SECONDS))
         ));
+        roomGameTimerRepository.removeQuestionTimers(roomId, questionIndex);
     }
 
     public void continueAfterQuestionEnded(Long roomId, int questionIndex) {

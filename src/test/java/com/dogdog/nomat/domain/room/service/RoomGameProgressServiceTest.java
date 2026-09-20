@@ -3,6 +3,7 @@ package com.dogdog.nomat.domain.room.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
@@ -30,6 +31,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -169,12 +171,13 @@ class RoomGameProgressServiceTest {
                         && events.getFirst().type() == RoomDomainEventType.QUESTION_ENDED
                         && events.getFirst().questionNumber() == 1
         ));
-        verify(roomGameTimerRepository).removeQuestionTimers(25L, 0);
-        verify(roomGameTimerRepository).schedule(org.mockito.ArgumentMatchers.argThat(timer ->
+        InOrder timerOrder = inOrder(roomGameTimerRepository);
+        timerOrder.verify(roomGameTimerRepository).schedule(org.mockito.ArgumentMatchers.argThat(timer ->
                 timer.roomId().equals(25L)
                         && timer.questionIndex() == 0
                         && timer.type() == RoomGameTimerType.NEXT_QUESTION
         ));
+        timerOrder.verify(roomGameTimerRepository).removeQuestionTimers(25L, 0);
     }
 
     @Test

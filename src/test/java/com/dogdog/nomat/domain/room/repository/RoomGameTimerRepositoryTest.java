@@ -7,6 +7,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.room.config.RoomLifecycleProperties;
+import com.dogdog.nomat.domain.room.model.ClaimedRoomGameTimer;
 import com.dogdog.nomat.domain.room.model.RoomGameTimer;
 import com.dogdog.nomat.domain.room.model.RoomGameTimerType;
 import java.time.Duration;
@@ -54,7 +55,7 @@ class RoomGameTimerRepositoryTest {
 
         verify(redisTemplate).execute(
                 ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of("rooms:game-timers:due-at", "rooms:game-timers:room:25")),
+                eq(timerKeys(25L)),
                 eq("1000"),
                 eq("25:0:QUESTION_TIMEOUT"),
                 eq("900000")
@@ -67,7 +68,7 @@ class RoomGameTimerRepositoryTest {
 
         verify(redisTemplate, times(2)).execute(
                 ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of("rooms:game-timers:due-at", "rooms:game-timers:room:25")),
+                eq(timerKeys(25L)),
                 ArgumentMatchers.anyString()
         );
     }
@@ -85,30 +86,77 @@ class RoomGameTimerRepositoryTest {
 
         verify(redisTemplate).execute(
                 ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of("rooms:game-timers:due-at", "rooms:game-timers:room:25")),
+                eq(timerKeys(25L)),
                 eq("25:3:HINT"),
                 eq("2000")
         );
     }
 
     @Test
-    void claimDueReturnsTimersRemovedByTheAtomicScript() {
+    void claimDueReturnsTimersWithTheSameLeaseOwner() {
         given(redisTemplate.execute(
                 ArgumentMatchers.<RedisScript<List>>any(),
-                eq(List.of("rooms:game-timers:due-at")),
+                eq(List.of(
+                        "rooms:game-timers:due-at",
+                        "rooms:game-timers:lease-until",
+                        "rooms:game-timers:lease-owner",
+                        "rooms:game-timers:lease-due-at"
+                )),
                 eq("3000"),
+                eq("8000"),
                 eq("100"),
-                eq("rooms:game-timers:room:")
+                ArgumentMatchers.anyString()
         )).willReturn(List.of(
                 "25:3:HINT", "1000",
                 "26:4:QUESTION_TIMEOUT", "2000"
         ));
 
-        List<RoomGameTimer> timers = repository.claimDue(Instant.ofEpochMilli(3_000L), 100);
+        List<ClaimedRoomGameTimer> timers = repository.claimDue(
+                Instant.ofEpochMilli(3_000L),
+                Duration.ofSeconds(5),
+                100
+        );
 
-        assertThat(timers).containsExactly(
+        assertThat(timers)
+                .extracting(ClaimedRoomGameTimer::timer)
+                .containsExactly(
                 new RoomGameTimer(25L, 3, RoomGameTimerType.HINT, Instant.ofEpochMilli(1_000L)),
                 new RoomGameTimer(26L, 4, RoomGameTimerType.QUESTION_TIMEOUT, Instant.ofEpochMilli(2_000L))
+        );
+        assertThat(timers)
+                .extracting(ClaimedRoomGameTimer::ownerToken)
+                .allSatisfy(ownerToken -> assertThat(ownerToken).isNotBlank())
+                .containsOnly(timers.getFirst().ownerToken());
+    }
+
+    @Test
+    void completeRemovesOnlyTheLeaseOwnedByTheClaim() {
+        RoomGameTimer timer = new RoomGameTimer(
+                25L, 3, RoomGameTimerType.HINT, Instant.ofEpochMilli(1_000L)
+        );
+        ClaimedRoomGameTimer claimedTimer = new ClaimedRoomGameTimer(timer, "owner-token");
+        given(redisTemplate.execute(
+                ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of(
+                        "rooms:game-timers:lease-until",
+                        "rooms:game-timers:lease-owner",
+                        "rooms:game-timers:lease-due-at",
+                        "rooms:game-timers:room:25"
+                )),
+                eq("25:3:HINT"),
+                eq("owner-token")
+        )).willReturn(1L);
+
+        assertThat(repository.complete(claimedTimer)).isTrue();
+    }
+
+    private List<String> timerKeys(Long roomId) {
+        return List.of(
+                "rooms:game-timers:due-at",
+                "rooms:game-timers:lease-until",
+                "rooms:game-timers:lease-owner",
+                "rooms:game-timers:lease-due-at",
+                "rooms:game-timers:room:" + roomId
         );
     }
 }
