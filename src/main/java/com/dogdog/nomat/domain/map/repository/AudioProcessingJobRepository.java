@@ -32,10 +32,18 @@ public interface AudioProcessingJobRepository extends
             """, nativeQuery = true)
     List<AudioProcessingJob> findProcessableForUpdateSkipLocked(@Param("batchSize") int batchSize);
 
-    List<AudioProcessingJob> findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
-            AudioProcessingJobStatus status,
-            LocalDateTime startedAt,
-            Pageable pageable
+    @Query(value = """
+            SELECT job.*
+            FROM audio_processing_jobs job
+            WHERE job.status = 'PROCESSING'
+              AND job.started_at < :startedBefore
+            ORDER BY job.started_at ASC, job.id ASC
+            LIMIT :batchSize
+            FOR UPDATE SKIP LOCKED
+            """, nativeQuery = true)
+    List<AudioProcessingJob> findStaleForUpdateSkipLocked(
+            @Param("startedBefore") LocalDateTime startedBefore,
+            @Param("batchSize") int batchSize
     );
 
     Optional<AudioProcessingJob> findByQuestionMediaId(Long questionMediaId);

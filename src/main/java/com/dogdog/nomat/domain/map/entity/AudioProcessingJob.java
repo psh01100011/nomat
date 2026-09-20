@@ -24,7 +24,11 @@ import lombok.NoArgsConstructor;
 @Table(
         name = "audio_processing_jobs",
         indexes = {
-                @Index(name = "idx_audio_processing_jobs_status_created_at", columnList = "status, created_at")
+                @Index(name = "idx_audio_processing_jobs_status_created_at", columnList = "status, created_at"),
+                @Index(
+                        name = "idx_audio_processing_jobs_status_started_at_id",
+                        columnList = "status, started_at, id"
+                )
         }
 )
 @NoArgsConstructor(access = AccessLevel.PROTECTED)

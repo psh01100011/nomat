@@ -17,16 +17,20 @@ import com.dogdog.nomat.domain.map.service.AudioProcessingJobService;
 import com.dogdog.nomat.domain.map.service.AudioProcessingTask;
 import com.dogdog.nomat.domain.user.entity.User;
 import jakarta.persistence.EntityManager;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -54,6 +58,11 @@ class AudioProcessingJobClaimIntegrationTest {
 
     @Autowired
     private EntityManager entityManager;
+
+    @AfterEach
+    void deleteJobs() {
+        audioProcessingJobRepository.deleteAll();
+    }
 
     @Test
     void concurrentWorkersClaimDifferentJobsWithoutWaitingForEachOther() throws Exception {
@@ -96,10 +105,50 @@ class AudioProcessingJobClaimIntegrationTest {
                 });
     }
 
+    @Test
+    void concurrentServersRecoverDifferentStaleJobsWithoutWaitingForEachOther() throws Exception {
+        List<Long> jobIds = saveStaleJobs();
+        CountDownLatch firstRecovered = new CountDownLatch(1);
+        CountDownLatch releaseFirstTransaction = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        TransactionTemplate recoveryTransaction = new TransactionTemplate(transactionManager);
+        recoveryTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+
+        try {
+            Future<Integer> first = executor.submit(() -> recoveryTransaction.execute(status -> {
+                int count = audioProcessingJobService.recoverStaleProcessingJobs(1, 10, 3);
+                firstRecovered.countDown();
+                await(releaseFirstTransaction);
+                return count;
+            }));
+            assertThat(firstRecovered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            Future<Integer> second = executor.submit(() ->
+                    audioProcessingJobService.recoverStaleProcessingJobs(1, 10, 3)
+            );
+            assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(1);
+
+            releaseFirstTransaction.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo(1);
+        } finally {
+            releaseFirstTransaction.countDown();
+            executor.shutdownNow();
+        }
+
+        List<AudioProcessingJob> recoveredJobs = audioProcessingJobRepository.findAllById(jobIds);
+        assertThat(recoveredJobs)
+                .allSatisfy(job -> {
+                    assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
+                    assertThat(job.getStartedAt()).isNull();
+                    assertThat(job.getAttemptCount()).isEqualTo(1);
+                });
+    }
+
     private List<Long> saveQueuedJobs() {
         return transactionTemplate.execute(status -> {
-            User creator = User.create("claim-test-user", "encoded-password", "claim-test-nickname");
-            Category category = Category.create("claim-test-category");
+            String suffix = UUID.randomUUID().toString().substring(0, 8);
+            User creator = User.create("claim-" + suffix, "encoded-password", "nick-" + suffix);
+            Category category = Category.create("category-" + suffix);
             entityManager.persist(creator);
             entityManager.persist(category);
 
@@ -119,6 +168,19 @@ class AudioProcessingJobClaimIntegrationTest {
             AudioProcessingJob second = saveQueuedJob(map, 2);
             entityManager.flush();
             return List.of(first.getId(), second.getId());
+        });
+    }
+
+    private List<Long> saveStaleJobs() {
+        return transactionTemplate.execute(status -> {
+            List<Long> jobIds = saveQueuedJobs();
+            LocalDateTime staleStartedAt = LocalDateTime.now().minusMinutes(20);
+            audioProcessingJobRepository.findAllById(jobIds).forEach(job -> {
+                job.start();
+                ReflectionTestUtils.setField(job, "startedAt", staleStartedAt);
+            });
+            entityManager.flush();
+            return jobIds;
         });
     }
 

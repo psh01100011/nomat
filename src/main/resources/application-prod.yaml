@@ -9,3 +9,7 @@ logging:
     com.dogdog.nomat: INFO
     org.hibernate: WARN
     org.springframework: WARN
+
+app:
+  audio-processing:
+    enabled: ${AUDIO_PROCESSING_ENABLED:true}

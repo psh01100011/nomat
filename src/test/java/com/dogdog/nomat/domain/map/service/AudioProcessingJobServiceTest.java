@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.map.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 
@@ -248,11 +249,8 @@ class AudioProcessingJobServiceTest {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
         ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
-        given(audioProcessingJobRepository.findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
-                any(),
-                any(),
-                any()
-        )).willReturn(List.of(job));
+        given(audioProcessingJobRepository.findStaleForUpdateSkipLocked(any(), anyInt()))
+                .willReturn(List.of(job));
 
         int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 10, 3);
 
@@ -270,11 +268,8 @@ class AudioProcessingJobServiceTest {
         job.scheduleRetry(AudioProcessingFailureCode.PROCESSING_TIMEOUT, "first failure");
         job.start();
         ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
-        given(audioProcessingJobRepository.findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
-                any(),
-                any(),
-                any()
-        )).willReturn(List.of(job));
+        given(audioProcessingJobRepository.findStaleForUpdateSkipLocked(any(), anyInt()))
+                .willReturn(List.of(job));
 
         int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 10, 2);
 

@@ -16,7 +16,6 @@ import java.time.Duration;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,15 +37,11 @@ public class AudioProcessingJobService {
                 .toList();
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public int recoverStaleProcessingJobs(int batchSize, long processingTimeoutMinutes, int maxRetryAttempts) {
         LocalDateTime threshold = LocalDateTime.now().minusMinutes(processingTimeoutMinutes);
         List<AudioProcessingJob> jobs = audioProcessingJobRepository
-                .findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
-                        AudioProcessingJobStatus.PROCESSING,
-                        threshold,
-                        PageRequest.of(0, batchSize)
-                );
+                .findStaleForUpdateSkipLocked(threshold, batchSize);
         jobs.forEach(job -> {
             retryOrFail(job, maxRetryAttempts);
             processingMetrics.recordStaleRecovery(job.getStatus());
