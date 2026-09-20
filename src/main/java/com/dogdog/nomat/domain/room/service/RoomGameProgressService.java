@@ -22,7 +22,6 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
-import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -35,7 +34,6 @@ public class RoomGameProgressService {
     private final RoomRedisRepository roomRedisRepository;
     private final RoomGameTimerRepository roomGameTimerRepository;
     private final RoomEventPublisher roomEventPublisher;
-    private final TaskScheduler taskScheduler;
     private final RoomGameResultService roomGameResultService;
 
     public void startFirstQuestion(RoomState room) {
@@ -54,15 +52,12 @@ public class RoomGameProgressService {
 
     public void scheduleQuestionAdvance(Long roomId, int questionIndex) {
         roomGameTimerRepository.removeQuestionTimers(roomId, questionIndex);
-        scheduleTimer(
-                new RoomGameTimer(
-                        roomId,
-                        questionIndex,
-                        RoomGameTimerType.NEXT_QUESTION,
-                        Instant.now().plus(Duration.ofSeconds(NEXT_QUESTION_DELAY_SECONDS))
-                ),
-                () -> continueAfterQuestionEnded(roomId, questionIndex)
-        );
+        scheduleTimer(new RoomGameTimer(
+                roomId,
+                questionIndex,
+                RoomGameTimerType.NEXT_QUESTION,
+                Instant.now().plus(Duration.ofSeconds(NEXT_QUESTION_DELAY_SECONDS))
+        ));
     }
 
     public void continueAfterQuestionEnded(Long roomId, int questionIndex) {
@@ -77,6 +72,14 @@ public class RoomGameProgressService {
         }
 
         startQuestion(room, questionIndex + 1);
+    }
+
+    public void executeTimer(RoomGameTimer timer) {
+        switch (timer.type()) {
+            case HINT -> revealHint(timer.roomId(), timer.questionIndex());
+            case QUESTION_TIMEOUT -> endQuestionByTimeout(timer.roomId(), timer.questionIndex());
+            case NEXT_QUESTION -> continueAfterQuestionEnded(timer.roomId(), timer.questionIndex());
+        }
     }
 
     public void voteToSkip(Long userId, Long roomId, RoomSkipVoteRequest request) {
@@ -258,38 +261,25 @@ public class RoomGameProgressService {
         }
 
         long delaySeconds = Math.max(0, durationSeconds - room.initialHintTriggerSeconds());
-        scheduleTimer(
-                new RoomGameTimer(
-                        room.roomId(),
-                        questionIndex,
-                        RoomGameTimerType.HINT,
-                        Instant.now().plus(Duration.ofSeconds(delaySeconds))
-                ),
-                () -> revealHint(room.roomId(), questionIndex)
-        );
+        scheduleTimer(new RoomGameTimer(
+                room.roomId(),
+                questionIndex,
+                RoomGameTimerType.HINT,
+                Instant.now().plus(Duration.ofSeconds(delaySeconds))
+        ));
     }
 
     private void scheduleQuestionTimeout(RoomState room, int questionIndex, int durationSeconds) {
-        scheduleTimer(
-                new RoomGameTimer(
-                        room.roomId(),
-                        questionIndex,
-                        RoomGameTimerType.QUESTION_TIMEOUT,
-                        Instant.now().plus(Duration.ofSeconds(durationSeconds))
-                ),
-                () -> endQuestionByTimeout(room.roomId(), questionIndex)
-        );
+        scheduleTimer(new RoomGameTimer(
+                room.roomId(),
+                questionIndex,
+                RoomGameTimerType.QUESTION_TIMEOUT,
+                Instant.now().plus(Duration.ofSeconds(durationSeconds))
+        ));
     }
 
-    private void scheduleTimer(RoomGameTimer timer, Runnable action) {
+    private void scheduleTimer(RoomGameTimer timer) {
         roomGameTimerRepository.schedule(timer);
-        taskScheduler.schedule(() -> {
-            try {
-                action.run();
-            } finally {
-                roomGameTimerRepository.remove(timer);
-            }
-        }, timer.dueAt());
     }
 
     private int actualDurationSeconds(RoomState room, RoomGameQuestion question) {

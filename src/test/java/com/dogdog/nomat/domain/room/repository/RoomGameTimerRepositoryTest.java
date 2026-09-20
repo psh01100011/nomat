@@ -1,6 +1,8 @@
 package com.dogdog.nomat.domain.room.repository;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -86,6 +88,27 @@ class RoomGameTimerRepositoryTest {
                 eq(List.of("rooms:game-timers:due-at", "rooms:game-timers:room:25")),
                 eq("25:3:HINT"),
                 eq("2000")
+        );
+    }
+
+    @Test
+    void claimDueReturnsTimersRemovedByTheAtomicScript() {
+        given(redisTemplate.execute(
+                ArgumentMatchers.<RedisScript<List>>any(),
+                eq(List.of("rooms:game-timers:due-at")),
+                eq("3000"),
+                eq("100"),
+                eq("rooms:game-timers:room:")
+        )).willReturn(List.of(
+                "25:3:HINT", "1000",
+                "26:4:QUESTION_TIMEOUT", "2000"
+        ));
+
+        List<RoomGameTimer> timers = repository.claimDue(Instant.ofEpochMilli(3_000L), 100);
+
+        assertThat(timers).containsExactly(
+                new RoomGameTimer(25L, 3, RoomGameTimerType.HINT, Instant.ofEpochMilli(1_000L)),
+                new RoomGameTimer(26L, 4, RoomGameTimerType.QUESTION_TIMEOUT, Instant.ofEpochMilli(2_000L))
         );
     }
 }

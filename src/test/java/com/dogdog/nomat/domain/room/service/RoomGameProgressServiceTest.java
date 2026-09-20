@@ -22,7 +22,6 @@ import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
 import com.dogdog.nomat.domain.room.repository.RoomGameTimerRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -33,7 +32,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.scheduling.TaskScheduler;
 
 @ExtendWith(MockitoExtension.class)
 class RoomGameProgressServiceTest {
@@ -46,9 +44,6 @@ class RoomGameProgressServiceTest {
 
     @Mock
     private RoomEventPublisher roomEventPublisher;
-
-    @Mock
-    private TaskScheduler taskScheduler;
 
     @Mock
     private RoomGameResultService roomGameResultService;
@@ -88,7 +83,6 @@ class RoomGameProgressServiceTest {
                         && events.getFirst().audioRepeatEnabled()
                         && events.getFirst().answerTimeLimitSeconds() == 30
         ));
-        verify(taskScheduler, times(2)).schedule(any(Runnable.class), any(Instant.class));
     }
 
     @Test
@@ -181,7 +175,6 @@ class RoomGameProgressServiceTest {
                         && timer.questionIndex() == 0
                         && timer.type() == RoomGameTimerType.NEXT_QUESTION
         ));
-        verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
     }
 
     @Test
@@ -240,7 +233,7 @@ class RoomGameProgressServiceTest {
                         && events.get(1).type() == RoomDomainEventType.QUESTION_ENDED
                         && events.get(1).questionNumber() == 1
         ));
-        verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
+        verify(roomGameTimerRepository).schedule(any(RoomGameTimer.class));
     }
 
     @Test
@@ -278,7 +271,7 @@ class RoomGameProgressServiceTest {
                         && events.getFirst().questionNumber() == 1
                         && events.getFirst().content().contains("오디오 파일")
         ));
-        verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
+        verify(roomGameTimerRepository).schedule(any(RoomGameTimer.class));
     }
 
     @Test
@@ -293,7 +286,7 @@ class RoomGameProgressServiceTest {
         roomGameProgressService.reportAudioLoadFailure(3L, 25L, audioLoadFailureRequest(1L, 1));
 
         verify(roomEventPublisher, never()).publish(any());
-        verify(taskScheduler, never()).schedule(any(Runnable.class), any(Instant.class));
+        verify(roomGameTimerRepository, never()).schedule(any(RoomGameTimer.class));
     }
 
     @Test
@@ -318,7 +311,7 @@ class RoomGameProgressServiceTest {
                         && events.getFirst().type() == RoomDomainEventType.QUESTION_STARTED
                         && events.getFirst().questionNumber() == 2
         ));
-        verify(taskScheduler, times(2)).schedule(any(Runnable.class), any(Instant.class));
+        verify(roomGameTimerRepository, times(2)).schedule(any(RoomGameTimer.class));
     }
 
     @Test

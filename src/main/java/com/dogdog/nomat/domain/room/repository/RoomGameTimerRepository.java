@@ -4,6 +4,7 @@ import com.dogdog.nomat.domain.room.config.RoomLifecycleProperties;
 import com.dogdog.nomat.domain.room.model.RoomGameTimer;
 import com.dogdog.nomat.domain.room.model.RoomGameTimerType;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -44,6 +45,21 @@ public class RoomGameTimerRepository {
             redis.call('DEL', KEYS[2])
             return #members
             """, Long.class);
+    private static final DefaultRedisScript<List> CLAIM_DUE_SCRIPT = new DefaultRedisScript<>("""
+            local timers = redis.call(
+                'ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1],
+                'WITHSCORES', 'LIMIT', 0, ARGV[2]
+            )
+            for index = 1, #timers, 2 do
+                local member = timers[index]
+                redis.call('ZREM', KEYS[1], member)
+                local roomId = string.match(member, '^([^:]+):')
+                if roomId then
+                    redis.call('SREM', ARGV[3] .. roomId, member)
+                end
+            end
+            return timers
+            """, List.class);
 
     private final StringRedisTemplate redisTemplate;
     private final RoomLifecycleProperties lifecycleProperties;
@@ -83,6 +99,28 @@ public class RoomGameTimerRepository {
         );
     }
 
+    public List<RoomGameTimer> claimDue(Instant now, int limit) {
+        List<?> claimedValues = redisTemplate.execute(
+                CLAIM_DUE_SCRIPT,
+                List.of(TIMER_INDEX_KEY),
+                String.valueOf(now.toEpochMilli()),
+                String.valueOf(limit),
+                ROOM_TIMER_KEY_PREFIX
+        );
+        if (claimedValues == null || claimedValues.isEmpty()) {
+            return List.of();
+        }
+
+        List<RoomGameTimer> timers = new ArrayList<>(claimedValues.size() / 2);
+        for (int index = 0; index < claimedValues.size(); index += 2) {
+            timers.add(parseTimer(
+                    claimedValues.get(index).toString(),
+                    claimedValues.get(index + 1).toString()
+            ));
+        }
+        return List.copyOf(timers);
+    }
+
     private String roomTimerKey(Long roomId) {
         return ROOM_TIMER_KEY_PREFIX + roomId;
     }
@@ -93,6 +131,19 @@ public class RoomGameTimerRepository {
                 REMOVE_SCRIPT,
                 List.of(TIMER_INDEX_KEY, roomTimerKey(roomId)),
                 timer.memberKey()
+        );
+    }
+
+    private RoomGameTimer parseTimer(String memberKey, String score) {
+        String[] parts = memberKey.split(":", 3);
+        if (parts.length != 3) {
+            throw new IllegalStateException("Invalid room game timer key: " + memberKey);
+        }
+        return new RoomGameTimer(
+                Long.valueOf(parts[0]),
+                Integer.parseInt(parts[1]),
+                RoomGameTimerType.valueOf(parts[2]),
+                Instant.ofEpochMilli((long) Double.parseDouble(score))
         );
     }
 }

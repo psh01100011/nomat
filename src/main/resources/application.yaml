@@ -44,6 +44,10 @@ app:
   room:
     lifecycle:
       inactivity-ttl-minutes: ${ROOM_INACTIVITY_TTL_MINUTES:15}
+    game-timer:
+      initial-delay-ms: ${ROOM_GAME_TIMER_INITIAL_DELAY_MS:1000}
+      fixed-delay-ms: ${ROOM_GAME_TIMER_FIXED_DELAY_MS:100}
+      batch-size: ${ROOM_GAME_TIMER_BATCH_SIZE:100}
     events:
       channel: ${ROOM_EVENT_CHANNEL:nomat:rooms:events}
     websocket:
