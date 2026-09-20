@@ -44,6 +44,10 @@ app:
   room:
     lifecycle:
       inactivity-ttl-minutes: ${ROOM_INACTIVITY_TTL_MINUTES:15}
+    events:
+      channel: ${ROOM_EVENT_CHANNEL:nomat:rooms:events}
+    websocket:
+      session-ttl-minutes: ${ROOM_WEBSOCKET_SESSION_TTL_MINUTES:10}
   email-verification:
     delivery-mode: ${EMAIL_DELIVERY_MODE:smtp}
     mail-from: ${MAIL_FROM:${GMAIL_USERNAME:no-reply@nomat.local}}

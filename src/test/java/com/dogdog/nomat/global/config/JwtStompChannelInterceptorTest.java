@@ -3,6 +3,7 @@ package com.dogdog.nomat.global.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
@@ -36,7 +37,8 @@ class JwtStompChannelInterceptorTest {
     @Mock
     private RoomRedisRepository roomRedisRepository;
 
-    private final RoomWebSocketSessionRegistry sessionRegistry = new RoomWebSocketSessionRegistry();
+    @Mock
+    private RoomWebSocketSessionRegistry sessionRegistry;
 
     @Test
     void connectAuthenticatesGuestTokenAndRegistersSession() {
@@ -45,7 +47,7 @@ class JwtStompChannelInterceptorTest {
 
         interceptor.preSend(connectMessage("session-guest", null), null);
 
-        assertThat(sessionRegistry.hasActiveSession(-1L)).isTrue();
+        verify(sessionRegistry).connect("session-guest", -1L);
     }
 
     @Test
@@ -55,7 +57,7 @@ class JwtStompChannelInterceptorTest {
 
         interceptor.preSend(connectMessage("session-3", () -> "authenticated-user"), null);
 
-        assertThat(sessionRegistry.hasActiveSession(3L)).isTrue();
+        verify(sessionRegistry).connect("session-3", 3L);
     }
 
     @Test
@@ -67,7 +69,6 @@ class JwtStompChannelInterceptorTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("websocket_session_unavailable");
 
-        assertThat(sessionRegistry.hasActiveSession(3L)).isFalse();
     }
 
     @Test
