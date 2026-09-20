@@ -118,7 +118,7 @@ public record RoomDomainEvent(
                 .durationSeconds(durationSeconds)
                 .startedAt(occurredAt)
                 .endsAt(endsAt)
-                .audioRepeatEnabled(true)
+                .audioRepeatEnabled(room.audioRepeatEnabled())
                 .answerTimeLimitSeconds(room.answerTimeLimitSeconds())
                 .initialHintEnabled(room.initialHintEnabled())
                 .initialHintTriggerSeconds(room.initialHintTriggerSeconds())
