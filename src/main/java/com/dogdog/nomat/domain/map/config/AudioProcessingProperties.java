@@ -20,6 +20,9 @@ public class AudioProcessingProperties {
     private int batchSize = 5;
 
     @Positive
+    private int workerConcurrency = 2;
+
+    @Positive
     private long initialDelayMs = 10000;
 
     @Positive

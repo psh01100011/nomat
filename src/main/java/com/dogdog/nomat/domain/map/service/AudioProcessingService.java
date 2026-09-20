@@ -12,7 +12,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.Comparator;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,19 +35,12 @@ public class AudioProcessingService {
     private final AudioProcessingProperties processingProperties;
     private final AudioProcessingMetrics processingMetrics;
 
-    public int processAvailableJobs() {
-        audioProcessingJobService.recoverStaleProcessingJobs(
+    public int recoverStaleJobs() {
+        return audioProcessingJobService.recoverStaleProcessingJobs(
                 processingProperties.getBatchSize(),
                 processingProperties.getProcessingTimeoutMinutes(),
                 processingProperties.getMaxRetryAttempts()
         );
-        List<AudioProcessingTask> tasks = audioProcessingJobService.claimProcessableJobs(
-                processingProperties.getBatchSize()
-        );
-        for (AudioProcessingTask task : tasks) {
-            processClaimedJob(task);
-        }
-        return tasks.size();
     }
 
     public void processJob(Long jobId) {
@@ -59,7 +51,7 @@ public class AudioProcessingService {
         processClaimedJob(task);
     }
 
-    private void processClaimedJob(AudioProcessingTask task) {
+    public void processClaimedJob(AudioProcessingTask task) {
         processingMetrics.recordClaim(task.queueWaitMs());
         long processingStartedAt = System.nanoTime();
 

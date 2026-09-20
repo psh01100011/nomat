@@ -12,7 +12,6 @@ import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import java.nio.file.Files;
-import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -66,26 +65,6 @@ class AudioProcessingServiceTest {
                 processingProperties,
                 processingMetrics
         );
-    }
-
-    @Test
-    void processAvailableJobsProcessesConfiguredBatch() throws Exception {
-        given(audioProcessingJobService.claimProcessableJobs(5))
-                .willReturn(List.of(audioProcessingTask(1L), audioProcessingTask(2L)));
-        given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
-                .willReturn(PutObjectResponse.builder().build());
-        org.mockito.BDDMockito.willAnswer(invocation -> {
-                    YoutubeAudioExtractionCommand command = invocation.getArgument(0);
-                    Files.writeString(command.outputFile(), "mp3");
-                    return null;
-                })
-                .given(audioExtractionCommandRunner)
-                .extractYoutubeSegment(any(YoutubeAudioExtractionCommand.class));
-
-        int processedCount = audioProcessingService.processAvailableJobs();
-
-        assertThat(processedCount).isEqualTo(2);
-        verify(audioProcessingJobService).claimProcessableJobs(5);
     }
 
     @Test

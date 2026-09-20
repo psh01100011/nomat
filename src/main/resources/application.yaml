@@ -82,6 +82,7 @@ app:
   audio-processing:
     enabled: false
     batch-size: 5
+    worker-concurrency: ${AUDIO_PROCESSING_WORKER_CONCURRENCY:2}
     initial-delay-ms: 10000
     fixed-delay-ms: 30000
     command-timeout-seconds: 300
