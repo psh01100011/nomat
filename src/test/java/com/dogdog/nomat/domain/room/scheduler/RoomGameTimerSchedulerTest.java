@@ -11,6 +11,8 @@ import com.dogdog.nomat.domain.room.model.RoomGameTimer;
 import com.dogdog.nomat.domain.room.model.RoomGameTimerType;
 import com.dogdog.nomat.domain.room.repository.RoomGameTimerRepository;
 import com.dogdog.nomat.domain.room.service.RoomGameProgressService;
+import com.dogdog.nomat.domain.room.service.RoomGameTimerExecutionGuard;
+import com.dogdog.nomat.domain.room.service.RoomGameTimerExecutionGuard.ExecutionStatus;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -29,6 +31,9 @@ class RoomGameTimerSchedulerTest {
 
     @Mock
     private RoomGameProgressService roomGameProgressService;
+
+    @Mock
+    private RoomGameTimerExecutionGuard executionGuard;
 
     @Mock
     private RoomGameTimerProperties properties;
@@ -53,6 +58,13 @@ class RoomGameTimerSchedulerTest {
                 ArgumentMatchers.eq(Duration.ofSeconds(5)),
                 ArgumentMatchers.eq(100)
         )).willReturn(List.of(failedClaim, nextClaim));
+        given(executionGuard.execute(
+                ArgumentMatchers.any(RoomGameTimer.class),
+                ArgumentMatchers.any(Runnable.class)
+        )).willAnswer(invocation -> {
+            invocation.getArgument(1, Runnable.class).run();
+            return ExecutionStatus.EXECUTED;
+        });
         doThrow(new IllegalStateException("failed"))
                 .when(roomGameProgressService).executeTimer(failedTimer);
 
@@ -62,5 +74,29 @@ class RoomGameTimerSchedulerTest {
         verify(roomGameProgressService).executeTimer(nextTimer);
         verify(roomGameTimerRepository, never()).complete(failedClaim);
         verify(roomGameTimerRepository).complete(nextClaim);
+    }
+
+    @Test
+    void processDueTimersLeavesLeaseWhenTheSameTimerIsStillExecuting() {
+        RoomGameTimer timer = new RoomGameTimer(
+                25L, 0, RoomGameTimerType.HINT, Instant.ofEpochMilli(1_000L)
+        );
+        ClaimedRoomGameTimer claim = new ClaimedRoomGameTimer(timer, "owner-token");
+        given(properties.getBatchSize()).willReturn(100);
+        given(properties.leaseDuration()).willReturn(Duration.ofSeconds(5));
+        given(roomGameTimerRepository.claimDue(
+                ArgumentMatchers.any(Instant.class),
+                ArgumentMatchers.eq(Duration.ofSeconds(5)),
+                ArgumentMatchers.eq(100)
+        )).willReturn(List.of(claim));
+        given(executionGuard.execute(
+                ArgumentMatchers.eq(timer),
+                ArgumentMatchers.any(Runnable.class)
+        )).willReturn(ExecutionStatus.BUSY);
+
+        scheduler.processDueTimers();
+
+        verify(roomGameProgressService, never()).executeTimer(timer);
+        verify(roomGameTimerRepository, never()).complete(claim);
     }
 }

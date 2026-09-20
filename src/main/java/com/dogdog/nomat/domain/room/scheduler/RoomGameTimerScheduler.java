@@ -4,6 +4,8 @@ import com.dogdog.nomat.domain.room.config.RoomGameTimerProperties;
 import com.dogdog.nomat.domain.room.model.ClaimedRoomGameTimer;
 import com.dogdog.nomat.domain.room.repository.RoomGameTimerRepository;
 import com.dogdog.nomat.domain.room.service.RoomGameProgressService;
+import com.dogdog.nomat.domain.room.service.RoomGameTimerExecutionGuard;
+import com.dogdog.nomat.domain.room.service.RoomGameTimerExecutionGuard.ExecutionStatus;
 import java.time.Instant;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +20,7 @@ public class RoomGameTimerScheduler {
 
     private final RoomGameTimerRepository roomGameTimerRepository;
     private final RoomGameProgressService roomGameProgressService;
+    private final RoomGameTimerExecutionGuard executionGuard;
     private final RoomGameTimerProperties properties;
 
     @Scheduled(
@@ -32,8 +35,12 @@ public class RoomGameTimerScheduler {
                 properties.getBatchSize()
         );
         for (ClaimedRoomGameTimer claimedTimer : timers) {
+            ExecutionStatus executionStatus;
             try {
-                roomGameProgressService.executeTimer(claimedTimer.timer());
+                executionStatus = executionGuard.execute(
+                        claimedTimer.timer(),
+                        () -> roomGameProgressService.executeTimer(claimedTimer.timer())
+                );
             } catch (RuntimeException exception) {
                 log.error(
                         "event=room_game_timer_execution_failed roomId={} questionIndex={} timerType={}",
@@ -42,6 +49,9 @@ public class RoomGameTimerScheduler {
                         claimedTimer.timer().type(),
                         exception
                 );
+                continue;
+            }
+            if (executionStatus == ExecutionStatus.BUSY) {
                 continue;
             }
 
