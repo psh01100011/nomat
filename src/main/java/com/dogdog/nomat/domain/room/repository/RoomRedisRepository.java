@@ -1,15 +1,16 @@
 package com.dogdog.nomat.domain.room.repository;
 
+import com.dogdog.nomat.domain.room.config.RoomLifecycleProperties;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import java.time.Duration;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -31,8 +32,31 @@ public class RoomRedisRepository {
     private static final String USER_ROOM_KEY_PREFIX = "users:rooms:";
     private static final String ROOM_CREATED_AT_INDEX_KEY = "rooms:index:created-at";
     private static final String ROOM_MEMBER_COUNT_INDEX_KEY = "rooms:index:member-count";
-    private static final Duration ROOM_TTL = Duration.ofMinutes(30);
+    private static final String ROOM_EXPIRES_AT_INDEX_KEY = "rooms:index:expires-at";
     private static final Duration CORRECT_ANSWER_LOCK_TTL = Duration.ofSeconds(3);
+    private static final DefaultRedisScript<Long> REFRESH_ACTIVITY_SCRIPT = new DefaultRedisScript<>("""
+            local ttl = tonumber(ARGV[1])
+            for index = 2, #KEYS do
+                if redis.call('EXISTS', KEYS[index]) == 1 then
+                    redis.call('PEXPIRE', KEYS[index], ttl)
+                end
+            end
+            local time = redis.call('TIME')
+            local expiresAt = (time[1] * 1000) + math.floor(time[2] / 1000) + ttl
+            redis.call('ZADD', KEYS[1], expiresAt, ARGV[2])
+            return 1
+            """, Long.class);
+    private static final DefaultRedisScript<Long> REMOVE_EXPIRED_INDEXES_SCRIPT = new DefaultRedisScript<>("""
+            local time = redis.call('TIME')
+            local now = (time[1] * 1000) + math.floor(time[2] / 1000)
+            local expiredRoomIds = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now)
+            for _, roomId in ipairs(expiredRoomIds) do
+                redis.call('ZREM', KEYS[1], roomId)
+                redis.call('ZREM', KEYS[2], roomId)
+                redis.call('ZREM', KEYS[3], roomId)
+            end
+            return #expiredRoomIds
+            """, Long.class);
     private static final DefaultRedisScript<Long> RELEASE_LOCK_SCRIPT = new DefaultRedisScript<>("""
             if redis.call('GET', KEYS[1]) == ARGV[1] then
                 return redis.call('DEL', KEYS[1])
@@ -42,6 +66,7 @@ public class RoomRedisRepository {
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final RoomLifecycleProperties lifecycleProperties;
 
     public Optional<Long> findJoinedRoomId(Long userId) {
         String roomId = redisTemplate.opsForValue().get(userRoomKey(userId));
@@ -57,6 +82,7 @@ public class RoomRedisRepository {
     }
 
     public List<RoomState> findRooms(String sort) {
+        removeExpiredRoomIndexes();
         String indexKey = "players".equals(sort) ? ROOM_MEMBER_COUNT_INDEX_KEY : ROOM_CREATED_AT_INDEX_KEY;
         Set<String> roomIds = redisTemplate.opsForZSet().reverseRange(indexKey, 0, -1);
         if (roomIds == null || roomIds.isEmpty()) {
@@ -80,13 +106,14 @@ public class RoomRedisRepository {
     }
 
     public boolean createRoom(RoomState room) {
+        Duration roomTtl = roomTtl();
         Boolean reserved = redisTemplate.opsForValue()
-                .setIfAbsent(userRoomKey(room.hostUserId()), String.valueOf(room.roomId()), ROOM_TTL);
+                .setIfAbsent(userRoomKey(room.hostUserId()), String.valueOf(room.roomId()), roomTtl);
         if (!Boolean.TRUE.equals(reserved)) {
             return false;
         }
 
-        redisTemplate.opsForValue().set(roomKey(room.roomId()), serialize(room), ROOM_TTL);
+        redisTemplate.opsForValue().set(roomKey(room.roomId()), serialize(room), roomTtl);
         getOrCreateInviteToken(room.roomId());
         redisTemplate.opsForZSet().add(
                 ROOM_CREATED_AT_INDEX_KEY,
@@ -98,6 +125,7 @@ public class RoomRedisRepository {
                 String.valueOf(room.roomId()),
                 room.memberCount()
         );
+        refreshRoomActivity(room);
         return true;
     }
 
@@ -134,7 +162,7 @@ public class RoomRedisRepository {
 
     public boolean saveJoinedRoom(RoomState room, Long joinedUserId) {
         Boolean reserved = redisTemplate.opsForValue()
-                .setIfAbsent(userRoomKey(joinedUserId), String.valueOf(room.roomId()), roomTtl(room.roomId()));
+                .setIfAbsent(userRoomKey(joinedUserId), String.valueOf(room.roomId()), roomTtl());
         if (!Boolean.TRUE.equals(reserved)) {
             return false;
         }
@@ -149,12 +177,13 @@ public class RoomRedisRepository {
     }
 
     public void saveRoom(RoomState room) {
-        setWithRemainingTtl(roomKey(room.roomId()), serialize(room), ROOM_TTL);
+        redisTemplate.opsForValue().set(roomKey(room.roomId()), serialize(room), roomTtl());
         redisTemplate.opsForZSet().add(
                 ROOM_MEMBER_COUNT_INDEX_KEY,
                 String.valueOf(room.roomId()),
                 room.memberCount()
         );
+        refreshRoomActivity(room);
     }
 
     public void saveLeftRoom(RoomState room, Long leftUserId) {
@@ -174,7 +203,8 @@ public class RoomRedisRepository {
 
     public void saveStartedRoom(RoomState room, RoomGameState gameState) {
         saveRoom(room);
-        redisTemplate.opsForValue().set(roomGameKey(room.roomId()), serialize(gameState), roomTtl(room.roomId()));
+        redisTemplate.opsForValue().set(roomGameKey(room.roomId()), serialize(gameState), roomTtl());
+        refreshRoomActivity(room);
     }
 
     public Optional<RoomGameState> findGameState(Long roomId) {
@@ -187,7 +217,29 @@ public class RoomRedisRepository {
     }
 
     public void saveGameState(RoomGameState gameState) {
-        setWithRemainingTtl(roomGameKey(gameState.roomId()), serialize(gameState), () -> roomTtl(gameState.roomId()));
+        redisTemplate.opsForValue().set(roomGameKey(gameState.roomId()), serialize(gameState), roomTtl());
+        findById(gameState.roomId()).ifPresent(this::refreshRoomActivity);
+    }
+
+    public void refreshRoomActivity(RoomState room) {
+        Duration ttl = roomTtl();
+        String inviteToken = redisTemplate.opsForValue().get(roomInviteKey(room.roomId()));
+        List<String> keys = new ArrayList<>();
+        keys.add(ROOM_EXPIRES_AT_INDEX_KEY);
+        keys.add(roomKey(room.roomId()));
+        keys.add(roomGameKey(room.roomId()));
+        keys.add(roomInviteKey(room.roomId()));
+        room.members().forEach(member -> keys.add(userRoomKey(member.userId())));
+        if (inviteToken != null) {
+            keys.add(inviteTokenKey(inviteToken));
+        }
+
+        redisTemplate.execute(
+                REFRESH_ACTIVITY_SCRIPT,
+                keys,
+                String.valueOf(ttl.toMillis()),
+                String.valueOf(room.roomId())
+        );
     }
 
     public Optional<RoomGameState> tryRecordCorrectAnswer(
@@ -254,6 +306,7 @@ public class RoomRedisRepository {
         }
         redisTemplate.opsForZSet().remove(ROOM_CREATED_AT_INDEX_KEY, String.valueOf(room.roomId()));
         redisTemplate.opsForZSet().remove(ROOM_MEMBER_COUNT_INDEX_KEY, String.valueOf(room.roomId()));
+        redisTemplate.opsForZSet().remove(ROOM_EXPIRES_AT_INDEX_KEY, String.valueOf(room.roomId()));
         room.members().forEach(member -> redisTemplate.delete(userRoomKey(member.userId())));
     }
 
@@ -292,16 +345,8 @@ public class RoomRedisRepository {
         return deserialize(room, RoomState.class);
     }
 
-    private void setWithRemainingTtl(String key, String value, Duration fallbackTtl) {
-        setWithRemainingTtl(key, value, () -> fallbackTtl);
-    }
-
-    private void setWithRemainingTtl(String key, String value, Supplier<Duration> fallbackTtl) {
-        redisTemplate.opsForValue().set(key, value, remainingTtl(key).orElseGet(fallbackTtl));
-    }
-
-    private Duration roomTtl(Long roomId) {
-        return remainingTtl(roomKey(roomId)).orElse(ROOM_TTL);
+    private Duration roomTtl() {
+        return lifecycleProperties.inactivityTtl();
     }
 
     private Optional<Duration> remainingTtl(String key) {
@@ -311,6 +356,17 @@ public class RoomRedisRepository {
         }
 
         return Optional.of(Duration.ofSeconds(seconds));
+    }
+
+    private void removeExpiredRoomIndexes() {
+        redisTemplate.execute(
+                REMOVE_EXPIRED_INDEXES_SCRIPT,
+                List.of(
+                        ROOM_EXPIRES_AT_INDEX_KEY,
+                        ROOM_CREATED_AT_INDEX_KEY,
+                        ROOM_MEMBER_COUNT_INDEX_KEY
+                )
+        );
     }
 
     private <T> T deserialize(String value, Class<T> valueType) {

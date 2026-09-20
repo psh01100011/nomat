@@ -395,6 +395,28 @@ class RoomServiceTest {
     }
 
     @Test
+    void heartbeatRefreshesRoomActivityForMember() {
+        RoomState room = room(25L, "참여 중인 방", 15L, 10);
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        roomService.heartbeat(3L, 25L);
+
+        verify(roomRedisRepository).refreshRoomActivity(room);
+    }
+
+    @Test
+    void heartbeatRejectsUserWhoIsNotRoomMember() {
+        RoomState room = room(25L, "참여 중인 방", 15L, 10);
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        assertThatThrownBy(() -> roomService.heartbeat(4L, 25L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("forbidden_room_access");
+
+        verify(roomRedisRepository, never()).refreshRoomActivity(any(RoomState.class));
+    }
+
+    @Test
     void getGameSnapshotReturnsCurrentGameStateForGuestMember() {
         RoomState room = room(25L, "참여 중인 방", 15L, 10)
                 .withJoinedMember(guestMember(-2L, false))

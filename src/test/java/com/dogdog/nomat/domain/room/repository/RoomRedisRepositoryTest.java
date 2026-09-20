@@ -5,10 +5,15 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
+import com.dogdog.nomat.domain.room.config.RoomLifecycleProperties;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
+import com.dogdog.nomat.domain.room.model.RoomMember;
+import com.dogdog.nomat.domain.room.model.RoomState;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -16,6 +21,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentMatchers;
@@ -24,6 +30,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.data.redis.core.script.RedisScript;
 import tools.jackson.databind.ObjectMapper;
 
@@ -41,8 +48,19 @@ class RoomRedisRepositoryTest {
     @Mock
     private ObjectMapper objectMapper;
 
+    @Mock
+    private RoomLifecycleProperties lifecycleProperties;
+
+    @Mock
+    private ZSetOperations<String, String> zSetOperations;
+
     @InjectMocks
     private RoomRedisRepository roomRedisRepository;
+
+    @BeforeEach
+    void setUp() {
+        lenient().when(lifecycleProperties.inactivityTtl()).thenReturn(Duration.ofMinutes(15));
+    }
 
     @Test
     void tryRecordCorrectAnswerSavesWinnerWhenLockIsAcquired() throws Exception {
@@ -70,7 +88,7 @@ class RoomRedisRepositoryTest {
         assertThat(result.get().currentQuestionWinnerUserId()).isEqualTo(3L);
         assertThat(result.get().currentQuestionWinnerAnswer()).isEqualTo("정 답");
         assertThat(result.get().scores()).containsEntry(3L, 100);
-        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(30));
+        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(15));
         verify(redisTemplate).execute(
                 ArgumentMatchers.<RedisScript<Long>>any(),
                 eq(List.of("rooms:games:25:question-resolution-lock:0")),
@@ -79,15 +97,14 @@ class RoomRedisRepositoryTest {
     }
 
     @Test
-    void saveGameStatePreservesRemainingGameStateTtl() throws Exception {
+    void saveGameStateRefreshesGameStateTtl() throws Exception {
         RoomGameState gameState = gameState();
         given(redisTemplate.opsForValue()).willReturn(valueOperations);
         given(objectMapper.writeValueAsString(gameState)).willReturn("saved-game-state");
-        given(redisTemplate.getExpire("rooms:games:25", TimeUnit.SECONDS)).willReturn(600L);
 
         roomRedisRepository.saveGameState(gameState);
 
-        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(10));
+        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(15));
     }
 
     @Test
@@ -185,7 +202,76 @@ class RoomRedisRepositoryTest {
         assertThat(result).isPresent();
         assertThat(result.get().hasCurrentQuestionEnded()).isTrue();
         assertThat(result.get().questionOutcomes().get(1).endedReason()).isEqualTo("AUDIO_LOAD_FAILED");
-        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(30));
+        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(15));
+    }
+
+    @Test
+    void refreshRoomActivityRefreshesAllRelatedKeys() {
+        RoomState room = mock(RoomState.class);
+        RoomMember member = mockMember(3L);
+        RoomMember guest = mockMember(-2L);
+        given(room.roomId()).willReturn(25L);
+        given(room.members()).willReturn(List.of(member, guest));
+        given(redisTemplate.opsForValue()).willReturn(valueOperations);
+        given(valueOperations.get("rooms:invites:25")).willReturn("invite-token");
+
+        roomRedisRepository.refreshRoomActivity(room);
+
+        verify(redisTemplate).execute(
+                ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of(
+                        "rooms:index:expires-at",
+                        "rooms:25",
+                        "rooms:games:25",
+                        "rooms:invites:25",
+                        "users:rooms:3",
+                        "users:rooms:-2",
+                        "rooms:invite-tokens:invite-token"
+                )),
+                eq("900000"),
+                eq("25")
+        );
+    }
+
+    @Test
+    void findRoomsRemovesExpiredRoomIndexesBeforeReadingList() {
+        given(redisTemplate.opsForZSet()).willReturn(zSetOperations);
+        given(zSetOperations.reverseRange("rooms:index:created-at", 0, -1)).willReturn(Set.of());
+
+        assertThat(roomRedisRepository.findRooms("latest")).isEmpty();
+
+        verify(redisTemplate).execute(
+                ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of(
+                        "rooms:index:expires-at",
+                        "rooms:index:created-at",
+                        "rooms:index:member-count"
+                ))
+        );
+    }
+
+    @Test
+    void deleteRoomRemovesLifecycleIndexesAndMemberConnections() {
+        RoomState room = mock(RoomState.class);
+        RoomMember member = mockMember(3L);
+        RoomMember guest = mockMember(-2L);
+        given(room.roomId()).willReturn(25L);
+        given(room.members()).willReturn(List.of(member, guest));
+        given(redisTemplate.opsForValue()).willReturn(valueOperations);
+        given(redisTemplate.opsForZSet()).willReturn(zSetOperations);
+        given(valueOperations.get("rooms:invites:25")).willReturn("invite-token");
+
+        roomRedisRepository.deleteRoom(room);
+
+        verify(redisTemplate).delete("rooms:25");
+        verify(redisTemplate).delete("rooms:games:25");
+        verify(redisTemplate).delete("rooms:invites:25");
+        verify(redisTemplate).delete("rooms:invite-tokens:invite-token");
+        verify(redisTemplate).delete("users:rooms:3");
+        verify(redisTemplate).delete("users:rooms:-2");
+        verify(zSetOperations).remove("rooms:index:created-at", "25");
+        verify(zSetOperations).remove("rooms:index:member-count", "25");
+        verify(zSetOperations).remove("rooms:index:expires-at", "25");
     }
 
     @Test
@@ -280,6 +366,12 @@ class RoomRedisRepositoryTest {
                 null,
                 30_000
         );
+    }
+
+    private RoomMember mockMember(Long userId) {
+        RoomMember member = mock(RoomMember.class);
+        given(member.userId()).willReturn(userId);
+        return member;
     }
 
     private LocalDateTime now() {

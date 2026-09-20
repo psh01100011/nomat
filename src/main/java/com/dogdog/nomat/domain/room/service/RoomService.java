@@ -266,10 +266,21 @@ public class RoomService {
             throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access");
         }
 
+        roomRedisRepository.refreshRoomActivity(room);
         String inviteToken = roomRedisRepository.getOrCreateInviteToken(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
         log.debug("event=room_invite_created roomId={} userId={}", roomId, userId);
         return new RoomInviteResponse(inviteToken);
+    }
+
+    public void heartbeat(Long userId, Long roomId) {
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        if (!room.hasMember(userId)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access");
+        }
+
+        roomRedisRepository.refreshRoomActivity(room);
     }
 
     @Transactional
