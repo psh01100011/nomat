@@ -83,6 +83,9 @@ app:
     enabled: false
     batch-size: 5
     worker-concurrency: ${AUDIO_PROCESSING_WORKER_CONCURRENCY:2}
+    youtube-max-concurrency: ${AUDIO_PROCESSING_YOUTUBE_MAX_CONCURRENCY:4}
+    youtube-permit-lease-seconds: ${AUDIO_PROCESSING_YOUTUBE_PERMIT_LEASE_SECONDS:120}
+    youtube-permit-renewal-ms: ${AUDIO_PROCESSING_YOUTUBE_PERMIT_RENEWAL_MS:30000}
     initial-delay-ms: 10000
     fixed-delay-ms: 30000
     command-timeout-seconds: 300

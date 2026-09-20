@@ -1,5 +1,6 @@
 package com.dogdog.nomat.domain.map.config;
 
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Positive;
 import lombok.Getter;
 import lombok.Setter;
@@ -21,6 +22,15 @@ public class AudioProcessingProperties {
 
     @Positive
     private int workerConcurrency = 2;
+
+    @Positive
+    private int youtubeMaxConcurrency = 4;
+
+    @Positive
+    private long youtubePermitLeaseSeconds = 120;
+
+    @Positive
+    private long youtubePermitRenewalMs = 30000;
 
     @Positive
     private long initialDelayMs = 10000;
@@ -45,4 +55,9 @@ public class AudioProcessingProperties {
     private String ffmpegPath = "ffmpeg";
 
     private String outputBitrate = "128k";
+
+    @AssertTrue(message = "youtube permit renewal interval must be shorter than its lease")
+    public boolean isYoutubePermitRenewalBeforeExpiry() {
+        return youtubePermitRenewalMs < youtubePermitLeaseSeconds * 1000;
+    }
 }

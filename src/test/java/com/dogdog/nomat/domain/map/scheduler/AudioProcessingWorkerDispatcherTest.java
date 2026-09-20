@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
 import com.dogdog.nomat.domain.map.service.AudioProcessingJobService;
@@ -12,6 +13,7 @@ import com.dogdog.nomat.domain.map.service.AudioProcessingTask;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Queue;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -27,6 +29,18 @@ class AudioProcessingWorkerDispatcherTest {
     @Mock
     private AudioProcessingService audioProcessingService;
 
+    @Mock
+    private YoutubeRequestConcurrencyLimiter concurrencyLimiter;
+
+    @Mock
+    private YoutubeRequestConcurrencyLimiter.Permit firstPermit;
+
+    @Mock
+    private YoutubeRequestConcurrencyLimiter.Permit secondPermit;
+
+    @Mock
+    private YoutubeRequestConcurrencyLimiter.Permit thirdPermit;
+
     @Test
     void limitsActiveWorkersAndRefillsAWorkerImmediatelyAfterCompletion() {
         AudioProcessingProperties properties = new AudioProcessingProperties();
@@ -38,7 +52,8 @@ class AudioProcessingWorkerDispatcherTest {
                 audioProcessingJobService,
                 audioProcessingService,
                 properties,
-                taskExecutor
+                taskExecutor,
+                concurrencyLimiter
         );
         AudioProcessingTask first = task(1L);
         AudioProcessingTask second = task(2L);
@@ -46,6 +61,13 @@ class AudioProcessingWorkerDispatcherTest {
         given(audioProcessingJobService.claimProcessableJobs(2)).willReturn(List.of(first, second));
         given(audioProcessingJobService.claimProcessableJobs(1))
                 .willReturn(List.of(third), List.of());
+        when(concurrencyLimiter.tryAcquire()).thenReturn(
+                Optional.of(firstPermit),
+                Optional.of(secondPermit),
+                Optional.of(thirdPermit),
+                Optional.of(firstPermit),
+                Optional.empty()
+        );
 
         assertThat(dispatcher.dispatchAvailableJobs()).isEqualTo(2);
         assertThat(submittedTasks).hasSize(2);
@@ -64,6 +86,9 @@ class AudioProcessingWorkerDispatcherTest {
 
         verify(audioProcessingService).processClaimedJob(second);
         verify(audioProcessingService).processClaimedJob(third);
+        verify(firstPermit, times(2)).close();
+        verify(secondPermit).close();
+        verify(thirdPermit).close();
     }
 
     private AudioProcessingTask task(Long jobId) {
