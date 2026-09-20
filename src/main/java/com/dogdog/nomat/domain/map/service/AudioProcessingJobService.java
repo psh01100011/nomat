@@ -18,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -30,15 +31,10 @@ public class AudioProcessingJobService {
     private final AssetRepository assetRepository;
     private final AudioProcessingMetrics processingMetrics;
 
-    @Transactional(readOnly = true)
-    public List<Long> getProcessableJobIds(int batchSize) {
-        return audioProcessingJobRepository
-                .findByStatusInOrderByCreatedAtAsc(
-                        List.of(AudioProcessingJobStatus.QUEUED, AudioProcessingJobStatus.RETRYING),
-                        PageRequest.of(0, batchSize)
-                )
-                .stream()
-                .map(AudioProcessingJob::getId)
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public List<AudioProcessingTask> claimProcessableJobs(int batchSize) {
+        return audioProcessingJobRepository.findProcessableForUpdateSkipLocked(batchSize).stream()
+                .map(this::startJob)
                 .toList();
     }
 
@@ -69,13 +65,16 @@ public class AudioProcessingJobService {
     @Transactional
     public AudioProcessingTask startJob(Long jobId) {
         AudioProcessingJob job = audioProcessingJobRepository.findByIdForUpdate(jobId)
-                .filter(foundJob -> foundJob.getStatus() == AudioProcessingJobStatus.QUEUED
-                        || foundJob.getStatus() == AudioProcessingJobStatus.RETRYING)
+                .filter(foundJob -> foundJob.getStatus() == AudioProcessingJobStatus.QUEUED)
                 .orElse(null);
         if (job == null) {
             return null;
         }
 
+        return startJob(job);
+    }
+
+    private AudioProcessingTask startJob(AudioProcessingJob job) {
         job.start();
         QuestionMedia media = job.getQuestionMedia();
         Long mapId = media.getQuestion().getMap().getId();

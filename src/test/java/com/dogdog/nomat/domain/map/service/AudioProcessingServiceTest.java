@@ -70,9 +70,8 @@ class AudioProcessingServiceTest {
 
     @Test
     void processAvailableJobsProcessesConfiguredBatch() throws Exception {
-        given(audioProcessingJobService.getProcessableJobIds(5)).willReturn(List.of(1L, 2L));
-        given(audioProcessingJobService.startJob(1L)).willReturn(audioProcessingTask(1L));
-        given(audioProcessingJobService.startJob(2L)).willReturn(null);
+        given(audioProcessingJobService.claimProcessableJobs(5))
+                .willReturn(List.of(audioProcessingTask(1L), audioProcessingTask(2L)));
         given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
                 .willReturn(PutObjectResponse.builder().build());
         org.mockito.BDDMockito.willAnswer(invocation -> {
@@ -86,8 +85,7 @@ class AudioProcessingServiceTest {
         int processedCount = audioProcessingService.processAvailableJobs();
 
         assertThat(processedCount).isEqualTo(2);
-        verify(audioProcessingJobService).startJob(1L);
-        verify(audioProcessingJobService).startJob(2L);
+        verify(audioProcessingJobService).claimProcessableJobs(5);
     }
 
     @Test

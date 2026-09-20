@@ -3,6 +3,7 @@ package com.dogdog.nomat.domain.map.service;
 import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
 import com.dogdog.nomat.domain.map.dto.AdminAudioProcessingJobListResponse;
 import com.dogdog.nomat.domain.map.dto.AdminAudioProcessingJobResponse;
+import com.dogdog.nomat.domain.map.dto.AdminAudioProcessingJobStatus;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureType;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
@@ -40,7 +41,7 @@ public class AdminAudioProcessingService {
 
     @Transactional(readOnly = true)
     public AdminAudioProcessingJobListResponse getJobs(
-            AudioProcessingJobStatus status,
+            AdminAudioProcessingJobStatus status,
             AudioProcessingFailureType failureType,
             Long mapId,
             LocalDateTime createdFrom,
@@ -144,7 +145,7 @@ public class AdminAudioProcessingService {
     }
 
     private Specification<AudioProcessingJob> jobSpecification(
-            AudioProcessingJobStatus status,
+            AdminAudioProcessingJobStatus status,
             AudioProcessingFailureType failureType,
             Long mapId,
             LocalDateTime createdFrom,
@@ -153,7 +154,24 @@ public class AdminAudioProcessingService {
         return (root, query, criteriaBuilder) -> {
             List<Predicate> predicates = new ArrayList<>();
             if (status != null) {
-                predicates.add(criteriaBuilder.equal(root.get("status"), status));
+                if (status == AdminAudioProcessingJobStatus.RETRYING) {
+                    predicates.add(criteriaBuilder.equal(root.get("status"), AudioProcessingJobStatus.QUEUED));
+                    predicates.add(criteriaBuilder.equal(
+                            root.join("questionMedia", JoinType.INNER).get("processingStatus"),
+                            QuestionMediaProcessingStatus.RETRYING
+                    ));
+                } else {
+                    predicates.add(criteriaBuilder.equal(
+                            root.get("status"),
+                            AudioProcessingJobStatus.valueOf(status.name())
+                    ));
+                    if (status == AdminAudioProcessingJobStatus.QUEUED) {
+                        predicates.add(criteriaBuilder.equal(
+                                root.join("questionMedia", JoinType.INNER).get("processingStatus"),
+                                QuestionMediaProcessingStatus.QUEUED
+                        ));
+                    }
+                }
             }
             if (failureType != null) {
                 List<AudioProcessingFailureCode> failureCodes = Arrays.stream(AudioProcessingFailureCode.values())

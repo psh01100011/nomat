@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.map.monitoring;
 
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
+import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -18,8 +19,7 @@ import org.springframework.stereotype.Component;
 public class AudioProcessingMetrics {
 
     private static final List<AudioProcessingJobStatus> PROCESSABLE_STATUSES = List.of(
-            AudioProcessingJobStatus.QUEUED,
-            AudioProcessingJobStatus.RETRYING
+            AudioProcessingJobStatus.QUEUED
     );
 
     private final MeterRegistry meterRegistry;
@@ -36,6 +36,9 @@ public class AudioProcessingMetrics {
     @PostConstruct
     void registerGauges() {
         for (AudioProcessingJobStatus status : AudioProcessingJobStatus.values()) {
+            if (status == AudioProcessingJobStatus.QUEUED) {
+                continue;
+            }
             Gauge.builder(
                             "nomat.audio.jobs.current",
                             audioProcessingJobRepository,
@@ -45,6 +48,9 @@ public class AudioProcessingMetrics {
                     .tag("status", status.name())
                     .register(meterRegistry);
         }
+
+        registerQueuedGauge("QUEUED", QuestionMediaProcessingStatus.QUEUED);
+        registerQueuedGauge("RETRYING", QuestionMediaProcessingStatus.RETRYING);
 
         Gauge.builder(
                         "nomat.audio.jobs.oldest.age",
@@ -84,7 +90,7 @@ public class AudioProcessingMetrics {
     ) {
         String outcome = resultStatus == AudioProcessingJobStatus.SUCCEEDED
                 ? "succeeded"
-                : resultStatus == AudioProcessingJobStatus.RETRYING ? "retrying" : "failed";
+                : resultStatus == AudioProcessingJobStatus.QUEUED ? "retrying" : "failed";
         String failure = failureCode == null ? "NONE" : failureCode.name();
 
         Counter.builder("nomat.audio.jobs.attempts")
@@ -102,11 +108,28 @@ public class AudioProcessingMetrics {
     }
 
     public void recordStaleRecovery(AudioProcessingJobStatus resultStatus) {
+        String status = resultStatus == AudioProcessingJobStatus.QUEUED
+                ? "RETRYING"
+                : resultStatus.name();
         Counter.builder("nomat.audio.jobs.stale.recoveries")
                 .description("Stale processing jobs recovered by result status")
-                .tag("status", resultStatus.name())
+                .tag("status", status)
                 .register(meterRegistry)
                 .increment();
+    }
+
+    private void registerQueuedGauge(String status, QuestionMediaProcessingStatus mediaStatus) {
+        Gauge.builder(
+                        "nomat.audio.jobs.current",
+                        audioProcessingJobRepository,
+                        repository -> repository.countByStatusAndQuestionMediaProcessingStatus(
+                                AudioProcessingJobStatus.QUEUED,
+                                mediaStatus
+                        )
+                )
+                .description("Current audio processing jobs by status")
+                .tag("status", status)
+                .register(meterRegistry);
     }
 
     private double ageSeconds(LocalDateTime timestamp) {

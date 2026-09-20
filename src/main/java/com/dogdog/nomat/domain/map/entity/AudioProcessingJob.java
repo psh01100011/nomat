@@ -101,7 +101,7 @@ public class AudioProcessingJob {
     }
 
     public void scheduleRetry(AudioProcessingFailureCode failureCode, String failureMessage) {
-        this.status = AudioProcessingJobStatus.RETRYING;
+        this.status = AudioProcessingJobStatus.QUEUED;
         this.failureCode = failureCode;
         this.failureMessage = truncate(failureMessage);
         this.startedAt = null;

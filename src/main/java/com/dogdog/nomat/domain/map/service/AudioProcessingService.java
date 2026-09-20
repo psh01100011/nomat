@@ -5,6 +5,7 @@ import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureType;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
+import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -41,14 +42,13 @@ public class AudioProcessingService {
                 processingProperties.getProcessingTimeoutMinutes(),
                 processingProperties.getMaxRetryAttempts()
         );
-        List<Long> jobIds = audioProcessingJobService.getProcessableJobIds(processingProperties.getBatchSize());
-        int processedCount = 0;
-        for (Long jobId : jobIds) {
-            processJob(jobId);
-            processedCount++;
+        List<AudioProcessingTask> tasks = audioProcessingJobService.claimProcessableJobs(
+                processingProperties.getBatchSize()
+        );
+        for (AudioProcessingTask task : tasks) {
+            processClaimedJob(task);
         }
-
-        return processedCount;
+        return tasks.size();
     }
 
     public void processJob(Long jobId) {
@@ -56,6 +56,10 @@ public class AudioProcessingService {
         if (task == null) {
             return;
         }
+        processClaimedJob(task);
+    }
+
+    private void processClaimedJob(AudioProcessingTask task) {
         processingMetrics.recordClaim(task.queueWaitMs());
         long processingStartedAt = System.nanoTime();
 
@@ -130,26 +134,29 @@ public class AudioProcessingService {
             long processingStartedAt
     ) {
         long durationMs = elapsedMillis(processingStartedAt);
+        String statusLabel = status == AudioProcessingJobStatus.QUEUED
+                ? QuestionMediaProcessingStatus.RETRYING.name()
+                : String.valueOf(status);
         String message = "event=audio_job_attempt_failed jobId={} mapId={} questionId={} mediaId={} attempt={} queueWaitMs={} durationMs={} status={} failureCode={} errorType={}";
-        if (status == AudioProcessingJobStatus.RETRYING) {
+        if (status == AudioProcessingJobStatus.QUEUED) {
             log.warn(
                     message,
                     task.jobId(), task.mapId(), task.questionId(), task.questionMediaId(),
-                    task.attemptCount(), task.queueWaitMs(), durationMs, status, failureCode,
+                    task.attemptCount(), task.queueWaitMs(), durationMs, statusLabel, failureCode,
                     exception.getClass().getSimpleName()
             );
         } else if (failureCode.getFailureType() == AudioProcessingFailureType.SOURCE) {
             log.info(
                     message,
                     task.jobId(), task.mapId(), task.questionId(), task.questionMediaId(),
-                    task.attemptCount(), task.queueWaitMs(), durationMs, status, failureCode,
+                    task.attemptCount(), task.queueWaitMs(), durationMs, statusLabel, failureCode,
                     exception.getClass().getSimpleName()
             );
         } else {
             log.error(
                     message,
                     task.jobId(), task.mapId(), task.questionId(), task.questionMediaId(),
-                    task.attemptCount(), task.queueWaitMs(), durationMs, status, failureCode,
+                    task.attemptCount(), task.queueWaitMs(), durationMs, statusLabel, failureCode,
                     exception.getClass().getSimpleName()
             );
         }

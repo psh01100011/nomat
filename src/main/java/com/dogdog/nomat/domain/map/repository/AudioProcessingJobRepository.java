@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.map.repository;
 
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
+import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -21,10 +22,15 @@ public interface AudioProcessingJobRepository extends
         JpaRepository<AudioProcessingJob, Long>,
         JpaSpecificationExecutor<AudioProcessingJob> {
 
-    List<AudioProcessingJob> findByStatusInOrderByCreatedAtAsc(
-            Collection<AudioProcessingJobStatus> statuses,
-            Pageable pageable
-    );
+    @Query(value = """
+            SELECT job.*
+            FROM audio_processing_jobs job
+            WHERE job.status = 'QUEUED'
+            ORDER BY job.created_at ASC, job.id ASC
+            LIMIT :batchSize
+            FOR UPDATE SKIP LOCKED
+            """, nativeQuery = true)
+    List<AudioProcessingJob> findProcessableForUpdateSkipLocked(@Param("batchSize") int batchSize);
 
     List<AudioProcessingJob> findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
             AudioProcessingJobStatus status,
@@ -35,6 +41,11 @@ public interface AudioProcessingJobRepository extends
     Optional<AudioProcessingJob> findByQuestionMediaId(Long questionMediaId);
 
     long countByStatus(AudioProcessingJobStatus status);
+
+    long countByStatusAndQuestionMediaProcessingStatus(
+            AudioProcessingJobStatus status,
+            QuestionMediaProcessingStatus processingStatus
+    );
 
     @Query("""
             SELECT MIN(job.createdAt)

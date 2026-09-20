@@ -143,7 +143,7 @@ class AudioProcessingJobServiceTest {
                 3
         );
 
-        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.RETRYING);
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
         assertThat(job.getFailureCode()).isEqualTo(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR);
         assertThat(job.getFailureMessage()).isEqualTo("extract failed");
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.RETRYING);
@@ -219,7 +219,7 @@ class AudioProcessingJobServiceTest {
                 2
         );
 
-        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.RETRYING);
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
         assertThat(job.getFailureCode()).isEqualTo(AudioProcessingFailureCode.UNKNOWN);
         assertThat(job.canRetryManually()).isFalse();
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.RETRYING);
@@ -257,7 +257,7 @@ class AudioProcessingJobServiceTest {
         int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 10, 3);
 
         assertThat(recoveredCount).isEqualTo(1);
-        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.RETRYING);
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
         assertThat(job.getAttemptCount()).isEqualTo(1);
         assertThat(job.getStartedAt()).isNull();
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.RETRYING);

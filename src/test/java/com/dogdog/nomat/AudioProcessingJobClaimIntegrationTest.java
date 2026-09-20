@@ -17,6 +17,7 @@ import com.dogdog.nomat.domain.map.service.AudioProcessingJobService;
 import com.dogdog.nomat.domain.map.service.AudioProcessingTask;
 import com.dogdog.nomat.domain.user.entity.User;
 import jakarta.persistence.EntityManager;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -26,6 +27,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Import(TestcontainersConfiguration.class)
@@ -47,48 +50,53 @@ class AudioProcessingJobClaimIntegrationTest {
     private TransactionTemplate transactionTemplate;
 
     @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @Autowired
     private EntityManager entityManager;
 
     @Test
-    void concurrentWorkersClaimJobOnlyOnce() throws Exception {
-        Long jobId = saveQueuedJob();
+    void concurrentWorkersClaimDifferentJobsWithoutWaitingForEachOther() throws Exception {
+        List<Long> jobIds = saveQueuedJobs();
         CountDownLatch firstClaimed = new CountDownLatch(1);
         CountDownLatch releaseFirstTransaction = new CountDownLatch(1);
-        CountDownLatch secondStarted = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
+        TransactionTemplate claimTransaction = new TransactionTemplate(transactionManager);
+        claimTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 
         try {
-            Future<AudioProcessingTask> first = executor.submit(() -> transactionTemplate.execute(status -> {
-                AudioProcessingTask task = audioProcessingJobService.startJob(jobId);
+            Future<AudioProcessingTask> first = executor.submit(() -> claimTransaction.execute(status -> {
+                AudioProcessingTask task = audioProcessingJobService.claimProcessableJobs(1).getFirst();
                 firstClaimed.countDown();
                 await(releaseFirstTransaction);
                 return task;
             }));
             assertThat(firstClaimed.await(5, TimeUnit.SECONDS)).isTrue();
 
-            Future<AudioProcessingTask> second = executor.submit(() -> {
-                secondStarted.countDown();
-                return audioProcessingJobService.startJob(jobId);
-            });
-            assertThat(secondStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            Thread.sleep(200);
-            assertThat(second.isDone()).isFalse();
+            Future<AudioProcessingTask> second = executor.submit(() ->
+                    audioProcessingJobService.claimProcessableJobs(1).getFirst()
+            );
+            AudioProcessingTask secondTask = second.get(5, TimeUnit.SECONDS);
 
             releaseFirstTransaction.countDown();
 
-            assertThat(first.get(5, TimeUnit.SECONDS)).isNotNull();
-            assertThat(second.get(5, TimeUnit.SECONDS)).isNull();
+            AudioProcessingTask firstTask = first.get(5, TimeUnit.SECONDS);
+            assertThat(firstTask.jobId()).isEqualTo(jobIds.get(0));
+            assertThat(secondTask.jobId()).isEqualTo(jobIds.get(1));
         } finally {
             releaseFirstTransaction.countDown();
             executor.shutdownNow();
         }
 
-        AudioProcessingJob claimedJob = audioProcessingJobRepository.findById(jobId).orElseThrow();
-        assertThat(claimedJob.getStatus()).isEqualTo(AudioProcessingJobStatus.PROCESSING);
-        assertThat(claimedJob.getAttemptCount()).isEqualTo(1);
+        List<AudioProcessingJob> claimedJobs = audioProcessingJobRepository.findAllById(jobIds);
+        assertThat(claimedJobs)
+                .allSatisfy(job -> {
+                    assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.PROCESSING);
+                    assertThat(job.getAttemptCount()).isEqualTo(1);
+                });
     }
 
-    private Long saveQueuedJob() {
+    private List<Long> saveQueuedJobs() {
         return transactionTemplate.execute(status -> {
             User creator = User.create("claim-test-user", "encoded-password", "claim-test-nickname");
             Category category = Category.create("claim-test-category");
@@ -103,27 +111,33 @@ class AudioProcessingJobClaimIntegrationTest {
                     "선점 경쟁 테스트",
                     "설명",
                     MapVisibility.PRIVATE,
-                    1,
+                    2,
                     MapStatus.PROCESSING
             );
             entityManager.persist(map);
-            Question question = Question.create(map, 1, "이 노래는?");
-            entityManager.persist(question);
-            QuestionMedia media = QuestionMedia.create(
-                    question,
-                    null,
-                    QuestionMediaSourceType.YOUTUBE,
-                    "https://youtube.com/watch?v=claim-test",
-                    0,
-                    30_000,
-                    30_000
-            );
-            entityManager.persist(media);
-            AudioProcessingJob job = AudioProcessingJob.create(media);
-            entityManager.persist(job);
+            AudioProcessingJob first = saveQueuedJob(map, 1);
+            AudioProcessingJob second = saveQueuedJob(map, 2);
             entityManager.flush();
-            return job.getId();
+            return List.of(first.getId(), second.getId());
         });
+    }
+
+    private AudioProcessingJob saveQueuedJob(QuizMap map, int sequence) {
+        Question question = Question.create(map, sequence, "이 노래는? " + sequence);
+        entityManager.persist(question);
+        QuestionMedia media = QuestionMedia.create(
+                question,
+                null,
+                QuestionMediaSourceType.YOUTUBE,
+                "https://youtube.com/watch?v=claim-test-" + sequence,
+                0,
+                30_000,
+                30_000
+        );
+        entityManager.persist(media);
+        AudioProcessingJob job = AudioProcessingJob.create(media);
+        entityManager.persist(job);
+        return job;
     }
 
     private void await(CountDownLatch latch) {
