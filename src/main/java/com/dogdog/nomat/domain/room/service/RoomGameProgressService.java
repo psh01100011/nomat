@@ -7,10 +7,13 @@ import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
 import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
+import com.dogdog.nomat.domain.room.model.RoomGameTimer;
+import com.dogdog.nomat.domain.room.model.RoomGameTimerType;
 import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.model.RoomStatus;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
+import com.dogdog.nomat.domain.room.repository.RoomGameTimerRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.Duration;
 import java.time.Instant;
@@ -30,6 +33,7 @@ public class RoomGameProgressService {
     private static final long NEXT_QUESTION_DELAY_SECONDS = 3;
 
     private final RoomRedisRepository roomRedisRepository;
+    private final RoomGameTimerRepository roomGameTimerRepository;
     private final RoomEventPublisher roomEventPublisher;
     private final TaskScheduler taskScheduler;
     private final RoomGameResultService roomGameResultService;
@@ -49,9 +53,15 @@ public class RoomGameProgressService {
     }
 
     public void scheduleQuestionAdvance(Long roomId, int questionIndex) {
-        taskScheduler.schedule(
-                () -> continueAfterQuestionEnded(roomId, questionIndex),
-                Instant.now().plus(Duration.ofSeconds(NEXT_QUESTION_DELAY_SECONDS))
+        roomGameTimerRepository.removeQuestionTimers(roomId, questionIndex);
+        scheduleTimer(
+                new RoomGameTimer(
+                        roomId,
+                        questionIndex,
+                        RoomGameTimerType.NEXT_QUESTION,
+                        Instant.now().plus(Duration.ofSeconds(NEXT_QUESTION_DELAY_SECONDS))
+                ),
+                () -> continueAfterQuestionEnded(roomId, questionIndex)
         );
     }
 
@@ -248,17 +258,38 @@ public class RoomGameProgressService {
         }
 
         long delaySeconds = Math.max(0, durationSeconds - room.initialHintTriggerSeconds());
-        taskScheduler.schedule(
-                () -> revealHint(room.roomId(), questionIndex),
-                Instant.now().plus(Duration.ofSeconds(delaySeconds))
+        scheduleTimer(
+                new RoomGameTimer(
+                        room.roomId(),
+                        questionIndex,
+                        RoomGameTimerType.HINT,
+                        Instant.now().plus(Duration.ofSeconds(delaySeconds))
+                ),
+                () -> revealHint(room.roomId(), questionIndex)
         );
     }
 
     private void scheduleQuestionTimeout(RoomState room, int questionIndex, int durationSeconds) {
-        taskScheduler.schedule(
-                () -> endQuestionByTimeout(room.roomId(), questionIndex),
-                Instant.now().plus(Duration.ofSeconds(durationSeconds))
+        scheduleTimer(
+                new RoomGameTimer(
+                        room.roomId(),
+                        questionIndex,
+                        RoomGameTimerType.QUESTION_TIMEOUT,
+                        Instant.now().plus(Duration.ofSeconds(durationSeconds))
+                ),
+                () -> endQuestionByTimeout(room.roomId(), questionIndex)
         );
+    }
+
+    private void scheduleTimer(RoomGameTimer timer, Runnable action) {
+        roomGameTimerRepository.schedule(timer);
+        taskScheduler.schedule(() -> {
+            try {
+                action.run();
+            } finally {
+                roomGameTimerRepository.remove(timer);
+            }
+        }, timer.dueAt());
     }
 
     private int actualDurationSeconds(RoomState room, RoomGameQuestion question) {

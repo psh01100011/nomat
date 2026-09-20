@@ -67,6 +67,7 @@ public class RoomRedisRepository {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final RoomLifecycleProperties lifecycleProperties;
+    private final RoomGameTimerRepository roomGameTimerRepository;
 
     public Optional<Long> findJoinedRoomId(Long userId) {
         String roomId = redisTemplate.opsForValue().get(userRoomKey(userId));
@@ -297,6 +298,7 @@ public class RoomRedisRepository {
     }
 
     public void deleteRoom(RoomState room) {
+        roomGameTimerRepository.removeAll(room.roomId());
         String inviteToken = redisTemplate.opsForValue().get(roomInviteKey(room.roomId()));
         redisTemplate.delete(roomKey(room.roomId()));
         redisTemplate.delete(roomGameKey(room.roomId()));

@@ -15,9 +15,12 @@ import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
 import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
+import com.dogdog.nomat.domain.room.model.RoomGameTimer;
+import com.dogdog.nomat.domain.room.model.RoomGameTimerType;
 import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
+import com.dogdog.nomat.domain.room.repository.RoomGameTimerRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -37,6 +40,9 @@ class RoomGameProgressServiceTest {
 
     @Mock
     private RoomRedisRepository roomRedisRepository;
+
+    @Mock
+    private RoomGameTimerRepository roomGameTimerRepository;
 
     @Mock
     private RoomEventPublisher roomEventPublisher;
@@ -65,6 +71,12 @@ class RoomGameProgressServiceTest {
         assertThat(savedGameState.currentQuestionDurationSeconds()).isEqualTo(30);
         assertThat(savedGameState.currentQuestionEndsAt()).isEqualTo(savedGameState.currentQuestionStartedAt().plusSeconds(30));
         assertThat(savedGameState.hintRevealed()).isFalse();
+
+        ArgumentCaptor<RoomGameTimer> timerCaptor = ArgumentCaptor.forClass(RoomGameTimer.class);
+        verify(roomGameTimerRepository, times(2)).schedule(timerCaptor.capture());
+        assertThat(timerCaptor.getAllValues())
+                .extracting(RoomGameTimer::type)
+                .containsExactly(RoomGameTimerType.HINT, RoomGameTimerType.QUESTION_TIMEOUT);
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
@@ -162,6 +174,12 @@ class RoomGameProgressServiceTest {
                 events.size() == 1
                         && events.getFirst().type() == RoomDomainEventType.QUESTION_ENDED
                         && events.getFirst().questionNumber() == 1
+        ));
+        verify(roomGameTimerRepository).removeQuestionTimers(25L, 0);
+        verify(roomGameTimerRepository).schedule(org.mockito.ArgumentMatchers.argThat(timer ->
+                timer.roomId().equals(25L)
+                        && timer.questionIndex() == 0
+                        && timer.type() == RoomGameTimerType.NEXT_QUESTION
         ));
         verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
     }

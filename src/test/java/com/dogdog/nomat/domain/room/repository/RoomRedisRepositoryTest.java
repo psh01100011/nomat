@@ -52,6 +52,9 @@ class RoomRedisRepositoryTest {
     private RoomLifecycleProperties lifecycleProperties;
 
     @Mock
+    private RoomGameTimerRepository roomGameTimerRepository;
+
+    @Mock
     private ZSetOperations<String, String> zSetOperations;
 
     @InjectMocks
@@ -263,6 +266,7 @@ class RoomRedisRepositoryTest {
 
         roomRedisRepository.deleteRoom(room);
 
+        verify(roomGameTimerRepository).removeAll(25L);
         verify(redisTemplate).delete("rooms:25");
         verify(redisTemplate).delete("rooms:games:25");
         verify(redisTemplate).delete("rooms:invites:25");
