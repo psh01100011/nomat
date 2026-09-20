@@ -66,17 +66,19 @@ class RoomRedisRepositoryTest {
     }
 
     @Test
-    void tryRecordCorrectAnswerSavesWinnerWhenLockIsAcquired() throws Exception {
+    void tryRecordCorrectAnswerSavesWinnerWithCompareAndSet() throws Exception {
         RoomGameState gameState = gameState();
         given(redisTemplate.opsForValue()).willReturn(valueOperations);
-        given(valueOperations.setIfAbsent(
-                eq("rooms:games:25:question-resolution-lock:0"),
-                anyString(),
-                eq(Duration.ofSeconds(3))
-        )).willReturn(true);
         given(valueOperations.get("rooms:games:25")).willReturn("game-state");
         given(objectMapper.readValue("game-state", RoomGameState.class)).willReturn(gameState);
         given(objectMapper.writeValueAsString(ArgumentMatchers.any(RoomGameState.class))).willReturn("saved-game-state");
+        given(redisTemplate.execute(
+                ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of("rooms:games:25")),
+                eq("game-state"),
+                eq("saved-game-state"),
+                eq("900000")
+        )).willReturn(1L);
 
         Optional<RoomGameState> result = roomRedisRepository.tryRecordCorrectAnswer(
                 25L,
@@ -91,11 +93,12 @@ class RoomRedisRepositoryTest {
         assertThat(result.get().currentQuestionWinnerUserId()).isEqualTo(3L);
         assertThat(result.get().currentQuestionWinnerAnswer()).isEqualTo("정 답");
         assertThat(result.get().scores()).containsEntry(3L, 100);
-        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(15));
         verify(redisTemplate).execute(
                 ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of("rooms:games:25:question-resolution-lock:0")),
-                anyString()
+                eq(List.of("rooms:games:25")),
+                eq("game-state"),
+                eq("saved-game-state"),
+                eq("900000")
         );
     }
 
@@ -127,13 +130,22 @@ class RoomRedisRepositoryTest {
     }
 
     @Test
-    void tryRecordCorrectAnswerReturnsEmptyWhenLockIsAlreadyHeld() {
+    void tryRecordCorrectAnswerRetriesAfterConcurrentStateChange() throws Exception {
+        RoomGameState gameState = gameState();
         given(redisTemplate.opsForValue()).willReturn(valueOperations);
-        given(valueOperations.setIfAbsent(
-                eq("rooms:games:25:question-resolution-lock:0"),
+        given(valueOperations.get("rooms:games:25"))
+                .willReturn("game-state", "updated-game-state");
+        given(objectMapper.readValue("game-state", RoomGameState.class)).willReturn(gameState);
+        given(objectMapper.readValue("updated-game-state", RoomGameState.class)).willReturn(gameState);
+        given(objectMapper.writeValueAsString(ArgumentMatchers.any(RoomGameState.class)))
+                .willReturn("first-transition", "second-transition");
+        given(redisTemplate.execute(
+                ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of("rooms:games:25")),
                 anyString(),
-                eq(Duration.ofSeconds(3))
-        )).willReturn(false);
+                anyString(),
+                eq("900000")
+        )).willReturn(0L, 1L);
 
         Optional<RoomGameState> result = roomRedisRepository.tryRecordCorrectAnswer(
                 25L,
@@ -144,24 +156,14 @@ class RoomRedisRepositoryTest {
                 100
         );
 
-        assertThat(result).isEmpty();
-        verify(valueOperations, never()).get("rooms:games:25");
-        verify(valueOperations, never()).set(
-                eq("rooms:games:25"),
-                anyString(),
-                ArgumentMatchers.any(Duration.class)
-        );
+        assertThat(result).isPresent();
+        assertThat(result.get().currentQuestionWinnerUserId()).isEqualTo(3L);
     }
 
     @Test
     void tryRecordCorrectAnswerDoesNotOverwriteExistingWinner() throws Exception {
         RoomGameState gameState = gameState().withCorrectAnswer(4L, "정답", 100);
         given(redisTemplate.opsForValue()).willReturn(valueOperations);
-        given(valueOperations.setIfAbsent(
-                eq("rooms:games:25:question-resolution-lock:0"),
-                anyString(),
-                eq(Duration.ofSeconds(3))
-        )).willReturn(true);
         given(valueOperations.get("rooms:games:25")).willReturn("game-state");
         given(objectMapper.readValue("game-state", RoomGameState.class)).willReturn(gameState);
 
@@ -175,37 +177,42 @@ class RoomRedisRepositoryTest {
         );
 
         assertThat(result).isEmpty();
-        verify(valueOperations, never()).set(
-                eq("rooms:games:25"),
-                anyString(),
-                ArgumentMatchers.any(Duration.class)
-        );
-        verify(redisTemplate).execute(
+        verify(redisTemplate, never()).execute(
                 ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of("rooms:games:25:question-resolution-lock:0")),
+                eq(List.of("rooms:games:25")),
+                anyString(),
+                anyString(),
                 anyString()
         );
     }
 
     @Test
-    void tryEndQuestionForAudioLoadFailureSavesFailureWhenLockIsAcquired() throws Exception {
+    void tryEndQuestionForAudioLoadFailureSavesFailureWithCompareAndSet() throws Exception {
         RoomGameState gameState = audioGameState();
         given(redisTemplate.opsForValue()).willReturn(valueOperations);
-        given(valueOperations.setIfAbsent(
-                eq("rooms:games:25:question-resolution-lock:0"),
-                anyString(),
-                eq(Duration.ofSeconds(3))
-        )).willReturn(true);
         given(valueOperations.get("rooms:games:25")).willReturn("game-state");
         given(objectMapper.readValue("game-state", RoomGameState.class)).willReturn(gameState);
         given(objectMapper.writeValueAsString(ArgumentMatchers.any(RoomGameState.class))).willReturn("saved-game-state");
+        given(redisTemplate.execute(
+                ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of("rooms:games:25")),
+                eq("game-state"),
+                eq("saved-game-state"),
+                eq("900000")
+        )).willReturn(1L);
 
         Optional<RoomGameState> result = roomRedisRepository.tryEndQuestionForAudioLoadFailure(25L, 0, 1L);
 
         assertThat(result).isPresent();
         assertThat(result.get().hasCurrentQuestionEnded()).isTrue();
         assertThat(result.get().questionOutcomes().get(1).endedReason()).isEqualTo("AUDIO_LOAD_FAILED");
-        verify(valueOperations).set("rooms:games:25", "saved-game-state", Duration.ofMinutes(15));
+        verify(redisTemplate).execute(
+                ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of("rooms:games:25")),
+                eq("game-state"),
+                eq("saved-game-state"),
+                eq("900000")
+        );
     }
 
     @Test
@@ -282,21 +289,18 @@ class RoomRedisRepositoryTest {
     void tryEndQuestionForAudioLoadFailureDoesNotOverwriteEndedQuestion() throws Exception {
         RoomGameState gameState = audioGameState().withAudioLoadFailed(now());
         given(redisTemplate.opsForValue()).willReturn(valueOperations);
-        given(valueOperations.setIfAbsent(
-                eq("rooms:games:25:question-resolution-lock:0"),
-                anyString(),
-                eq(Duration.ofSeconds(3))
-        )).willReturn(true);
         given(valueOperations.get("rooms:games:25")).willReturn("game-state");
         given(objectMapper.readValue("game-state", RoomGameState.class)).willReturn(gameState);
 
         Optional<RoomGameState> result = roomRedisRepository.tryEndQuestionForAudioLoadFailure(25L, 0, 1L);
 
         assertThat(result).isEmpty();
-        verify(valueOperations, never()).set(
-                eq("rooms:games:25"),
+        verify(redisTemplate, never()).execute(
+                ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of("rooms:games:25")),
                 anyString(),
-                ArgumentMatchers.any(Duration.class)
+                anyString(),
+                anyString()
         );
     }
 

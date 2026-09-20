@@ -28,12 +28,11 @@ public class RoomRedisRepository {
     private static final String ROOM_GAME_KEY_PREFIX = "rooms:games:";
     private static final String ROOM_INVITE_KEY_PREFIX = "rooms:invites:";
     private static final String ROOM_INVITE_TOKEN_KEY_PREFIX = "rooms:invite-tokens:";
-    private static final String ROOM_GAME_QUESTION_RESOLUTION_LOCK_SUFFIX = ":question-resolution-lock:";
     private static final String USER_ROOM_KEY_PREFIX = "users:rooms:";
     private static final String ROOM_CREATED_AT_INDEX_KEY = "rooms:index:created-at";
     private static final String ROOM_MEMBER_COUNT_INDEX_KEY = "rooms:index:member-count";
     private static final String ROOM_EXPIRES_AT_INDEX_KEY = "rooms:index:expires-at";
-    private static final Duration CORRECT_ANSWER_LOCK_TTL = Duration.ofSeconds(3);
+    private static final int MAX_GAME_STATE_TRANSITION_ATTEMPTS = 100;
     private static final DefaultRedisScript<Long> REFRESH_ACTIVITY_SCRIPT = new DefaultRedisScript<>("""
             local ttl = tonumber(ARGV[1])
             for index = 2, #KEYS do
@@ -57,11 +56,12 @@ public class RoomRedisRepository {
             end
             return #expiredRoomIds
             """, Long.class);
-    private static final DefaultRedisScript<Long> RELEASE_LOCK_SCRIPT = new DefaultRedisScript<>("""
-            if redis.call('GET', KEYS[1]) == ARGV[1] then
-                return redis.call('DEL', KEYS[1])
+    private static final DefaultRedisScript<Long> TRANSITION_GAME_STATE_SCRIPT = new DefaultRedisScript<>("""
+            if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+                return 0
             end
-            return 0
+            redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+            return 1
             """, Long.class);
 
     private final StringRedisTemplate redisTemplate;
@@ -251,7 +251,7 @@ public class RoomRedisRepository {
             String answer,
             int scoreToAdd
     ) {
-        return withQuestionResolutionLock(roomId, questionIndex, gameState -> {
+        return transitionGameState(roomId, gameState -> {
             if (!canRecordCorrectAnswer(gameState, questionIndex, answerKey)) {
                 return null;
             }
@@ -264,7 +264,7 @@ public class RoomRedisRepository {
             int questionIndex,
             Long questionId
     ) {
-        return withQuestionResolutionLock(roomId, questionIndex, gameState -> {
+        return transitionGameState(roomId, gameState -> {
             if (!canRecordAudioLoadFailure(gameState, questionIndex, questionId)) {
                 return null;
             }
@@ -272,29 +272,88 @@ public class RoomRedisRepository {
         });
     }
 
-    private Optional<RoomGameState> withQuestionResolutionLock(
+    public Optional<RoomGameState> tryVoteToSkip(
             Long roomId,
             int questionIndex,
+            Long questionId,
+            Long userId,
+            int threshold,
+            java.time.LocalDateTime endedAt
+    ) {
+        return transitionGameState(roomId, gameState -> {
+            if (!canTransitionCurrentQuestion(gameState, questionIndex, questionId)
+                    || gameState.hasSkipVote(userId)) {
+                return null;
+            }
+            RoomGameState votedGameState = gameState.withSkipVote(userId);
+            return votedGameState.skipVoteCount() >= threshold
+                    ? votedGameState.withSkippedQuestion(endedAt)
+                    : votedGameState;
+        });
+    }
+
+    public Optional<RoomGameState> tryEndQuestionByTimeout(Long roomId, int questionIndex) {
+        return transitionGameState(roomId, gameState -> {
+            if (!canTransitionCurrentQuestion(gameState, questionIndex, null)) {
+                return null;
+            }
+            return gameState.withQuestionEnded(java.time.LocalDateTime.now());
+        });
+    }
+
+    public Optional<RoomGameState> tryRevealHint(Long roomId, int questionIndex) {
+        return transitionGameState(roomId, gameState -> {
+            if (!canTransitionCurrentQuestion(gameState, questionIndex, null)
+                    || gameState.hintRevealed()) {
+                return null;
+            }
+            return gameState.withHintRevealed();
+        });
+    }
+
+    public Optional<RoomGameState> tryStartQuestion(
+            Long roomId,
+            int questionIndex,
+            java.time.LocalDateTime startedAt,
+            int durationSeconds
+    ) {
+        return transitionGameState(roomId, gameState -> {
+            if (!canStartQuestion(gameState, questionIndex)) {
+                return null;
+            }
+            return gameState.withStartedQuestion(questionIndex, startedAt, durationSeconds);
+        });
+    }
+
+    private Optional<RoomGameState> transitionGameState(
+            Long roomId,
             Function<RoomGameState, RoomGameState> transition
     ) {
-        String lockKey = questionResolutionLockKey(roomId, questionIndex);
-        String lockValue = UUID.randomUUID().toString();
-        Boolean locked = redisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, CORRECT_ANSWER_LOCK_TTL);
-        if (!Boolean.TRUE.equals(locked)) {
-            return Optional.empty();
-        }
-
-        try {
-            RoomGameState gameState = findGameState(roomId).orElse(null);
+        String gameKey = roomGameKey(roomId);
+        for (int attempt = 0; attempt < MAX_GAME_STATE_TRANSITION_ATTEMPTS; attempt++) {
+            String currentValue = redisTemplate.opsForValue().get(gameKey);
+            if (currentValue == null) {
+                return Optional.empty();
+            }
+            RoomGameState gameState = deserialize(currentValue, RoomGameState.class);
             RoomGameState nextGameState = transition.apply(gameState);
             if (nextGameState == null) {
                 return Optional.empty();
             }
-            saveGameState(nextGameState);
-            return Optional.of(nextGameState);
-        } finally {
-            releaseLock(lockKey, lockValue);
+
+            Long transitioned = redisTemplate.execute(
+                    TRANSITION_GAME_STATE_SCRIPT,
+                    List.of(gameKey),
+                    currentValue,
+                    serialize(nextGameState),
+                    String.valueOf(roomTtl().toMillis())
+            );
+            if (Long.valueOf(1L).equals(transitioned)) {
+                findById(roomId).ifPresent(this::refreshRoomActivity);
+                return Optional.of(nextGameState);
+            }
         }
+        throw new IllegalStateException("Game state transition contention exceeded the retry limit.");
     }
 
     public void deleteRoom(RoomState room) {
@@ -331,8 +390,28 @@ public class RoomRedisRepository {
                 && gameState.currentQuestion().mediaUrl() != null;
     }
 
-    private void releaseLock(String lockKey, String lockValue) {
-        redisTemplate.execute(RELEASE_LOCK_SCRIPT, List.of(lockKey), lockValue);
+    private boolean canTransitionCurrentQuestion(
+            RoomGameState gameState,
+            int questionIndex,
+            Long questionId
+    ) {
+        return gameState != null
+                && gameState.hasCurrentQuestion()
+                && gameState.currentQuestionIndex() == questionIndex
+                && !gameState.hasCurrentQuestionEnded()
+                && !gameState.hasCurrentQuestionWinner()
+                && (questionId == null || gameState.currentQuestion().questionId().equals(questionId));
+    }
+
+    private boolean canStartQuestion(RoomGameState gameState, int questionIndex) {
+        if (gameState == null || questionIndex < 0 || questionIndex >= gameState.questions().size()) {
+            return false;
+        }
+        if (questionIndex == 0) {
+            return gameState.currentQuestionIndex() == -1;
+        }
+        return gameState.currentQuestionIndex() == questionIndex - 1
+                && gameState.hasCurrentQuestionEnded();
     }
 
     private String serialize(Object value) {
@@ -393,10 +472,6 @@ public class RoomRedisRepository {
 
     private String inviteTokenKey(String inviteToken) {
         return ROOM_INVITE_TOKEN_KEY_PREFIX + inviteToken;
-    }
-
-    private String questionResolutionLockKey(Long roomId, int questionIndex) {
-        return roomGameKey(roomId) + ROOM_GAME_QUESTION_RESOLUTION_LOCK_SUFFIX + questionIndex;
     }
 
     private String userRoomKey(Long userId) {

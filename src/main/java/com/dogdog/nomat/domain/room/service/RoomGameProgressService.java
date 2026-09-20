@@ -103,11 +103,21 @@ public class RoomGameProgressService {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "stale_question");
         }
 
-        RoomGameState votedGameState = gameState.hasSkipVote(userId)
-                ? gameState
-                : gameState.withSkipVote(userId);
         int skipVoteThreshold = skipVoteThreshold(room.memberCount());
         LocalDateTime now = LocalDateTime.now();
+        RoomGameState votedGameState = roomRedisRepository.tryVoteToSkip(
+                        roomId,
+                        gameState.currentQuestionIndex(),
+                        question.questionId(),
+                        userId,
+                        skipVoteThreshold,
+                        now
+                )
+                .orElse(null);
+        if (votedGameState == null) {
+            return;
+        }
+
         RoomDomainEvent skipVoteUpdated = RoomDomainEvent.skipVoteUpdated(
                 roomId,
                 userId,
@@ -119,9 +129,7 @@ public class RoomGameProgressService {
                 now
         );
 
-        if (votedGameState.skipVoteCount() >= skipVoteThreshold) {
-            RoomGameState skippedGameState = votedGameState.withSkippedQuestion(now);
-            roomRedisRepository.saveGameState(skippedGameState);
+        if (votedGameState.hasCurrentQuestionEnded()) {
             roomEventPublisher.publish(List.of(
                     skipVoteUpdated,
                     RoomDomainEvent.questionEnded(roomId, question.questionNumber(), question.primaryAnswer(), now)
@@ -134,9 +142,6 @@ public class RoomGameProgressService {
             return;
         }
 
-        if (!gameState.hasSkipVote(userId)) {
-            roomRedisRepository.saveGameState(votedGameState);
-        }
         roomEventPublisher.publish(List.of(skipVoteUpdated));
     }
 
@@ -183,17 +188,12 @@ public class RoomGameProgressService {
     }
 
     public void revealHint(Long roomId, int questionIndex) {
-        RoomGameState gameState = roomRedisRepository.findGameState(roomId).orElse(null);
-        if (gameState == null
-                || gameState.currentQuestionIndex() != questionIndex
-                || gameState.hintRevealed()
-                || gameState.hasCurrentQuestionEnded()) {
+        RoomGameState nextGameState = roomRedisRepository.tryRevealHint(roomId, questionIndex).orElse(null);
+        if (nextGameState == null) {
             return;
         }
 
-        RoomGameQuestion question = gameState.currentQuestion();
-        RoomGameState nextGameState = gameState.withHintRevealed();
-        roomRedisRepository.saveGameState(nextGameState);
+        RoomGameQuestion question = nextGameState.currentQuestion();
         roomEventPublisher.publish(List.of(RoomDomainEvent.hintRevealed(
                 roomId,
                 question.questionNumber(),
@@ -204,22 +204,18 @@ public class RoomGameProgressService {
     }
 
     public void endQuestionByTimeout(Long roomId, int questionIndex) {
-        RoomGameState gameState = roomRedisRepository.findGameState(roomId).orElse(null);
-        if (gameState == null
-                || gameState.currentQuestionIndex() != questionIndex
-                || gameState.hasCurrentQuestionEnded()
-                || gameState.hasCurrentQuestionWinner()) {
+        RoomGameState nextGameState = roomRedisRepository.tryEndQuestionByTimeout(roomId, questionIndex)
+                .orElse(null);
+        if (nextGameState == null) {
             return;
         }
 
-        RoomGameQuestion question = gameState.currentQuestion();
-        RoomGameState nextGameState = gameState.withQuestionEnded(LocalDateTime.now());
-        roomRedisRepository.saveGameState(nextGameState);
+        RoomGameQuestion question = nextGameState.currentQuestion();
         roomEventPublisher.publish(List.of(RoomDomainEvent.questionEnded(
                 roomId,
                 question.questionNumber(),
                 question.primaryAnswer(),
-                LocalDateTime.now()
+                nextGameState.currentQuestionEndedAt()
         )));
         log.debug("event=room_question_timed_out roomId={} questionNumber={}", roomId, question.questionNumber());
         scheduleQuestionAdvance(roomId, questionIndex);
@@ -237,9 +233,17 @@ public class RoomGameProgressService {
         RoomGameQuestion questionToStart = gameState.questions().get(questionIndex);
         int durationSeconds = actualDurationSeconds(room, questionToStart);
         LocalDateTime startedAt = LocalDateTime.now();
-        RoomGameState nextGameState = gameState.withStartedQuestion(questionIndex, startedAt, durationSeconds);
+        RoomGameState nextGameState = roomRedisRepository.tryStartQuestion(
+                        room.roomId(),
+                        questionIndex,
+                        startedAt,
+                        durationSeconds
+                )
+                .orElse(null);
+        if (nextGameState == null) {
+            return;
+        }
         RoomGameQuestion question = nextGameState.currentQuestion();
-        roomRedisRepository.saveGameState(nextGameState);
         roomEventPublisher.publish(List.of(RoomDomainEvent.questionStarted(
                 room,
                 question,

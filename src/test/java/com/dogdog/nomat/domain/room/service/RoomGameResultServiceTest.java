@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.AdditionalAnswers.returnsFirstArg;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
@@ -41,6 +42,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -49,6 +51,8 @@ import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @ExtendWith(MockitoExtension.class)
 class RoomGameResultServiceTest {
@@ -83,8 +87,18 @@ class RoomGameResultServiceTest {
     @Mock
     private RoomEventPublisher roomEventPublisher;
 
+    @Mock
+    private TransactionTemplate transactionTemplate;
+
     @InjectMocks
     private RoomGameResultService roomGameResultService;
+
+    @BeforeEach
+    void setUp() {
+        given(transactionTemplate.execute(any())).willAnswer(invocation ->
+                invocation.<TransactionCallback<?>>getArgument(0).doInTransaction(null)
+        );
+    }
 
     @Test
     void endGameSavesResultsAndCleansRedis() {
@@ -105,7 +119,7 @@ class RoomGameResultServiceTest {
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
         given(quizMapRepository.findById(15L)).willReturn(Optional.of(map));
-        given(gameSessionRepository.save(any(GameSession.class))).will(returnsFirstArg());
+        given(gameSessionRepository.saveAndFlush(any(GameSession.class))).will(returnsFirstArg());
         given(questionRepository.findAllById(List.of(1L))).willReturn(List.of(question));
         given(userRepository.findAllById(List.of(3L))).willReturn(List.of(host));
         given(mapPlayHistoryRepository.findByUserIdAndMapId(3L, 15L)).willReturn(Optional.empty());
@@ -113,8 +127,9 @@ class RoomGameResultServiceTest {
         roomGameResultService.endGame(25L, null, RoomEndedReason.COMPLETED);
 
         ArgumentCaptor<GameSession> sessionCaptor = ArgumentCaptor.forClass(GameSession.class);
-        verify(gameSessionRepository).save(sessionCaptor.capture());
+        verify(gameSessionRepository).saveAndFlush(sessionCaptor.capture());
         GameSession session = sessionCaptor.getValue();
+        assertThat(session.getSourceRoomId()).isEqualTo(25L);
         assertThat(session.getStatus()).isEqualTo(GameSessionStatus.COMPLETED);
         assertThat(session.getEndedReason()).isEqualTo(GameSessionEndedReason.COMPLETED);
         assertThat(session.getPlayerCount()).isEqualTo(2);
@@ -145,6 +160,24 @@ class RoomGameResultServiceTest {
                 events.size() == 1
                         && events.getFirst().type() == RoomDomainEventType.GAME_ENDED
         ));
+    }
+
+    @Test
+    void endGameOnlyCleansRedisWhenTheRoomResultWasAlreadyPersisted() {
+        RoomState room = room().started("seed", now());
+        RoomGameState gameState = gameState();
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        given(gameSessionRepository.existsBySourceRoomId(25L)).willReturn(true);
+
+        roomGameResultService.endGame(25L, null, RoomEndedReason.COMPLETED);
+
+        verify(roomRedisRepository).deleteRoom(org.mockito.ArgumentMatchers.argThat(deletedRoom ->
+                deletedRoom.status().name().equals("ENDED")
+        ));
+        verify(quizMapRepository, never()).findById(any());
+        verify(gameSessionRepository, never()).saveAndFlush(any());
+        verify(roomEventPublisher, never()).publish(any());
     }
 
     private RoomState room() {

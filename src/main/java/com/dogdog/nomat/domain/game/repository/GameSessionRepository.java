@@ -4,4 +4,6 @@ import com.dogdog.nomat.domain.game.entity.GameSession;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface GameSessionRepository extends JpaRepository<GameSession, Long> {
+
+    boolean existsBySourceRoomId(Long sourceRoomId);
 }

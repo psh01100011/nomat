@@ -14,6 +14,7 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -25,6 +26,9 @@ import lombok.NoArgsConstructor;
         name = "game_sessions",
         indexes = {
                 @Index(name = "idx_game_sessions_map_started_at", columnList = "map_id, started_at")
+        },
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uk_game_sessions_source_room", columnNames = "source_room_id")
         }
 )
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -33,6 +37,9 @@ public class GameSession {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(name = "source_room_id", nullable = false, updatable = false)
+    private Long sourceRoomId;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "map_id", nullable = false)
@@ -97,6 +104,7 @@ public class GameSession {
     private LocalDateTime endedAt;
 
     private GameSession(
+            Long sourceRoomId,
             QuizMap map,
             int mapVersion,
             String roomTitle,
@@ -116,6 +124,7 @@ public class GameSession {
             LocalDateTime startedAt,
             LocalDateTime endedAt
     ) {
+        this.sourceRoomId = sourceRoomId;
         this.map = map;
         this.mapVersion = mapVersion;
         this.roomTitle = roomTitle;
@@ -137,6 +146,7 @@ public class GameSession {
     }
 
     public static GameSession complete(
+            Long sourceRoomId,
             QuizMap map,
             int mapVersion,
             String roomTitle,
@@ -159,6 +169,7 @@ public class GameSession {
                 ? GameSessionStatus.COMPLETED
                 : GameSessionStatus.ABORTED;
         return new GameSession(
+                sourceRoomId,
                 map,
                 mapVersion,
                 roomTitle,
