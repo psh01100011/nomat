@@ -426,6 +426,11 @@ public class RoomService {
         );
 
         roomRedisRepository.saveKickedRoom(result.room(), targetUserId);
+        if (room.status() == RoomStatus.PLAYING) {
+            roomRedisRepository.findGameState(roomId)
+                    .map(gameState -> gameState.withoutMember(targetUserId))
+                    .ifPresent(roomRedisRepository::saveGameState);
+        }
         roomEventPublisher.publish(result.events());
         log.info(
                 "event=room_member_kicked roomId={} hostUserId={} targetUserId={}",

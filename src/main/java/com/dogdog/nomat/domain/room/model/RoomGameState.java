@@ -236,6 +236,32 @@ public record RoomGameState(
         );
     }
 
+    public RoomGameState withoutMember(Long userId) {
+        Map<Long, Integer> nextScores = new java.util.HashMap<>(scores);
+        nextScores.remove(userId);
+        Set<Long> nextSkipVoterUserIds = new HashSet<>(currentQuestionSkipVoterUserIds);
+        nextSkipVoterUserIds.remove(userId);
+
+        return new RoomGameState(
+                roomId,
+                randomSeed,
+                questions,
+                currentQuestionIndex,
+                currentQuestionStartedAt,
+                currentQuestionDurationSeconds,
+                currentQuestionEndsAt,
+                currentQuestionEndedAt,
+                hintRevealed,
+                currentQuestionWinnerUserId,
+                currentQuestionWinnerAnswer,
+                nextSkipVoterUserIds,
+                nextScores,
+                questionOutcomes,
+                startedAt,
+                endedAt
+        );
+    }
+
     public RoomGameState withSkippedQuestion(LocalDateTime endedAt) {
         RoomGameQuestion question = currentQuestion();
         Map<Integer, RoomGameQuestionOutcome> nextOutcomes = new java.util.HashMap<>(questionOutcomes);

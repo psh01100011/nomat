@@ -945,7 +945,30 @@ class RoomServiceTest {
     }
 
     @Test
-    void kickRoomMemberRejectsHostSelfKickNonHostAndStartedRoom() {
+    void kickRoomMemberDuringGameRemovesTargetScoreAndSkipVote() {
+        RoomState room = roomWithMember(25L, member(4L)).started("seed", now());
+        RoomGameState gameState = RoomGameState.started(
+                        25L,
+                        "seed",
+                        List.of(),
+                        Map.of(3L, 1, 4L, 2),
+                        now()
+                )
+                .withSkipVote(4L);
+        given(userRepository.findById(3L)).willReturn(Optional.of(user(3L)));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+
+        roomService.kickRoomMember(memberAuth(3L), 25L, 4L);
+
+        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
+        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
+        assertThat(gameStateCaptor.getValue().scores()).containsOnlyKeys(3L);
+        assertThat(gameStateCaptor.getValue().hasSkipVote(4L)).isFalse();
+    }
+
+    @Test
+    void kickRoomMemberRejectsHostSelfKickAndNonHost() {
         User host = user(3L);
         RoomState room = roomWithMember(25L, member(4L));
         given(userRepository.findById(3L)).willReturn(Optional.of(host));
@@ -961,12 +984,6 @@ class RoomServiceTest {
         assertThatThrownBy(() -> roomService.kickRoomMember(memberAuth(4L), 26L, 3L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("forbidden_room_access");
-
-        given(roomRedisRepository.findById(27L)).willReturn(Optional.of(roomWithMember(27L, member(4L))
-                .started("seed", now())));
-        assertThatThrownBy(() -> roomService.kickRoomMember(memberAuth(3L), 27L, 4L))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("cannot_kick_room_member");
 
         verify(roomRedisRepository, never()).saveKickedRoom(any(RoomState.class), eq(4L));
     }
