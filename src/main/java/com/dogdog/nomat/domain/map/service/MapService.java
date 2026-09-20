@@ -5,6 +5,8 @@ import com.dogdog.nomat.domain.asset.entity.AssetProcessingStatus;
 import com.dogdog.nomat.domain.asset.entity.AssetStatus;
 import com.dogdog.nomat.domain.asset.entity.AssetType;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
+import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
+import com.dogdog.nomat.domain.map.dto.AudioProcessingRetryResponse;
 import com.dogdog.nomat.domain.map.dto.CreateMapRequest;
 import com.dogdog.nomat.domain.map.dto.CreateMapResponse;
 import com.dogdog.nomat.domain.map.dto.MapDetailResponse;
@@ -18,6 +20,9 @@ import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureType;
 import com.dogdog.nomat.domain.map.entity.MapFavorite;
 import com.dogdog.nomat.domain.map.entity.MapFavoriteId;
 import com.dogdog.nomat.domain.map.entity.MapLike;
@@ -58,6 +63,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -69,6 +75,7 @@ import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class MapService {
 
     private static final int MIN_MAP_TITLE_LENGTH = 2;
@@ -91,10 +98,11 @@ public class MapService {
     private final AudioProcessingJobRepository audioProcessingJobRepository;
     private final MapLikeRepository mapLikeRepository;
     private final MapFavoriteRepository mapFavoriteRepository;
+    private final AudioProcessingProperties audioProcessingProperties;
 
     @Transactional
     public CreateMapResponse createMap(Long userId, CreateMapRequest request) {
-        User creator = getAuthenticatedUser(userId);
+        User creator = getVerifiedMapCreator(userId);
         Category category = getActiveCategory(request.categoryId());
         QuestionType questionType = parseQuestionType(request.questionType());
         MapVisibility visibility = parseVisibility(request.visibility());
@@ -129,12 +137,16 @@ public class MapService {
             saveQuestion(savedMap, questionType, request.questions().get(index), index + 1, creator);
         }
 
+        log.info(
+                "event=map_created mapId={} userId={} status={} questionType={} questionCount={}",
+                savedMap.getId(), userId, savedMap.getStatus(), questionType, request.questions().size()
+        );
         return CreateMapResponse.from(savedMap);
     }
 
     @Transactional
     public SaveMapDraftResponse saveMapDraft(Long userId, SaveMapDraftRequest request) {
-        User creator = getAuthenticatedUser(userId);
+        User creator = getVerifiedMapCreator(userId);
         Category category = getActiveCategoryOrNull(request.categoryId());
         QuestionType questionType = parseQuestionTypeOrNull(request.questionType());
         MapVisibility visibility = parseVisibilityForDraft(request.visibility());
@@ -162,6 +174,10 @@ public class MapService {
         }
 
         LocalDateTime savedAt = savedMap.getUpdatedAt() == null ? LocalDateTime.now() : savedMap.getUpdatedAt();
+        log.info(
+                "event=map_draft_saved mapId={} userId={} questionType={} questionCount={}",
+                savedMap.getId(), userId, questionType, questions.size()
+        );
         return SaveMapDraftResponse.of(savedMap, savedAt);
     }
 
@@ -173,6 +189,9 @@ public class MapService {
 
         if (!Objects.equals(map.getCreator().getId(), userId)) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_map_access");
+        }
+        if (map.getStatus() == MapStatus.DRAFT && !creator.hasVerifiedEmail()) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "email_verification_required");
         }
 
         if (map.getVersion() != request.version()) {
@@ -203,6 +222,7 @@ public class MapService {
         Map<Long, QuestionMedia> mediaByQuestionId = questionMediaRepository.findByQuestionIdIn(existingQuestionIds)
                 .stream()
                 .collect(Collectors.toMap(media -> media.getQuestion().getId(), Function.identity()));
+        boolean hadSourceFailures = hasSourceFailures(existingQuestions, mediaByQuestionId);
 
         Set<Long> deletedQuestionIds = new HashSet<>(questionChanges.deleteQuestionIds());
         deleteQuestions(existingQuestionsById, deletedQuestionIds, answersByQuestionId, mediaByQuestionId);
@@ -242,10 +262,11 @@ public class MapService {
                 answersByQuestionId,
                 mediaByQuestionId
         );
+        if (hadSourceFailures && !hasSourceFailures(activeQuestions, mediaByQuestionId)) {
+            retryFailedServerJobs(mapId, LocalDateTime.now());
+        }
 
-        MapStatus status = hasUnreadyMedia(activeQuestions, mediaByQuestionId)
-                ? MapStatus.PROCESSING
-                : MapStatus.PUBLISHED;
+        MapStatus status = resolveProcessingStatus(activeQuestions, mediaByQuestionId);
         map.modify(
                 patchState.category(),
                 patchState.thumbnailAsset(),
@@ -258,7 +279,64 @@ public class MapService {
         );
 
         LocalDateTime updatedAt = map.getUpdatedAt() == null ? LocalDateTime.now() : map.getUpdatedAt();
+        log.info(
+                "event=map_modified mapId={} userId={} status={} createdQuestions={} updatedQuestions={} deletedQuestions={}",
+                mapId,
+                userId,
+                status,
+                createdQuestionResponses.size(),
+                questionChanges.updateRequests().size(),
+                deletedQuestionIds.size()
+        );
         return ModifyMapResponse.of(map, createdQuestionResponses, updatedAt);
+    }
+
+    @Transactional
+    public AudioProcessingRetryResponse retryAudioProcessing(Long userId, Long mapId) {
+        getAuthenticatedUser(userId);
+        QuizMap map = quizMapRepository.findByIdAndStatusNot(mapId, MapStatus.DELETED)
+                .orElseThrow(this::mapOrQuestionNotFound);
+
+        if (!Objects.equals(map.getCreator().getId(), userId)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_map_access");
+        }
+
+        List<AudioProcessingJob> failedJobs = audioProcessingJobRepository
+                .findByQuestionMediaQuestionMapIdAndStatusOrderByIdAsc(
+                        mapId,
+                        AudioProcessingJobStatus.FAILED
+                );
+        List<Long> sourceFailureQuestionIds = failedJobs.stream()
+                .filter(job -> job.getFailureCode() != null
+                        && job.getFailureCode().getFailureType() == AudioProcessingFailureType.SOURCE)
+                .map(job -> job.getQuestionMedia().getQuestion().getId())
+                .toList();
+        if (!sourceFailureQuestionIds.isEmpty()) {
+            throw new BusinessException(
+                    HttpStatus.CONFLICT,
+                    "audio_source_failures_must_be_fixed",
+                    Map.of("questionIds", sourceFailureQuestionIds)
+            );
+        }
+
+        List<AudioProcessingJob> retryableJobs = failedJobs.stream()
+                .filter(AudioProcessingJob::canRetryManually)
+                .toList();
+        if (retryableJobs.isEmpty()) {
+            throw audioProcessingRetryNotAllowed();
+        }
+
+        LocalDateTime requestedAt = LocalDateTime.now();
+        retryableJobs.forEach(job -> job.retryManually(requestedAt));
+        map.resumeProcessing();
+        List<Long> retriedQuestionIds = retryableJobs.stream()
+                .map(job -> job.getQuestionMedia().getQuestion().getId())
+                .toList();
+        log.info(
+                "event=audio_processing_manual_retry_requested mapId={} userId={} jobCount={}",
+                mapId, userId, retryableJobs.size()
+        );
+        return AudioProcessingRetryResponse.of(mapId, retriedQuestionIds, requestedAt);
     }
 
     @Transactional
@@ -273,6 +351,7 @@ public class MapService {
 
         audioProcessingJobRepository.deleteByQuestionMediaQuestionMapId(mapId);
         map.delete();
+        log.info("event=map_deleted mapId={} userId={}", mapId, userId);
     }
 
     @Transactional
@@ -287,6 +366,7 @@ public class MapService {
 
         mapLikeRepository.save(MapLike.create(map, user));
         map.increaseLikeCount();
+        log.debug("event=map_liked mapId={} userId={}", mapId, userId);
 
         return new MapLikeResponse(map.getId(), true, map.getLikeCount());
     }
@@ -302,6 +382,7 @@ public class MapService {
                     mapLikeRepository.delete(like);
                     map.decreaseLikeCount();
                 });
+        log.debug("event=map_unliked mapId={} userId={}", mapId, userId);
 
         return new MapLikeResponse(map.getId(), false, map.getLikeCount());
     }
@@ -318,6 +399,7 @@ public class MapService {
 
         mapFavoriteRepository.save(MapFavorite.create(map, user));
         map.increaseFavoriteCount();
+        log.debug("event=map_favorited mapId={} userId={}", mapId, userId);
 
         return new MapFavoriteResponse(map.getId(), true, map.getFavoriteCount());
     }
@@ -333,6 +415,7 @@ public class MapService {
                     mapFavoriteRepository.delete(favorite);
                     map.decreaseFavoriteCount();
                 });
+        log.debug("event=map_unfavorited mapId={} userId={}", mapId, userId);
 
         return new MapFavoriteResponse(map.getId(), false, map.getFavoriteCount());
     }
@@ -353,7 +436,13 @@ public class MapService {
         QuestionType questionType = parseQuestionTypeOrNull(questionTypeValue);
         boolean viewingOwnMaps = userId != null && Objects.equals(userId, creatorId);
         Collection<MapStatus> statuses = viewingOwnMaps
-                ? List.of(MapStatus.DRAFT, MapStatus.PROCESSING, MapStatus.PUBLISHED, MapStatus.BLOCKED)
+                ? List.of(
+                        MapStatus.DRAFT,
+                        MapStatus.PROCESSING,
+                        MapStatus.PROCESSING_FAILED,
+                        MapStatus.PUBLISHED,
+                        MapStatus.BLOCKED
+                )
                 : List.of(MapStatus.PUBLISHED);
         MapVisibility visibility = viewingOwnMaps ? null : MapVisibility.PUBLIC;
         Pageable pageable = PageRequest.of(page, size, sortBy(sort));
@@ -370,7 +459,39 @@ public class MapService {
 
         Set<Long> likedMapIds = getLikedMapIds(userId, maps.getContent());
         Set<Long> favoritedMapIds = getFavoritedMapIds(userId, maps.getContent());
-        return MapListResponse.from(maps, likedMapIds, favoritedMapIds);
+        Map<Long, List<QuestionMedia>> mediaByMapId = getAudioProcessingMediaByMapId(
+                viewingOwnMaps,
+                maps.getContent()
+        );
+        LocalDateTime delayedBefore = LocalDateTime.now()
+                .minusMinutes(audioProcessingProperties.getDelayedThresholdMinutes());
+        return MapListResponse.from(
+                maps,
+                likedMapIds,
+                favoritedMapIds,
+                mediaByMapId,
+                delayedBefore
+        );
+    }
+
+    private Map<Long, List<QuestionMedia>> getAudioProcessingMediaByMapId(
+            boolean viewingOwnMaps,
+            List<QuizMap> maps
+    ) {
+        if (!viewingOwnMaps || maps.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Long> mapIds = maps.stream()
+                .filter(map -> map.getQuestionType() == QuestionType.AUDIO)
+                .map(QuizMap::getId)
+                .toList();
+        if (mapIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return questionMediaRepository.findByQuestionMapIdIn(mapIds).stream()
+                .collect(Collectors.groupingBy(media -> media.getQuestion().getMap().getId()));
     }
 
     @Transactional(readOnly = true)
@@ -417,12 +538,21 @@ public class MapService {
     }
 
     private QuizMap getPublicPublishedMap(Long mapId) {
-        return quizMapRepository.findByIdAndStatusAndVisibility(
+        QuizMap map = quizMapRepository.findByIdAndStatusAndVisibility(
                         mapId,
                         MapStatus.PUBLISHED,
                         MapVisibility.PUBLIC
                 )
                 .orElseThrow(this::mapNotFound);
+        if (map.getQuestionType() == QuestionType.AUDIO
+                && questionMediaRepository.existsByQuestionMapIdAndProcessingStatusNot(
+                        mapId,
+                        QuestionMediaProcessingStatus.READY
+                )) {
+            throw mapNotFound();
+        }
+
+        return map;
     }
 
     private Set<Long> getLikedMapIds(Long userId, List<QuizMap> maps) {
@@ -732,6 +862,9 @@ public class MapService {
         if (hasSameMedia(existingMedia, newMedia)) {
             return;
         }
+        if (!resolvesSourceFailure(existingMedia, newMedia)) {
+            throw new BusinessException(HttpStatus.CONFLICT, "audio_source_failure_not_resolved");
+        }
 
         existingMedia.update(
                 newMedia.getAsset(),
@@ -766,6 +899,30 @@ public class MapService {
                 && Objects.equals(existingMedia.getStartTimeMs(), newMedia.getStartTimeMs())
                 && Objects.equals(existingMedia.getEndTimeMs(), newMedia.getEndTimeMs())
                 && Objects.equals(existingMedia.getDurationMs(), newMedia.getDurationMs());
+    }
+
+    private boolean resolvesSourceFailure(QuestionMedia existingMedia, QuestionMedia newMedia) {
+        AudioProcessingFailureCode failureCode = existingMedia.getFailureCode();
+        if (existingMedia.getProcessingStatus() != QuestionMediaProcessingStatus.FAILED
+                || failureCode == null
+                || failureCode.getFailureType() != AudioProcessingFailureType.SOURCE) {
+            return true;
+        }
+        if (existingMedia.getSourceType() != newMedia.getSourceType()) {
+            return true;
+        }
+
+        boolean urlChanged = !Objects.equals(
+                normalizeMediaSourceUrl(existingMedia.getSourceType(), existingMedia.getSourceUrl()),
+                newMedia.getSourceUrl()
+        );
+        if (failureCode != AudioProcessingFailureCode.INVALID_AUDIO_RANGE) {
+            return urlChanged;
+        }
+
+        return urlChanged
+                || !Objects.equals(existingMedia.getStartTimeMs(), newMedia.getStartTimeMs())
+                || !Objects.equals(existingMedia.getEndTimeMs(), newMedia.getEndTimeMs());
     }
 
     private boolean sameAsset(Asset existingAsset, Asset newAsset) {
@@ -940,10 +1097,56 @@ public class MapService {
                 .anyMatch(media -> media.getProcessingStatus() != QuestionMediaProcessingStatus.READY);
     }
 
+    private MapStatus resolveProcessingStatus(
+            List<Question> activeQuestions,
+            Map<Long, QuestionMedia> mediaByQuestionId
+    ) {
+        boolean hasFailedMedia = activeQuestions.stream()
+                .map(question -> mediaByQuestionId.get(question.getId()))
+                .filter(Objects::nonNull)
+                .anyMatch(media -> media.getProcessingStatus() == QuestionMediaProcessingStatus.FAILED);
+        if (hasFailedMedia) {
+            return MapStatus.PROCESSING_FAILED;
+        }
+        return hasUnreadyMedia(activeQuestions, mediaByQuestionId)
+                ? MapStatus.PROCESSING
+                : MapStatus.PUBLISHED;
+    }
+
+    private boolean hasSourceFailures(
+            List<Question> activeQuestions,
+            Map<Long, QuestionMedia> mediaByQuestionId
+    ) {
+        return activeQuestions.stream()
+                .map(question -> mediaByQuestionId.get(question.getId()))
+                .filter(Objects::nonNull)
+                .anyMatch(media -> media.getProcessingStatus() == QuestionMediaProcessingStatus.FAILED
+                        && media.getFailureCode() != null
+                        && media.getFailureCode().getFailureType() == AudioProcessingFailureType.SOURCE);
+    }
+
+    private void retryFailedServerJobs(Long mapId, LocalDateTime requestedAt) {
+        audioProcessingJobRepository.findByQuestionMediaQuestionMapIdAndStatusOrderByIdAsc(
+                        mapId,
+                        AudioProcessingJobStatus.FAILED
+                )
+                .stream()
+                .filter(AudioProcessingJob::canRetryManually)
+                .forEach(job -> job.retryManually(requestedAt));
+    }
+
     private User getAuthenticatedUser(Long userId) {
         return userRepository.findById(userId)
                 .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
+    }
+
+    private User getVerifiedMapCreator(Long userId) {
+        User user = getAuthenticatedUser(userId);
+        if (!user.hasVerifiedEmail()) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "email_verification_required");
+        }
+        return user;
     }
 
     private Category getActiveCategory(Long categoryId) {
@@ -1048,7 +1251,7 @@ public class MapService {
             return null;
         }
 
-        Asset asset = assetRepository.findById(assetId)
+        Asset asset = assetRepository.findByIdForUpdate(assetId)
                 .orElseThrow(this::invalidRequest);
         validateAttachableAsset(asset, uploader, AssetType.IMAGE);
         asset.attach();
@@ -1067,7 +1270,7 @@ public class MapService {
             case TEXT -> throw invalidRequest();
         };
 
-        Asset asset = assetRepository.findById(assetId)
+        Asset asset = assetRepository.findByIdForUpdate(assetId)
                 .orElseThrow(this::invalidRequest);
         validateAttachableAsset(asset, uploader, assetType);
         asset.attach();
@@ -1080,7 +1283,7 @@ public class MapService {
             return null;
         }
 
-        Asset asset = assetRepository.findById(assetId)
+        Asset asset = assetRepository.findByIdForUpdate(assetId)
                 .orElseThrow(this::invalidRequest);
         if (questionType == QuestionType.IMAGE) {
             validateAttachableAsset(asset, uploader, AssetType.IMAGE);
@@ -1668,6 +1871,10 @@ public class MapService {
 
     private BusinessException mapNotFound() {
         return new BusinessException(HttpStatus.NOT_FOUND, "map_not_found");
+    }
+
+    private BusinessException audioProcessingRetryNotAllowed() {
+        return new BusinessException(HttpStatus.CONFLICT, "audio_processing_retry_not_allowed");
     }
 
     private record MapPatchState(

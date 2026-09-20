@@ -121,6 +121,7 @@ public record RoomGameSnapshotResponse(
             Long userId,
             String nickname,
             String profileImageUrl,
+            String userType,
             int score
     ) {
 
@@ -129,6 +130,7 @@ public record RoomGameSnapshotResponse(
                     member.userId(),
                     member.nickname(),
                     member.profileImageUrl(),
+                    member.userType().name(),
                     gameState == null ? 0 : gameState.scores().getOrDefault(member.userId(), 0)
             );
         }

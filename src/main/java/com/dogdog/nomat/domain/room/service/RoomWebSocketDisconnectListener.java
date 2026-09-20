@@ -3,6 +3,7 @@ package com.dogdog.nomat.domain.room.service;
 import java.time.Duration;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
@@ -10,6 +11,7 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class RoomWebSocketDisconnectListener {
 
     private static final Duration AUTO_LEAVE_DELAY = Duration.ofSeconds(60);
@@ -24,6 +26,8 @@ public class RoomWebSocketDisconnectListener {
         if (userId == null) {
             return;
         }
+
+        log.debug("event=websocket_disconnect_detected userId={} autoLeaveDelaySeconds={}", userId, AUTO_LEAVE_DELAY.toSeconds());
 
         taskScheduler.schedule(
                 () -> leaveIfStillDisconnected(userId),

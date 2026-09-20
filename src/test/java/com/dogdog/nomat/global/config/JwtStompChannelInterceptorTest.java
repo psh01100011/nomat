@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
 import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
@@ -38,13 +39,13 @@ class JwtStompChannelInterceptorTest {
     private final RoomWebSocketSessionRegistry sessionRegistry = new RoomWebSocketSessionRegistry();
 
     @Test
-    void connectAuthenticatesTokenAndRegistersSession() {
+    void connectAuthenticatesGuestTokenAndRegistersSession() {
         JwtStompChannelInterceptor interceptor = interceptor();
-        given(jwtDecoder.decode("access-token")).willReturn(jwt(3L));
+        given(jwtDecoder.decode("access-token")).willReturn(guestJwt(-1L));
 
-        interceptor.preSend(connectMessage("session-3", null), null);
+        interceptor.preSend(connectMessage("session-guest", null), null);
 
-        assertThat(sessionRegistry.hasActiveSession(3L)).isTrue();
+        assertThat(sessionRegistry.hasActiveSession(-1L)).isTrue();
     }
 
     @Test
@@ -70,11 +71,18 @@ class JwtStompChannelInterceptorTest {
     }
 
     @Test
-    void subscribeRoomTopicAllowsRoomMember() {
+    void subscribeRoomTopicAllowsGuestRoomMember() {
         JwtStompChannelInterceptor interceptor = interceptor();
-        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room(25L, 3L)));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room(25L, -1L)));
 
-        interceptor.preSend(subscribeMessage(3L, "/topic/rooms/25"), null);
+        interceptor.preSend(subscribeMessage(-1L, "/topic/rooms/25"), null);
+    }
+
+    @Test
+    void sendAllowsAuthenticatedGuestPrincipal() {
+        JwtStompChannelInterceptor interceptor = interceptor();
+
+        interceptor.preSend(sendMessage(-1L), null);
     }
 
     @Test
@@ -118,6 +126,14 @@ class JwtStompChannelInterceptorTest {
         return MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
     }
 
+    private Message<byte[]> sendMessage(Long userId) {
+        StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SEND);
+        accessor.setSessionId("session-" + userId);
+        accessor.setDestination("/app/rooms/25/chat");
+        accessor.setUser(new StompUserPrincipal(userId));
+        return MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
+    }
+
     private Jwt jwt(Long userId) {
         Instant now = Instant.now();
         return Jwt.withTokenValue("access-token")
@@ -125,6 +141,18 @@ class JwtStompChannelInterceptorTest {
                 .issuedAt(now)
                 .expiresAt(now.plusSeconds(60))
                 .claim("userId", userId)
+                .build();
+    }
+
+    private Jwt guestJwt(Long userId) {
+        Instant now = Instant.now();
+        return Jwt.withTokenValue("access-token")
+                .header("alg", "none")
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(60))
+                .claim("userId", userId)
+                .claim("userType", AuthenticatedUserType.GUEST.name())
+                .claim("nickname", "손님")
                 .build();
     }
 

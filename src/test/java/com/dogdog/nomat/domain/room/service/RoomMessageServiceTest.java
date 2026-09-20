@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
 import com.dogdog.nomat.domain.room.dto.RoomChatMessageRequest;
 import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
@@ -30,6 +31,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class RoomMessageServiceTest {
 
+    private static final LocalDateTime TEST_NOW = LocalDateTime.now();
+
     @Mock
     private RoomRedisRepository roomRedisRepository;
 
@@ -46,16 +49,17 @@ class RoomMessageServiceTest {
     private RoomMessageService roomMessageService;
 
     @Test
-    void sendMessagePublishesChatMessageInWaitingRoom() {
-        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room()));
+    void sendMessagePublishesGuestChatMessageInWaitingRoom() {
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(guestRoom()));
 
-        roomMessageService.sendMessage(3L, 25L, new RoomChatMessageRequest(" 안녕 ", " message-1 "));
+        roomMessageService.sendMessage(-1L, 25L, new RoomChatMessageRequest(" 안녕 ", " message-1 "));
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
                         && events.getFirst().type() == RoomDomainEventType.CHAT_MESSAGE
-                        && events.getFirst().userId().equals(3L)
-                        && events.getFirst().nickname().equals("tester3")
+                        && events.getFirst().userId().equals(-1L)
+                        && events.getFirst().nickname().equals("손님")
+                        && events.getFirst().userType().equals("GUEST")
                         && events.getFirst().content().equals("안녕")
                         && events.getFirst().clientMessageId().equals("message-1")
         ));
@@ -93,27 +97,30 @@ class RoomMessageServiceTest {
     }
 
     @Test
-    void sendMessageRecordsCorrectAnswerInPlayingRoom() {
-        RoomState playingRoom = room().started("seed", now());
-        RoomGameState gameState = gameState();
-        RoomGameState savedGameState = gameState.withCorrectAnswer(3L, "정 답", 100);
+    void sendMessageRecordsGuestCorrectAnswerInPlayingRoom() {
+        RoomState playingRoom = guestRoom().started("seed", now());
+        RoomGameState gameState = gameState(-1L);
+        RoomGameState savedGameState = gameState.withCorrectAnswer(-1L, "정 답", 1);
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(playingRoom));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
-        given(roomRedisRepository.tryRecordCorrectAnswer(25L, 0, "정답", 3L, "정 답", 100))
+        given(roomRedisRepository.tryRecordCorrectAnswer(25L, 0, "정답", -1L, "정 답", 1))
                 .willReturn(Optional.of(savedGameState));
 
-        roomMessageService.sendMessage(3L, 25L, new RoomChatMessageRequest("정 답"));
+        roomMessageService.sendMessage(-1L, 25L, new RoomChatMessageRequest("정 답"));
 
-        assertThat(savedGameState.currentQuestionWinnerUserId()).isEqualTo(3L);
+        assertThat(savedGameState.currentQuestionWinnerUserId()).isEqualTo(-1L);
         assertThat(savedGameState.currentQuestionWinnerAnswer()).isEqualTo("정 답");
-        assertThat(savedGameState.scores()).containsEntry(3L, 100);
+        assertThat(savedGameState.scores()).containsEntry(-1L, 1);
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 4
                         && events.get(0).type() == RoomDomainEventType.CHAT_MESSAGE
+                        && events.get(0).userType().equals("GUEST")
                         && events.get(1).type() == RoomDomainEventType.CORRECT_ANSWER
+                        && events.get(1).userType().equals("GUEST")
                         && events.get(2).type() == RoomDomainEventType.SCORE_UPDATED
-                        && events.get(2).score() == 100
+                        && events.get(2).userType().equals("GUEST")
+                        && events.get(2).score() == 1
                         && events.get(3).type() == RoomDomainEventType.QUESTION_ENDED
         ));
         verify(roomGameProgressService).scheduleQuestionAdvance(25L, 0);
@@ -125,7 +132,7 @@ class RoomMessageServiceTest {
         RoomGameState gameState = gameState();
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(playingRoom));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
-        given(roomRedisRepository.tryRecordCorrectAnswer(25L, 0, "정답", 3L, "정답", 100))
+        given(roomRedisRepository.tryRecordCorrectAnswer(25L, 0, "정답", 3L, "정답", 1))
                 .willReturn(Optional.empty());
 
         roomMessageService.sendMessage(3L, 25L, new RoomChatMessageRequest("정답"));
@@ -172,6 +179,21 @@ class RoomMessageServiceTest {
     }
 
     private RoomState room() {
+        return room(new RoomMember(3L, "tester3", null, true, now()));
+    }
+
+    private RoomState guestRoom() {
+        return room(new RoomMember(
+                -1L,
+                "손님",
+                null,
+                AuthenticatedUserType.GUEST,
+                true,
+                now()
+        ));
+    }
+
+    private RoomState room(RoomMember hostMember) {
         return RoomState.waiting(
                 25L,
                 "방",
@@ -191,12 +213,16 @@ class RoomMessageServiceTest {
                 true,
                 true,
                 10,
-                new RoomMember(3L, "tester3", null, true, now()),
+                hostMember,
                 now()
         );
     }
 
     private RoomGameState gameState() {
+        return gameState(3L);
+    }
+
+    private RoomGameState gameState(Long userId) {
         return new RoomGameState(
                 25L,
                 "seed",
@@ -210,7 +236,7 @@ class RoomMessageServiceTest {
                 null,
                 null,
                 Set.of(),
-                Map.of(3L, 0),
+                Map.of(userId, 0),
                 Map.of(),
                 now(),
                 null
@@ -275,6 +301,6 @@ class RoomMessageServiceTest {
     }
 
     private LocalDateTime now() {
-        return LocalDateTime.of(2026, 8, 21, 20, 0);
+        return TEST_NOW;
     }
 }

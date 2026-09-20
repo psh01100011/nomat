@@ -1,6 +1,7 @@
 package com.dogdog.nomat.domain.map.service;
 
 import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -18,10 +19,19 @@ public class ExternalAudioExtractionCommandRunner implements AudioExtractionComm
     private static final int MAX_LOG_CHARS = 2000;
 
     private final AudioProcessingProperties properties;
+    private final AudioExtractionFailureClassifier failureClassifier;
 
     @Override
     public void extractYoutubeSegment(YoutubeAudioExtractionCommand command) throws IOException, InterruptedException {
-        Files.createDirectories(command.outputFile().getParent());
+        try {
+            Files.createDirectories(command.outputFile().getParent());
+        } catch (IOException exception) {
+            throw new AudioProcessingException(
+                    AudioProcessingFailureCode.INTERNAL_ERROR,
+                    "Failed to prepare audio processing directory.",
+                    exception
+            );
+        }
 
         Path ytDlpLog = command.outputFile().resolveSibling("yt-dlp.log");
         Path ffmpegLog = command.outputFile().resolveSibling("ffmpeg.log");
@@ -60,7 +70,16 @@ public class ExternalAudioExtractionCommandRunner implements AudioExtractionComm
         ffmpeg.redirectOutput(ProcessBuilder.Redirect.DISCARD);
         ffmpeg.redirectError(ffmpegLog.toFile());
 
-        List<Process> processes = ProcessBuilder.startPipeline(List.of(ytDlp, ffmpeg));
+        List<Process> processes;
+        try {
+            processes = ProcessBuilder.startPipeline(List.of(ytDlp, ffmpeg));
+        } catch (IOException exception) {
+            throw new AudioProcessingException(
+                    AudioProcessingFailureCode.INTERNAL_ERROR,
+                    "Failed to start audio extraction commands.",
+                    exception
+            );
+        }
         waitForPipeline(processes, ytDlpLog, ffmpegLog, command.outputFile());
     }
 
@@ -70,27 +89,39 @@ public class ExternalAudioExtractionCommandRunner implements AudioExtractionComm
         for (Process process : processes) {
             if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
                 processes.forEach(Process::destroyForcibly);
-                throw new IOException("Audio extraction command timed out.");
+                throw new AudioProcessingException(
+                        AudioProcessingFailureCode.PROCESSING_TIMEOUT,
+                        "Audio extraction command timed out."
+                );
             }
         }
 
         String ytDlpFullLog = readFullLog(ytDlpLog);
         String ffmpegFullLog = readFullLog(ffmpegLog);
-        for (int index = 0; index < processes.size(); index++) {
-            Process process = processes.get(index);
-            if (process.exitValue() == 0) {
-                continue;
-            }
-
-            if (isExpectedYtDlpBrokenPipe(index, processes, ytDlpFullLog, outputFile)) {
-                continue;
-            }
-
-            throw new IOException("Audio extraction command failed. yt-dlp="
-                    + truncateLog(ytDlpFullLog)
-                    + ", ffmpeg="
-                    + truncateLog(ffmpegFullLog));
+        boolean ytDlpFailed = processes.get(0).exitValue() != 0;
+        boolean ffmpegFailed = processes.get(1).exitValue() != 0;
+        if (ytDlpFailed && isExpectedYtDlpBrokenPipe(0, processes, ytDlpFullLog, outputFile)) {
+            ytDlpFailed = false;
         }
+
+        boolean outputMissing = !Files.exists(outputFile) || Files.size(outputFile) == 0;
+        if (!ytDlpFailed && !ffmpegFailed && !outputMissing) {
+            return;
+        }
+
+        AudioProcessingFailureCode failureCode = failureClassifier.classify(
+                ytDlpFullLog,
+                ffmpegFullLog,
+                ytDlpFailed,
+                ffmpegFailed || outputMissing
+        );
+        throw new AudioProcessingException(
+                failureCode,
+                "Audio extraction command failed. yt-dlp="
+                        + truncateLog(ytDlpFullLog)
+                        + ", ffmpeg="
+                        + truncateLog(ffmpegFullLog)
+        );
     }
 
     private boolean isExpectedYtDlpBrokenPipe(

@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.game.entity.GamePlayerResult;
 import com.dogdog.nomat.domain.game.entity.GameQuestionEndedReason;
 import com.dogdog.nomat.domain.game.entity.GameQuestionResult;
@@ -90,7 +91,16 @@ class RoomGameResultServiceTest {
         User host = user(3L);
         QuizMap map = map();
         Question question = question(map);
-        RoomState room = room().started("seed", now());
+        RoomState room = room()
+                .withJoinedMember(new RoomMember(
+                        -1L,
+                        "손님",
+                        null,
+                        AuthenticatedUserType.GUEST,
+                        false,
+                        now().plusSeconds(1)
+                ))
+                .started("seed", now());
         RoomGameState gameState = gameState();
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
@@ -107,7 +117,7 @@ class RoomGameResultServiceTest {
         GameSession session = sessionCaptor.getValue();
         assertThat(session.getStatus()).isEqualTo(GameSessionStatus.COMPLETED);
         assertThat(session.getEndedReason()).isEqualTo(GameSessionEndedReason.COMPLETED);
-        assertThat(session.getPlayerCount()).isEqualTo(1);
+        assertThat(session.getPlayerCount()).isEqualTo(2);
         assertThat(session.getSelectedQuestionCount()).isEqualTo(1);
 
         ArgumentCaptor<List<GameQuestionResult>> questionResultsCaptor = ArgumentCaptor.forClass(List.class);
@@ -123,7 +133,7 @@ class RoomGameResultServiceTest {
         GamePlayerResult playerResult = playerResultsCaptor.getValue().getFirst();
         assertThat(playerResult.getUser()).isEqualTo(host);
         assertThat(playerResult.getScore()).isEqualTo(100);
-        assertThat(playerResult.getRank()).isEqualTo(1);
+        assertThat(playerResult.getRank()).isEqualTo(2);
         assertThat(playerResult.getCorrectCount()).isEqualTo(1);
 
         verify(mapPlayHistoryRepository).save(any(MapPlayHistory.class));
@@ -176,7 +186,7 @@ class RoomGameResultServiceTest {
                 3L,
                 "정답",
                 Set.of(),
-                Map.of(3L, 100),
+                Map.of(3L, 100, -1L, 200),
                 Map.of(1, new RoomGameQuestionOutcome(
                         1L,
                         1,

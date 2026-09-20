@@ -1,5 +1,7 @@
 package com.dogdog.nomat.domain.auth.dto;
 
+import com.dogdog.nomat.domain.emailverification.service.EmailAddressNormalizer;
+
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -27,9 +29,22 @@ public record SignupRequest(
         String nickname,
 
         @Email(message = "invalid_request")
+        @Pattern(regexp = EmailAddressNormalizer.OPTIONAL_EMAIL_PATTERN, message = "invalid_email")
         @Size(max = 254, message = "invalid_request")
-        String email
+        String email,
+
+        String emailVerificationToken
 ) {
+
+    public SignupRequest(
+            String loginId,
+            String password,
+            String passwordConfirm,
+            String nickname,
+            String email
+    ) {
+        this(loginId, password, passwordConfirm, nickname, email, null);
+    }
 
     @AssertTrue
     public boolean isPasswordConfirmed() {

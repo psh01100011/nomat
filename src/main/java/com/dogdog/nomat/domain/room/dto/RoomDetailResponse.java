@@ -74,6 +74,7 @@ public record RoomDetailResponse(
             Long userId,
             String nickname,
             String profileImageUrl,
+            String userType,
             boolean host
     ) {
 
@@ -82,6 +83,7 @@ public record RoomDetailResponse(
                     member.userId(),
                     member.nickname(),
                     member.profileImageUrl(),
+                    member.userType().name(),
                     member.host()
             );
         }

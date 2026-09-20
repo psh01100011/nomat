@@ -31,6 +31,7 @@ import lombok.NoArgsConstructor;
                 @Index(name = "idx_maps_category_id", columnList = "category_id"),
                 @Index(name = "idx_maps_question_type", columnList = "question_type"),
                 @Index(name = "idx_maps_status", columnList = "status"),
+                @Index(name = "idx_maps_thumbnail_asset_status", columnList = "thumbnail_asset_id, status"),
                 @Index(name = "idx_maps_visibility", columnList = "visibility"),
                 @Index(name = "idx_maps_created_at", columnList = "created_at")
         }
@@ -199,12 +200,24 @@ public class QuizMap {
     }
 
     public void publishIfProcessing() {
-        if (status != MapStatus.PROCESSING) {
+        if (status != MapStatus.PROCESSING && status != MapStatus.PROCESSING_FAILED) {
             return;
         }
 
         this.status = MapStatus.PUBLISHED;
         this.publishedAt = LocalDateTime.now();
+    }
+
+    public void resumeProcessing() {
+        if (status == MapStatus.PUBLISHED || status == MapStatus.PROCESSING_FAILED) {
+            this.status = MapStatus.PROCESSING;
+        }
+    }
+
+    public void failProcessing() {
+        if (status == MapStatus.PROCESSING) {
+            this.status = MapStatus.PROCESSING_FAILED;
+        }
     }
 
     public void modify(

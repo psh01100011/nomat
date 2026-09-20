@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -30,11 +31,13 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.util.matcher.RegexRequestMatcher;
 
 @Configuration
+@Slf4j
 public class SecurityConfig {
 
     private static final String ACCESS_TOKEN_TYPE = "access";
@@ -46,6 +49,7 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             BearerTokenResolver bearerTokenResolver,
+            AdminApiKeyAuthenticationFilter adminApiKeyAuthenticationFilter,
             @Qualifier("jwtDecoder") JwtDecoder jwtDecoder
     ) throws Exception {
         return http
@@ -53,7 +57,15 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/signup").permitAll()
+                        .requestMatchers("/auth/email-verifications").permitAll()
+                        .requestMatchers("/auth/email-verifications/confirm").permitAll()
+                        .requestMatchers("/auth/login-id-recovery/email-verifications").permitAll()
+                        .requestMatchers("/auth/login-id-recovery/email-verifications/confirm").permitAll()
+                        .requestMatchers("/auth/password-reset/email-verifications").permitAll()
+                        .requestMatchers("/auth/password-reset/email-verifications/confirm").permitAll()
+                        .requestMatchers("/auth/password-reset").permitAll()
                         .requestMatchers("/auth/login").permitAll()
+                        .requestMatchers("/auth/guest").permitAll()
                         .requestMatchers("/auth/refresh").permitAll()
                         .requestMatchers("/auth/logout").permitAll()
                         .requestMatchers("/users/login-id/availability").permitAll()
@@ -70,6 +82,8 @@ public class SecurityConfig {
                         .requestMatchers("/ws").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
+                        .requestMatchers("/actuator/prometheus").hasRole("ADMIN")
+                        .requestMatchers("/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )
                 .oauth2ResourceServer(oauth2 -> oauth2
@@ -77,11 +91,17 @@ public class SecurityConfig {
                         .jwt(jwt -> jwt.decoder(jwtDecoder))
                 )
                 .exceptionHandling(exception -> exception.authenticationEntryPoint((request, response, authException) -> {
+                    log.debug(
+                            "event=http_authentication_rejected method={} path={}",
+                            request.getMethod(),
+                            request.getRequestURI()
+                    );
                     response.setStatus(HttpStatus.UNAUTHORIZED.value());
                     response.setContentType(MediaType.APPLICATION_JSON_VALUE);
                     response.setCharacterEncoding(StandardCharsets.UTF_8.name());
                     response.getWriter().write("{\"message\":\"invalid_token\",\"data\":null}");
                 }))
+                .addFilterAfter(adminApiKeyAuthenticationFilter, BearerTokenAuthenticationFilter.class)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .build();

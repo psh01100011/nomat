@@ -19,10 +19,10 @@ public class AudioProcessingScheduler {
             initialDelayString = "${app.audio-processing.initial-delay-ms}",
             fixedDelayString = "${app.audio-processing.fixed-delay-ms}"
     )
-    public void processPendingAudioJobs() {
-        int processedCount = audioProcessingService.processPendingJobs();
+    public void processAvailableAudioJobs() {
+        int processedCount = audioProcessingService.processAvailableJobs();
         if (processedCount > 0) {
-            log.info("Processed pending audio jobs. count={}", processedCount);
+            log.info("event=audio_job_batch_processed count={}", processedCount);
         }
     }
 }

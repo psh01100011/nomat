@@ -3,11 +3,15 @@ package com.dogdog.nomat.domain.user.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.asset.entity.Asset;
 import com.dogdog.nomat.domain.asset.entity.AssetProcessingStatus;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
+import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
 import com.dogdog.nomat.domain.user.dto.AvailabilityResponse;
 import com.dogdog.nomat.domain.user.dto.ModifyMyInfoRequest;
 import com.dogdog.nomat.domain.user.dto.ModifyPasswordRequest;
@@ -46,6 +50,9 @@ class UserServiceTest {
     @Mock
     private AuthTokenProvider authTokenProvider;
 
+    @Mock
+    private EmailVerificationService emailVerificationService;
+
     @InjectMocks
     private UserService userService;
 
@@ -55,19 +62,37 @@ class UserServiceTest {
         ReflectionTestUtils.setField(user, "id", 1L);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
 
-        MyInfoResponse response = userService.getMyInfo(1L);
+        AuthenticatedUser authenticatedUser = new AuthenticatedUser(1L, AuthenticatedUserType.MEMBER, null);
+
+        MyInfoResponse response = userService.getMyInfo(authenticatedUser);
 
         assertThat(response.userId()).isEqualTo(1L);
+        assertThat(response.userType()).isEqualTo("MEMBER");
         assertThat(response.nickname()).isEqualTo("tester");
         assertThat(response.profileImageUrl()).isNull();
         assertThat(response.email()).isEqualTo("tester@example.com");
     }
 
     @Test
+    void getMyInfoReturnsGuestInfoWithoutUserLookup() {
+        AuthenticatedUser guest = new AuthenticatedUser(-1L, AuthenticatedUserType.GUEST, "손님");
+
+        MyInfoResponse response = userService.getMyInfo(guest);
+
+        assertThat(response.userId()).isEqualTo(-1L);
+        assertThat(response.userType()).isEqualTo("GUEST");
+        assertThat(response.nickname()).isEqualTo("손님");
+        assertThat(response.profileImageUrl()).isNull();
+        assertThat(response.email()).isNull();
+    }
+
+    @Test
     void getMyInfoRejectsUnknownUserId() {
         given(userRepository.findById(1L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> userService.getMyInfo(1L))
+        AuthenticatedUser authenticatedUser = new AuthenticatedUser(1L, AuthenticatedUserType.MEMBER, null);
+
+        assertThatThrownBy(() -> userService.getMyInfo(authenticatedUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_token");
     }
@@ -190,7 +215,7 @@ class UserServiceTest {
         User user = activeUser(1L);
         Asset asset = imageAsset(10L, user);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
-        given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
+        given(assetRepository.findByIdForUpdate(10L)).willReturn(Optional.of(asset));
 
         userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null));
 
@@ -202,7 +227,7 @@ class UserServiceTest {
     void modifyMyInfoRejectsUnknownProfileImageAssetId() {
         User user = activeUser(1L);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
-        given(assetRepository.findById(10L)).willReturn(Optional.empty());
+        given(assetRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null)))
                 .isInstanceOf(BusinessException.class)
@@ -215,7 +240,7 @@ class UserServiceTest {
         User otherUser = activeUser(2L);
         Asset asset = imageAsset(10L, otherUser);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
-        given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
+        given(assetRepository.findByIdForUpdate(10L)).willReturn(Optional.of(asset));
 
         assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null)))
                 .isInstanceOf(BusinessException.class)
@@ -228,7 +253,7 @@ class UserServiceTest {
         Asset asset = imageAsset(10L, user);
         ReflectionTestUtils.setField(asset, "processingStatus", AssetProcessingStatus.PROCESSING);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
-        given(assetRepository.findById(10L)).willReturn(Optional.of(asset));
+        given(assetRepository.findByIdForUpdate(10L)).willReturn(Optional.of(asset));
 
         assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, 10L, null)))
                 .isInstanceOf(BusinessException.class)
@@ -240,20 +265,31 @@ class UserServiceTest {
         User user = activeUser(1L);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
 
-        userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, null, "  tester@example.com  "));
+        userService.modifyMyInfo(
+                1L,
+                new ModifyMyInfoRequest(null, null, "  Tester@Example.COM  ", "email-verification-token")
+        );
 
         assertThat(user.getEmail()).isEqualTo("tester@example.com");
+        assertThat(user.getEmailVerifiedAt()).isNotNull();
+        verify(emailVerificationService).consumeProfileChangeToken(
+                1L,
+                "tester@example.com",
+                "email-verification-token"
+        );
     }
 
     @Test
-    void modifyMyInfoClearsEmailWhenBlankEmailIsRequested() {
+    void modifyMyInfoRejectsRemovingRegisteredEmail() {
         User user = User.create("testuser1", "encoded-password", "tester1", "tester@example.com");
         ReflectionTestUtils.setField(user, "id", 1L);
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
 
-        userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, null, " "));
+        assertThatThrownBy(() -> userService.modifyMyInfo(1L, new ModifyMyInfoRequest(null, null, " ")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("email_removal_not_allowed");
 
-        assertThat(user.getEmail()).isNull();
+        assertThat(user.getEmail()).isEqualTo("tester@example.com");
     }
 
     @Test

@@ -1,0 +1,11 @@
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+logging:
+  level:
+    root: INFO
+    com.dogdog.nomat: INFO
+    org.hibernate: WARN
+    org.springframework: WARN

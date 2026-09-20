@@ -17,6 +17,7 @@ public record RoomDomainEvent(
         String content,
         String clientMessageId,
         String nickname,
+        String userType,
         Integer score,
         Integer questionNumber,
         Long questionId,
@@ -144,6 +145,7 @@ public record RoomDomainEvent(
             Long roomId,
             Long userId,
             String nickname,
+            String userType,
             String content,
             String clientMessageId,
             LocalDateTime occurredAt
@@ -155,6 +157,7 @@ public record RoomDomainEvent(
                 .content(content)
                 .clientMessageId(clientMessageId)
                 .nickname(nickname)
+                .userType(userType)
                 .occurredAt(occurredAt)
                 .build();
     }
@@ -163,6 +166,7 @@ public record RoomDomainEvent(
             Long roomId,
             Long userId,
             String nickname,
+            String userType,
             Integer questionNumber,
             LocalDateTime occurredAt
     ) {
@@ -171,6 +175,7 @@ public record RoomDomainEvent(
                 .roomId(roomId)
                 .userId(userId)
                 .nickname(nickname)
+                .userType(userType)
                 .questionNumber(questionNumber)
                 .occurredAt(occurredAt)
                 .build();
@@ -180,6 +185,7 @@ public record RoomDomainEvent(
             Long roomId,
             Long userId,
             String nickname,
+            String userType,
             int score,
             LocalDateTime occurredAt
     ) {
@@ -188,6 +194,7 @@ public record RoomDomainEvent(
                 .roomId(roomId)
                 .userId(userId)
                 .nickname(nickname)
+                .userType(userType)
                 .score(score)
                 .occurredAt(occurredAt)
                 .build();
@@ -196,6 +203,7 @@ public record RoomDomainEvent(
     public static RoomDomainEvent skipVoteUpdated(
             Long roomId,
             Long userId,
+            String userType,
             Integer questionNumber,
             int memberCount,
             int skipVoteCount,
@@ -206,6 +214,7 @@ public record RoomDomainEvent(
                 .type(RoomDomainEventType.SKIP_VOTE_UPDATED)
                 .roomId(roomId)
                 .userId(userId)
+                .userType(userType)
                 .memberCount(memberCount)
                 .questionNumber(questionNumber)
                 .skipVoteCount(skipVoteCount)
@@ -225,6 +234,22 @@ public record RoomDomainEvent(
                 .roomId(roomId)
                 .questionNumber(questionNumber)
                 .answerText(answerText)
+                .occurredAt(occurredAt)
+                .build();
+    }
+
+    public static RoomDomainEvent questionAudioLoadFailed(
+            Long roomId,
+            Long questionId,
+            Integer questionNumber,
+            LocalDateTime occurredAt
+    ) {
+        return RoomDomainEvent.builder()
+                .type(RoomDomainEventType.QUESTION_AUDIO_LOAD_FAILED)
+                .roomId(roomId)
+                .questionId(questionId)
+                .questionNumber(questionNumber)
+                .content("오디오 파일을 불러올 수 없어 해당 문제를 건너뜁니다.")
                 .occurredAt(occurredAt)
                 .build();
     }

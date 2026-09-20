@@ -40,13 +40,17 @@ public class AudioProcessingJob {
 
     @Column(name = "status", length = 20, nullable = false)
     @Enumerated(EnumType.STRING)
-    private AudioProcessingJobStatus status = AudioProcessingJobStatus.PENDING;
+    private AudioProcessingJobStatus status = AudioProcessingJobStatus.QUEUED;
 
     @Column(name = "attempt_count", nullable = false)
     private int attemptCount;
 
     @Column(name = "failure_message", length = 500)
     private String failureMessage;
+
+    @Column(name = "failure_code", length = 40)
+    @Enumerated(EnumType.STRING)
+    private AudioProcessingFailureCode failureCode;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
@@ -73,41 +77,61 @@ public class AudioProcessingJob {
         this.attemptCount++;
         this.startedAt = LocalDateTime.now();
         this.failureMessage = null;
+        this.failureCode = null;
         this.questionMedia.startProcessing();
     }
 
     public void reset() {
-        this.status = AudioProcessingJobStatus.PENDING;
+        resetState();
+        this.questionMedia.resetProcessing();
+    }
+
+    public void retryManually(LocalDateTime requestedAt) {
+        resetState();
+        this.questionMedia.requestReprocessing(requestedAt);
+    }
+
+    private void resetState() {
+        this.status = AudioProcessingJobStatus.QUEUED;
         this.attemptCount = 0;
         this.failureMessage = null;
+        this.failureCode = null;
         this.startedAt = null;
         this.completedAt = null;
-        this.questionMedia.resetProcessing();
     }
 
-    public void retry() {
-        this.status = AudioProcessingJobStatus.PENDING;
-        this.failureMessage = null;
+    public void scheduleRetry(AudioProcessingFailureCode failureCode, String failureMessage) {
+        this.status = AudioProcessingJobStatus.RETRYING;
+        this.failureCode = failureCode;
+        this.failureMessage = truncate(failureMessage);
         this.startedAt = null;
         this.completedAt = null;
-        this.questionMedia.resetProcessing();
+        this.questionMedia.retryProcessing();
     }
 
-    public boolean canRetry(int maxRetryAttempts) {
+    public boolean canAutomaticallyRetry(int maxRetryAttempts) {
         return attemptCount < maxRetryAttempts;
+    }
+
+    public boolean canRetryManually() {
+        return status == AudioProcessingJobStatus.FAILED
+                && failureCode != null
+                && failureCode.isManualRetryAllowed();
     }
 
     public void succeed() {
         this.status = AudioProcessingJobStatus.SUCCEEDED;
         this.completedAt = LocalDateTime.now();
         this.failureMessage = null;
+        this.failureCode = null;
     }
 
-    public void fail(String failureMessage) {
+    public void fail(AudioProcessingFailureCode failureCode, String failureMessage) {
         this.status = AudioProcessingJobStatus.FAILED;
         this.completedAt = LocalDateTime.now();
+        this.failureCode = failureCode;
         this.failureMessage = truncate(failureMessage);
-        this.questionMedia.failProcessing(failureMessage);
+        this.questionMedia.failProcessing(failureCode);
     }
 
     @PrePersist

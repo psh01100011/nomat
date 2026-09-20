@@ -1,8 +1,9 @@
 package com.dogdog.nomat.domain.map.entity;
 
 public enum QuestionMediaProcessingStatus {
-    PENDING,
+    QUEUED,
     PROCESSING,
+    RETRYING,
     READY,
     FAILED
 }

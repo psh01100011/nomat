@@ -1,5 +1,6 @@
 package com.dogdog.nomat.domain.room.service;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.asset.entity.Asset;
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
 import com.dogdog.nomat.domain.map.entity.Category;
@@ -8,6 +9,7 @@ import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.Question;
 import com.dogdog.nomat.domain.map.entity.QuestionAnswer;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
+import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
@@ -22,6 +24,7 @@ import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.ModifyRoomSettingsRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
+import com.dogdog.nomat.domain.room.dto.RoomInviteResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomCommand;
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
@@ -43,11 +46,13 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -56,6 +61,7 @@ import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RoomService {
 
     private static final TimeLimitMode DEFAULT_TIME_LIMIT_MODE = TimeLimitMode.FIXED;
@@ -75,8 +81,9 @@ public class RoomService {
     private final PasswordEncoder passwordEncoder;
 
     @Transactional
-    public CreateRoomResponse createRoom(Long userId, CreateRoomRequest request) {
-        User host = getAuthenticatedUser(userId);
+    public CreateRoomResponse createRoom(AuthenticatedUser authenticatedUser, CreateRoomRequest request) {
+        User host = authenticatedUser.isMember() ? getAuthenticatedUser(authenticatedUser.userId()) : null;
+        Long userId = authenticatedUser.userId();
         if (request == null) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
         }
@@ -109,7 +116,7 @@ public class RoomService {
                 valueOrDefault(request.audioRepeatEnabled(), DEFAULT_AUDIO_REPEAT_ENABLED),
                 valueOrDefault(request.initialHintEnabled(), DEFAULT_INITIAL_HINT_ENABLED),
                 valueOrDefault(request.initialHintTriggerSeconds(), DEFAULT_INITIAL_HINT_TRIGGER_SECONDS),
-                hostMember(host, now),
+                roomMember(authenticatedUser, host, true, now),
                 now
         );
 
@@ -117,6 +124,10 @@ public class RoomService {
             throw new BusinessException(HttpStatus.CONFLICT, "already_joined_room");
         }
 
+        log.info(
+                "event=room_created roomId={} mapId={} userId={} userType={} hasPassword={} maxPlayers={}",
+                roomId, map.getId(), userId, authenticatedUser.userType(), room.hasPassword(), room.maxPlayers()
+        );
         return CreateRoomResponse.from(room);
     }
 
@@ -199,8 +210,9 @@ public class RoomService {
     }
 
     @Transactional(readOnly = true)
-    public CurrentRoomResponse getCurrentRoom(Long userId) {
-        getAuthenticatedUser(userId);
+    public CurrentRoomResponse getCurrentRoom(AuthenticatedUser authenticatedUser) {
+        validateAuthenticatedUser(authenticatedUser);
+        Long userId = authenticatedUser.userId();
         return roomRedisRepository.findJoinedRoomId(userId)
                 .flatMap(roomId -> roomRedisRepository.findById(roomId)
                         .map(CurrentRoomResponse::from)
@@ -209,8 +221,9 @@ public class RoomService {
     }
 
     @Transactional(readOnly = true)
-    public RoomGameSnapshotResponse getGameSnapshot(Long userId, Long roomId) {
-        getAuthenticatedUser(userId);
+    public RoomGameSnapshotResponse getGameSnapshot(AuthenticatedUser authenticatedUser, Long roomId) {
+        validateAuthenticatedUser(authenticatedUser);
+        Long userId = authenticatedUser.userId();
         RoomState room = roomRedisRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
         if (!room.hasMember(userId)) {
@@ -222,8 +235,9 @@ public class RoomService {
     }
 
     @Transactional
-    public RoomDetailResponse joinRoom(Long userId, Long roomId, JoinRoomRequest request) {
-        User user = getAuthenticatedUser(userId);
+    public RoomDetailResponse joinRoom(AuthenticatedUser authenticatedUser, Long roomId, JoinRoomRequest request) {
+        User user = authenticatedUser.isMember() ? getAuthenticatedUser(authenticatedUser.userId()) : null;
+        Long userId = authenticatedUser.userId();
 
         validateNotAlreadyJoined(userId);
 
@@ -232,10 +246,70 @@ public class RoomService {
 
         validateRoomPassword(room, request);
 
+        return joinRoom(authenticatedUser, user, userId, room);
+    }
+
+    @Transactional
+    public RoomInviteResponse createRoomInvite(AuthenticatedUser authenticatedUser, Long roomId) {
+        validateAuthenticatedUser(authenticatedUser);
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        if (room.status() != RoomStatus.WAITING) {
+            throw new BusinessException(HttpStatus.CONFLICT, "room_invite_not_available");
+        }
+        Long userId = authenticatedUser.userId();
+        boolean isCurrentRoomMember = room.hasMember(userId)
+                || roomRedisRepository.findJoinedRoomId(userId)
+                .filter(joinedRoomId -> Objects.equals(joinedRoomId, roomId))
+                .isPresent();
+        if (!isCurrentRoomMember) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access");
+        }
+
+        String inviteToken = roomRedisRepository.getOrCreateInviteToken(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        log.debug("event=room_invite_created roomId={} userId={}", roomId, userId);
+        return new RoomInviteResponse(inviteToken);
+    }
+
+    @Transactional
+    public RoomDetailResponse joinRoomByInvite(AuthenticatedUser authenticatedUser, String inviteToken) {
+        validateAuthenticatedUser(authenticatedUser);
+        if (inviteToken == null || !inviteToken.matches("^[a-f0-9]{32}$")) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "room_invite_invalid");
+        }
+
+        Long roomId = roomRedisRepository.findRoomIdByInviteToken(inviteToken)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_invite_invalid"));
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_invite_invalid"));
+        Long userId = authenticatedUser.userId();
+        Optional<Long> joinedRoomId = roomRedisRepository.findJoinedRoomId(userId);
+        if (joinedRoomId.isPresent()) {
+            if (Objects.equals(joinedRoomId.get(), roomId) && room.hasMember(userId)) {
+                return RoomDetailResponse.from(room);
+            }
+            CurrentRoomResponse currentRoom = roomRedisRepository.findById(joinedRoomId.get())
+                    .map(CurrentRoomResponse::from)
+                    .orElseGet(() -> CurrentRoomResponse.of(joinedRoomId.get(), null));
+            throw new BusinessException(HttpStatus.CONFLICT, "already_joined_room", currentRoom);
+        }
+
+        User user = authenticatedUser.isMember() ? getAuthenticatedUser(userId) : null;
+        return joinRoom(authenticatedUser, user, userId, room);
+    }
+
+    private RoomDetailResponse joinRoom(
+            AuthenticatedUser authenticatedUser,
+            User user,
+            Long userId,
+            RoomState room
+    ) {
+
         LocalDateTime now = LocalDateTime.now();
         RoomTransitionResult result = roomStateMachine.transition(
                 room,
-                RoomCommand.join(roomMember(user, false, now), now)
+                RoomCommand.join(roomMember(authenticatedUser, user, false, now), now)
         );
 
         if (!roomRedisRepository.saveJoinedRoom(result.room(), userId)) {
@@ -243,12 +317,17 @@ public class RoomService {
         }
 
         roomEventPublisher.publish(result.events());
+        log.info(
+                "event=room_joined roomId={} userId={} userType={} memberCount={}",
+                room.roomId(), userId, authenticatedUser.userType(), result.room().memberCount()
+        );
         return RoomDetailResponse.from(result.room());
     }
 
     @Transactional
-    public void leaveRoom(Long userId, Long roomId) {
-        getAuthenticatedUser(userId);
+    public void leaveRoom(AuthenticatedUser authenticatedUser, Long roomId) {
+        validateAuthenticatedUser(authenticatedUser);
+        Long userId = authenticatedUser.userId();
 
         RoomState room = roomRedisRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_or_member_not_found"));
@@ -260,11 +339,17 @@ public class RoomService {
 
         roomRedisRepository.saveLeftRoom(result.room(), userId);
         roomEventPublisher.publish(result.events());
+        log.info("event=room_left roomId={} userId={} reason=REQUESTED", roomId, userId);
     }
 
     @Transactional
-    public RoomDetailResponse modifyRoomSettings(Long userId, Long roomId, ModifyRoomSettingsRequest request) {
-        getAuthenticatedUser(userId);
+    public RoomDetailResponse modifyRoomSettings(
+            AuthenticatedUser authenticatedUser,
+            Long roomId,
+            ModifyRoomSettingsRequest request
+    ) {
+        validateAuthenticatedUser(authenticatedUser);
+        Long userId = authenticatedUser.userId();
         if (request == null) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "invalid_request");
         }
@@ -288,6 +373,7 @@ public class RoomService {
 
         roomRedisRepository.saveRoom(updatedRoom);
         roomEventPublisher.publish(List.of(RoomDomainEvent.roomSettingsUpdated(updatedRoom, LocalDateTime.now())));
+        log.info("event=room_settings_changed roomId={} userId={}", roomId, userId);
         return RoomDetailResponse.from(updatedRoom);
     }
 
@@ -298,8 +384,9 @@ public class RoomService {
     }
 
     @Transactional
-    public void closeRoom(Long userId, Long roomId) {
-        getAuthenticatedUser(userId);
+    public void closeRoom(AuthenticatedUser authenticatedUser, Long roomId) {
+        validateAuthenticatedUser(authenticatedUser);
+        Long userId = authenticatedUser.userId();
 
         RoomState room = roomRedisRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
@@ -311,11 +398,13 @@ public class RoomService {
 
         roomRedisRepository.deleteRoom(result.room());
         roomEventPublisher.publish(result.events());
+        log.info("event=room_closed roomId={} userId={}", roomId, userId);
     }
 
     @Transactional
-    public void kickRoomMember(Long hostUserId, Long roomId, Long targetUserId) {
-        getAuthenticatedUser(hostUserId);
+    public void kickRoomMember(AuthenticatedUser authenticatedUser, Long roomId, Long targetUserId) {
+        validateAuthenticatedUser(authenticatedUser);
+        Long hostUserId = authenticatedUser.userId();
 
         RoomState room = roomRedisRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
@@ -327,11 +416,16 @@ public class RoomService {
 
         roomRedisRepository.saveKickedRoom(result.room(), targetUserId);
         roomEventPublisher.publish(result.events());
+        log.info(
+                "event=room_member_kicked roomId={} hostUserId={} targetUserId={}",
+                roomId, hostUserId, targetUserId
+        );
     }
 
     @Transactional
-    public RoomDetailResponse startGame(Long hostUserId, Long roomId) {
-        getAuthenticatedUser(hostUserId);
+    public RoomDetailResponse startGame(AuthenticatedUser authenticatedUser, Long roomId) {
+        validateAuthenticatedUser(authenticatedUser);
+        Long hostUserId = authenticatedUser.userId();
 
         RoomState room = roomRedisRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
@@ -358,6 +452,10 @@ public class RoomService {
         roomRedisRepository.saveStartedRoom(result.room(), gameState);
         roomEventPublisher.publish(result.events());
         roomGameProgressService.startFirstQuestion(result.room());
+        log.info(
+                "event=room_game_started roomId={} mapId={} hostUserId={} memberCount={} questionCount={}",
+                roomId, room.mapId(), hostUserId, room.memberCount(), gameState.questions().size()
+        );
         return RoomDetailResponse.from(result.room());
     }
 
@@ -374,6 +472,7 @@ public class RoomService {
 
         roomRedisRepository.saveLeftRoom(result.room(), userId);
         roomEventPublisher.publish(result.events());
+        log.info("event=room_left roomId={} userId={} reason=DISCONNECTED", roomId, userId);
     }
 
     private void validateMinimumPlayers(RoomState room) {
@@ -483,13 +582,28 @@ public class RoomService {
                 .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
     }
 
+    private void validateAuthenticatedUser(AuthenticatedUser authenticatedUser) {
+        if (authenticatedUser.isMember()) {
+            getAuthenticatedUser(authenticatedUser.userId());
+        }
+    }
+
     private QuizMap getPublicPublishedMap(Long mapId) {
-        return quizMapRepository.findByIdAndStatusAndVisibility(
+        QuizMap map = quizMapRepository.findByIdAndStatusAndVisibility(
                         mapId,
                         MapStatus.PUBLISHED,
                         MapVisibility.PUBLIC
                 )
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "map_not_found"));
+        if (map.getQuestionType() == QuestionType.AUDIO
+                && questionMediaRepository.existsByQuestionMapIdAndProcessingStatusNot(
+                        mapId,
+                        QuestionMediaProcessingStatus.READY
+                )) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "map_not_found");
+        }
+
+        return map;
     }
 
     private void validateQuestionCount(Integer selectedQuestionCount, QuizMap map) {
@@ -661,14 +775,28 @@ public class RoomService {
         return passwordEncoder.encode(password);
     }
 
-    private RoomMember hostMember(User host, LocalDateTime joinedAt) {
-        return roomMember(host, true, joinedAt);
-    }
+    private RoomMember roomMember(AuthenticatedUser authenticatedUser, User user, boolean host, LocalDateTime joinedAt) {
+        if (authenticatedUser.isGuest()) {
+            return new RoomMember(
+                    authenticatedUser.userId(),
+                    authenticatedUser.nickname(),
+                    null,
+                    authenticatedUser.userType(),
+                    host,
+                    joinedAt
+            );
+        }
 
-    private RoomMember roomMember(User user, boolean host, LocalDateTime joinedAt) {
         Asset profileImageAsset = user.getProfileImageAsset();
         String profileImageUrl = profileImageAsset == null ? null : profileImageAsset.getUrl();
-        return new RoomMember(user.getId(), user.getNickname(), profileImageUrl, host, joinedAt);
+        return new RoomMember(
+                user.getId(),
+                user.getNickname(),
+                profileImageUrl,
+                authenticatedUser.userType(),
+                host,
+                joinedAt
+        );
     }
 
     private void validateRoomPassword(RoomState room, JoinRoomRequest request) {

@@ -1,5 +1,6 @@
 package com.dogdog.nomat.global.config;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
 import com.dogdog.nomat.domain.room.service.RoomWebSocketSessionRegistry;
 import com.dogdog.nomat.global.exception.BusinessException;
@@ -64,7 +65,7 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
         accessor.setUser(new StompUserPrincipal(userId));
         if (command == StompCommand.CONNECT) {
             String sessionId = connectSessionId(accessor);
-            log.debug("Authenticated STOMP CONNECT. sessionId={}, userId={}", sessionId, userId);
+            log.debug("event=stomp_connected sessionId={} userId={}", sessionId, userId);
             sessionRegistry.connect(sessionId, userId);
         }
         authorizeSubscription(accessor, userId);
@@ -93,11 +94,7 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
 
         try {
             Jwt jwt = jwtDecoder.decode(authorization.substring(BEARER_PREFIX.length()));
-            Number userId = jwt.getClaim("userId");
-            if (userId == null) {
-                throw new BadCredentialsException("invalid_token");
-            }
-            return userId.longValue();
+            return AuthenticatedUser.from(jwt).userId();
         } catch (JwtException exception) {
             throw new BadCredentialsException("invalid_token", exception);
         }
@@ -116,7 +113,7 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
         boolean member = roomRedisRepository.findById(roomId.get())
                 .orElseThrow(() -> {
                     log.warn(
-                            "STOMP room subscription rejected because room was not found. sessionId={}, userId={}, destination={}",
+                            "event=stomp_subscription_rejected reason=room_not_found sessionId={} userId={} destination={}",
                             accessor.getSessionId(),
                             userId,
                             accessor.getDestination()
@@ -126,7 +123,7 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
                 .hasMember(userId);
         if (!member) {
             log.warn(
-                    "STOMP room subscription rejected because user is not a room member. sessionId={}, userId={}, destination={}",
+                    "event=stomp_subscription_rejected reason=not_room_member sessionId={} userId={} destination={}",
                     accessor.getSessionId(),
                     userId,
                     accessor.getDestination()
@@ -138,7 +135,7 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
     private String connectSessionId(StompHeaderAccessor accessor) {
         String sessionId = accessor.getSessionId();
         if (!StringUtils.hasText(sessionId)) {
-            log.warn("STOMP CONNECT rejected because sessionId is missing.");
+            log.warn("event=stomp_connection_rejected reason=missing_session_id");
             throw new BusinessException(HttpStatus.BAD_REQUEST, "websocket_session_unavailable");
         }
 

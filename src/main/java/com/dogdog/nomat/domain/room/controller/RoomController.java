@@ -1,5 +1,6 @@
 package com.dogdog.nomat.domain.room.controller;
 
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.room.dto.CreateRoomRequest;
 import com.dogdog.nomat.domain.room.dto.CreateRoomResponse;
 import com.dogdog.nomat.domain.room.dto.CurrentRoomResponse;
@@ -7,6 +8,7 @@ import com.dogdog.nomat.domain.room.dto.JoinRoomRequest;
 import com.dogdog.nomat.domain.room.dto.ModifyRoomSettingsRequest;
 import com.dogdog.nomat.domain.room.dto.RoomDetailResponse;
 import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
+import com.dogdog.nomat.domain.room.dto.RoomInviteResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.service.RoomService;
 import com.dogdog.nomat.global.dto.ApiResponse;
@@ -39,8 +41,7 @@ public class RoomController {
             @AuthenticationPrincipal Jwt jwt,
             @Valid @RequestBody CreateRoomRequest request
     ) {
-        Long userId = getUserId(jwt);
-        return ApiResponse.of("success_create_room", roomService.createRoom(userId, request));
+        return ApiResponse.of("success_create_room", roomService.createRoom(AuthenticatedUser.from(jwt), request));
     }
 
     @GetMapping
@@ -82,8 +83,7 @@ public class RoomController {
 
     @GetMapping("/me/current")
     public ApiResponse<CurrentRoomResponse> getCurrentRoom(@AuthenticationPrincipal Jwt jwt) {
-        Long userId = getUserId(jwt);
-        return ApiResponse.of("success_get_current_room", roomService.getCurrentRoom(userId));
+        return ApiResponse.of("success_get_current_room", roomService.getCurrentRoom(AuthenticatedUser.from(jwt)));
     }
 
     @PostMapping("/{roomId}/join")
@@ -92,8 +92,29 @@ public class RoomController {
             @PathVariable Long roomId,
             @Valid @RequestBody(required = false) JoinRoomRequest request
     ) {
-        Long userId = getUserId(jwt);
-        return ApiResponse.of("success_join_room", roomService.joinRoom(userId, roomId, request));
+        return ApiResponse.of("success_join_room", roomService.joinRoom(AuthenticatedUser.from(jwt), roomId, request));
+    }
+
+    @PostMapping("/{roomId}/invite")
+    public ApiResponse<RoomInviteResponse> createRoomInvite(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long roomId
+    ) {
+        return ApiResponse.of(
+                "success_create_room_invite",
+                roomService.createRoomInvite(AuthenticatedUser.from(jwt), roomId)
+        );
+    }
+
+    @PostMapping("/invites/{inviteToken}/join")
+    public ApiResponse<RoomDetailResponse> joinRoomByInvite(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable String inviteToken
+    ) {
+        return ApiResponse.of(
+                "success_join_room",
+                roomService.joinRoomByInvite(AuthenticatedUser.from(jwt), inviteToken)
+        );
     }
 
     @PostMapping("/{roomId}/leave")
@@ -101,8 +122,7 @@ public class RoomController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long roomId
     ) {
-        Long userId = getUserId(jwt);
-        roomService.leaveRoom(userId, roomId);
+        roomService.leaveRoom(AuthenticatedUser.from(jwt), roomId);
         return ApiResponse.success("success_leave_room");
     }
 
@@ -112,8 +132,10 @@ public class RoomController {
             @PathVariable Long roomId,
             @Valid @RequestBody ModifyRoomSettingsRequest request
     ) {
-        Long userId = getUserId(jwt);
-        return ApiResponse.of("success_modify_room_settings", roomService.modifyRoomSettings(userId, roomId, request));
+        return ApiResponse.of(
+                "success_modify_room_settings",
+                roomService.modifyRoomSettings(AuthenticatedUser.from(jwt), roomId, request)
+        );
     }
 
     @DeleteMapping("/{roomId}")
@@ -121,8 +143,7 @@ public class RoomController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long roomId
     ) {
-        Long userId = getUserId(jwt);
-        roomService.closeRoom(userId, roomId);
+        roomService.closeRoom(AuthenticatedUser.from(jwt), roomId);
         return ApiResponse.success("success_delete_room");
     }
 
@@ -132,8 +153,7 @@ public class RoomController {
             @PathVariable Long roomId,
             @PathVariable Long targetUserId
     ) {
-        Long userId = getUserId(jwt);
-        roomService.kickRoomMember(userId, roomId, targetUserId);
+        roomService.kickRoomMember(AuthenticatedUser.from(jwt), roomId, targetUserId);
         return ApiResponse.success("success_kick_room_member");
     }
 
@@ -142,8 +162,7 @@ public class RoomController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long roomId
     ) {
-        Long userId = getUserId(jwt);
-        return ApiResponse.of("success_start_game", roomService.startGame(userId, roomId));
+        return ApiResponse.of("success_start_game", roomService.startGame(AuthenticatedUser.from(jwt), roomId));
     }
 
     @GetMapping("/{roomId}/game/snapshot")
@@ -151,12 +170,9 @@ public class RoomController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long roomId
     ) {
-        Long userId = getUserId(jwt);
-        return ApiResponse.of("success_get_game_snapshot", roomService.getGameSnapshot(userId, roomId));
-    }
-
-    private Long getUserId(Jwt jwt) {
-        Number userId = jwt.getClaim("userId");
-        return userId.longValue();
+        return ApiResponse.of(
+                "success_get_game_snapshot",
+                roomService.getGameSnapshot(AuthenticatedUser.from(jwt), roomId)
+        );
     }
 }

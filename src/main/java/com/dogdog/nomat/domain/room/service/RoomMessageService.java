@@ -14,15 +14,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RoomMessageService {
 
-    private static final int CORRECT_ANSWER_SCORE = 100;
+    private static final int CORRECT_ANSWER_SCORE = 1;
 
     private final RoomRedisRepository roomRedisRepository;
     private final RoomEventPublisher roomEventPublisher;
@@ -40,7 +42,15 @@ public class RoomMessageService {
         roomMessageRateLimiter.checkAllowed(roomId, userId, clientMessageId);
         LocalDateTime now = LocalDateTime.now();
         List<RoomDomainEvent> events = new ArrayList<>();
-        events.add(RoomDomainEvent.chatMessage(roomId, userId, member.nickname(), content, clientMessageId, now));
+        events.add(RoomDomainEvent.chatMessage(
+                roomId,
+                userId,
+                member.nickname(),
+                member.userType().name(),
+                content,
+                clientMessageId,
+                now
+        ));
         Integer endedQuestionIndex = null;
 
         if (room.status() == RoomStatus.PLAYING) {
@@ -52,6 +62,7 @@ public class RoomMessageService {
                         correctGameState,
                         userId,
                         member.nickname(),
+                        member.userType().name(),
                         content,
                         answerKey(content),
                         now,
@@ -61,7 +72,9 @@ public class RoomMessageService {
         }
 
         roomEventPublisher.publish(events);
+        log.debug("event=room_message_published roomId={} userId={} eventCount={}", roomId, userId, events.size());
         if (endedQuestionIndex != null) {
+            log.info("event=room_correct_answer roomId={} userId={}", roomId, userId);
             roomGameProgressService.scheduleQuestionAdvance(roomId, endedQuestionIndex);
         }
     }
@@ -70,6 +83,7 @@ public class RoomMessageService {
             RoomGameState gameState,
             Long userId,
             String nickname,
+            String userType,
             String content,
             String answerKey,
             LocalDateTime now,
@@ -91,8 +105,15 @@ public class RoomMessageService {
         RoomGameQuestion question = nextGameState.currentQuestion();
         int score = nextGameState.scores().getOrDefault(userId, 0);
 
-        events.add(RoomDomainEvent.correctAnswer(nextGameState.roomId(), userId, nickname, question.questionNumber(), now));
-        events.add(RoomDomainEvent.scoreUpdated(nextGameState.roomId(), userId, nickname, score, now));
+        events.add(RoomDomainEvent.correctAnswer(
+                nextGameState.roomId(),
+                userId,
+                nickname,
+                userType,
+                question.questionNumber(),
+                now
+        ));
+        events.add(RoomDomainEvent.scoreUpdated(nextGameState.roomId(), userId, nickname, userType, score, now));
         events.add(RoomDomainEvent.questionEnded(nextGameState.roomId(), question.questionNumber(), question.primaryAnswer(), now));
         return nextGameState.currentQuestionIndex();
     }

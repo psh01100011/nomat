@@ -1,8 +1,9 @@
 package com.dogdog.nomat.domain.map.entity;
 
 public enum AudioProcessingJobStatus {
-    PENDING,
+    QUEUED,
     PROCESSING,
+    RETRYING,
     SUCCEEDED,
     FAILED
 }

@@ -1,11 +1,13 @@
 package com.dogdog.nomat.domain.room.service;
 
+import com.dogdog.nomat.domain.room.dto.RoomAudioLoadFailureRequest;
 import com.dogdog.nomat.domain.room.dto.RoomSkipVoteRequest;
 import com.dogdog.nomat.domain.room.model.RoomAnswerHint;
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
 import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
+import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.model.RoomStatus;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
@@ -15,12 +17,14 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RoomGameProgressService {
 
     private static final long NEXT_QUESTION_DELAY_SECONDS = 3;
@@ -68,9 +72,8 @@ public class RoomGameProgressService {
     public void voteToSkip(Long userId, Long roomId, RoomSkipVoteRequest request) {
         RoomState room = roomRedisRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
-        if (!room.hasMember(userId)) {
-            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access");
-        }
+        RoomMember member = room.findMember(userId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access"));
         if (room.status() != RoomStatus.PLAYING) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "cannot_skip_question");
         }
@@ -95,6 +98,7 @@ public class RoomGameProgressService {
         RoomDomainEvent skipVoteUpdated = RoomDomainEvent.skipVoteUpdated(
                 roomId,
                 userId,
+                member.userType().name(),
                 question.questionNumber(),
                 room.memberCount(),
                 votedGameState.skipVoteCount(),
@@ -110,6 +114,10 @@ public class RoomGameProgressService {
                     RoomDomainEvent.questionEnded(roomId, question.questionNumber(), question.primaryAnswer(), now)
             ));
             scheduleQuestionAdvance(roomId, votedGameState.currentQuestionIndex());
+            log.info(
+                    "event=room_question_skipped roomId={} questionNumber={} voteCount={} threshold={}",
+                    roomId, question.questionNumber(), votedGameState.skipVoteCount(), skipVoteThreshold
+            );
             return;
         }
 
@@ -117,6 +125,48 @@ public class RoomGameProgressService {
             roomRedisRepository.saveGameState(votedGameState);
         }
         roomEventPublisher.publish(List.of(skipVoteUpdated));
+    }
+
+    public void reportAudioLoadFailure(Long userId, Long roomId, RoomAudioLoadFailureRequest request) {
+        RoomState room = roomRedisRepository.findById(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        room.findMember(userId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.FORBIDDEN, "forbidden_room_access"));
+        if (room.status() != RoomStatus.PLAYING || !"AUDIO".equals(room.questionType())) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "cannot_report_audio_load_failure");
+        }
+
+        RoomGameState gameState = roomRedisRepository.findGameState(roomId)
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
+        RoomGameQuestion question = gameState.currentQuestion();
+        if (question == null
+                || !question.questionId().equals(request.questionId())
+                || question.questionNumber() != request.questionNumber()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "stale_question");
+        }
+
+        RoomGameState failedGameState = roomRedisRepository.tryEndQuestionForAudioLoadFailure(
+                        roomId,
+                        gameState.currentQuestionIndex(),
+                        question.questionId()
+                )
+                .orElse(null);
+        if (failedGameState == null) {
+            return;
+        }
+
+        LocalDateTime now = failedGameState.currentQuestionEndedAt();
+        roomEventPublisher.publish(List.of(RoomDomainEvent.questionAudioLoadFailed(
+                roomId,
+                question.questionId(),
+                question.questionNumber(),
+                now
+        )));
+        scheduleQuestionAdvance(roomId, failedGameState.currentQuestionIndex());
+        log.warn(
+                "event=room_question_audio_load_failed roomId={} questionId={} questionNumber={} reportedByUserId={}",
+                roomId, question.questionId(), question.questionNumber(), userId
+        );
     }
 
     public void revealHint(Long roomId, int questionIndex) {
@@ -137,6 +187,7 @@ public class RoomGameProgressService {
                 RoomAnswerHint.from(question.primaryAnswer()),
                 LocalDateTime.now()
         )));
+        log.debug("event=room_question_hint_revealed roomId={} questionNumber={}", roomId, question.questionNumber());
     }
 
     public void endQuestionByTimeout(Long roomId, int questionIndex) {
@@ -157,6 +208,7 @@ public class RoomGameProgressService {
                 question.primaryAnswer(),
                 LocalDateTime.now()
         )));
+        log.debug("event=room_question_timed_out roomId={} questionNumber={}", roomId, question.questionNumber());
         scheduleQuestionAdvance(roomId, questionIndex);
     }
 
@@ -182,6 +234,10 @@ public class RoomGameProgressService {
                 nextGameState.currentQuestionEndsAt(),
                 startedAt
         )));
+        log.debug(
+                "event=room_question_started roomId={} questionId={} questionNumber={} durationSeconds={}",
+                room.roomId(), question.questionId(), question.questionNumber(), durationSeconds
+        );
         scheduleHint(room, questionIndex, durationSeconds);
         scheduleQuestionTimeout(room, questionIndex, durationSeconds);
     }

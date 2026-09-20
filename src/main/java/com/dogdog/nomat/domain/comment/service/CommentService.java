@@ -18,6 +18,7 @@ import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -28,6 +29,7 @@ import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CommentService {
 
     private static final int MAX_COMMENT_CONTENT_LENGTH = 300;
@@ -51,6 +53,7 @@ public class CommentService {
 
         MapComment comment = mapCommentRepository.save(MapComment.create(map, writer, content));
         map.increaseCommentCount();
+        log.info("event=map_comment_created commentId={} mapId={} userId={}", comment.getId(), mapId, userId);
 
         return CreateMapCommentResponse.from(comment);
     }
@@ -70,6 +73,7 @@ public class CommentService {
         validateCommentWriter(comment, userId);
 
         comment.modify(content);
+        log.info("event=map_comment_modified commentId={} mapId={} userId={}", commentId, comment.getMap().getId(), userId);
 
         return ModifyMapCommentResponse.from(comment);
     }
@@ -82,6 +86,7 @@ public class CommentService {
 
         comment.delete();
         comment.getMap().decreaseCommentCount();
+        log.info("event=map_comment_deleted commentId={} mapId={} userId={}", commentId, comment.getMap().getId(), userId);
     }
 
     @Transactional(readOnly = true)

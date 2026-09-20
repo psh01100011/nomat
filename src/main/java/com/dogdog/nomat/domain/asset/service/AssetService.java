@@ -91,7 +91,17 @@ public class AssetService {
         );
 
         try {
-            return UploadImageResponse.from(assetRepository.saveAndFlush(asset));
+            Asset savedAsset = assetRepository.saveAndFlush(asset);
+            log.info(
+                    "event=image_asset_uploaded assetId={} userId={} purpose={} sizeBytes={} width={} height={}",
+                    savedAsset.getId(),
+                    userId,
+                    purpose,
+                    processedImage.bytes().length,
+                    processedImage.width(),
+                    processedImage.height()
+            );
+            return UploadImageResponse.from(savedAsset);
         } catch (RuntimeException exception) {
             deleteFromS3Quietly(storageKey);
             throw exception;
@@ -295,7 +305,12 @@ public class AssetService {
         try {
             s3Client.putObject(request, RequestBody.fromBytes(processedImage.bytes()));
         } catch (SdkException exception) {
-            log.error("Failed to upload image to S3. bucket={}, key={}", properties.getBucket(), storageKey, exception);
+            log.error(
+                    "event=image_asset_upload_failed storageKey={} errorType={}",
+                    storageKey,
+                    exception.getClass().getSimpleName(),
+                    exception
+            );
             throw internalServerError();
         }
     }
@@ -360,8 +375,7 @@ public class AssetService {
         try {
             s3Client.deleteObject(request);
         } catch (SdkException exception) {
-            log.warn("Failed to delete S3 object after asset save failure. bucket={}, key={}",
-                    properties.getBucket(),
+            log.warn("event=orphaned_image_asset_cleanup_failed storageKey={}",
                     storageKey,
                     exception
             );

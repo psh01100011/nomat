@@ -22,6 +22,7 @@ import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,7 @@ import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ReportService {
 
     private static final int MIN_REPORT_DESCRIPTION_LENGTH = 10;
@@ -67,6 +69,10 @@ public class ReportService {
                     reason.name(),
                     description
             ));
+            log.info(
+                    "event=report_created reportId={} targetType=MAP targetId={} userId={} reason={}",
+                    report.getId(), mapId, userId, reason
+            );
             return ReportMapResponse.from(report);
         } catch (DataIntegrityViolationException exception) {
             throw alreadyReportedMap();
@@ -100,6 +106,10 @@ public class ReportService {
                     reason.name(),
                     description
             ));
+            log.info(
+                    "event=report_created reportId={} targetType=MAP_COMMENT targetId={} userId={} reason={}",
+                    report.getId(), commentId, userId, reason
+            );
             return ReportCommentResponse.from(report);
         } catch (DataIntegrityViolationException exception) {
             throw alreadyReportedComment();

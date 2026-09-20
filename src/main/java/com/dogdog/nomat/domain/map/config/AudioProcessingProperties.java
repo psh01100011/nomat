@@ -32,6 +32,9 @@ public class AudioProcessingProperties {
     private long processingTimeoutMinutes = 10;
 
     @Positive
+    private long delayedThresholdMinutes = 30;
+
+    @Positive
     private int maxRetryAttempts = 3;
 
     private String ytDlpPath = "yt-dlp";

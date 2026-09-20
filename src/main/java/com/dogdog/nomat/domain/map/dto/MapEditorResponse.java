@@ -91,7 +91,10 @@ public record MapEditorResponse(
             Integer endTimeMs,
             Integer durationMs,
             String processingStatus,
+            String failureCode,
+            String failureType,
             String failureMessage,
+            boolean canRetry,
             String audioUrl
     ) {
 
@@ -108,7 +111,10 @@ public record MapEditorResponse(
                     media.getEndTimeMs(),
                     media.getDurationMs(),
                     media.getProcessingStatus().name(),
+                    media.getFailureCode() == null ? null : media.getFailureCode().name(),
+                    media.getFailureCode() == null ? null : media.getFailureCode().getFailureType().name(),
                     media.getFailureMessage(),
+                    media.canRetry(),
                     media.getSourceType() == QuestionMediaSourceType.YOUTUBE ? assetUrl : null
             );
         }

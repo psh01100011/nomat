@@ -33,7 +33,10 @@ class ExternalAudioExtractionCommandRunnerTest {
         properties.setYtDlpPath(ytDlp.toString());
         properties.setFfmpegPath(ffmpeg.toString());
         properties.setOutputBitrate("128k");
-        ExternalAudioExtractionCommandRunner runner = new ExternalAudioExtractionCommandRunner(properties);
+        ExternalAudioExtractionCommandRunner runner = new ExternalAudioExtractionCommandRunner(
+                properties,
+                new AudioExtractionFailureClassifier()
+        );
 
         runner.extractYoutubeSegment(new YoutubeAudioExtractionCommand(
                 "https://youtube.com/watch?v=test",
@@ -71,7 +74,10 @@ class ExternalAudioExtractionCommandRunnerTest {
         properties.setYtDlpPath(ytDlp.toString());
         properties.setFfmpegPath(ffmpeg.toString());
         properties.setOutputBitrate("128k");
-        ExternalAudioExtractionCommandRunner runner = new ExternalAudioExtractionCommandRunner(properties);
+        ExternalAudioExtractionCommandRunner runner = new ExternalAudioExtractionCommandRunner(
+                properties,
+                new AudioExtractionFailureClassifier()
+        );
         Path outputFile = tempDirectory.resolve("output.mp3");
 
         runner.extractYoutubeSegment(new YoutubeAudioExtractionCommand(

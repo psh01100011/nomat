@@ -11,7 +11,10 @@ import com.dogdog.nomat.domain.asset.config.AssetS3Properties;
 import com.dogdog.nomat.domain.asset.entity.Asset;
 import com.dogdog.nomat.domain.asset.entity.AssetStatus;
 import com.dogdog.nomat.domain.asset.repository.AssetRepository;
+import com.dogdog.nomat.domain.map.entity.MapStatus;
+import com.dogdog.nomat.domain.map.entity.QuestionStatus;
 import com.dogdog.nomat.domain.user.entity.User;
+import com.dogdog.nomat.domain.user.entity.UserStatus;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,6 +39,9 @@ class AssetCleanupServiceTest {
     @Mock
     private S3Client s3Client;
 
+    @Mock
+    private OrphanedAssetCleanupService orphanedAssetCleanupService;
+
     private AssetCleanupService assetCleanupService;
 
     @BeforeEach
@@ -45,13 +51,16 @@ class AssetCleanupServiceTest {
 
         AssetCleanupProperties cleanupProperties = new AssetCleanupProperties();
         cleanupProperties.setTempRetentionHours(24);
+        cleanupProperties.setOrphanRetentionHours(168);
         cleanupProperties.setBatchSize(100);
+        cleanupProperties.setScanBatchSize(500);
 
         assetCleanupService = new AssetCleanupService(
                 assetRepository,
                 s3Client,
                 s3Properties,
-                cleanupProperties
+                cleanupProperties,
+                orphanedAssetCleanupService
         );
     }
 
@@ -120,6 +129,81 @@ class AssetCleanupServiceTest {
 
         assertThat(cutoffCaptor.getValue()).isBefore(LocalDateTime.now().minusHours(23));
         assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(100);
+    }
+
+    @Test
+    void scanUnreferencedAssetsMarksOnlyUnusedAssetsAndAdvancesCursor() {
+        Asset asset = imageAsset(1L, "uploads/images/unused.png");
+        asset.attach();
+        given(assetRepository.findAssetIdsAfter(
+                eq(AssetStatus.ATTACHED),
+                eq(0L),
+                any(Pageable.class)
+        )).willReturn(List.of(1L, 2L));
+        given(assetRepository.findUnreferencedAssetsByIdIn(
+                eq(List.of(1L, 2L)),
+                eq(AssetStatus.ATTACHED),
+                eq(UserStatus.DELETED),
+                eq(MapStatus.DELETED),
+                eq(QuestionStatus.DELETED)
+        )).willReturn(List.of(asset));
+
+        AssetCleanupService.OrphanScanSummary summary = assetCleanupService.scanUnreferencedAssets(0L);
+
+        assertThat(summary.scannedCount()).isEqualTo(2);
+        assertThat(summary.orphanedCount()).isEqualTo(1);
+        assertThat(summary.nextCursor()).isEqualTo(2L);
+        assertThat(summary.wrapped()).isFalse();
+        assertThat(asset.getStatus()).isEqualTo(AssetStatus.ORPHANED);
+        assertThat(asset.getOrphanedAt()).isNotNull();
+    }
+
+    @Test
+    void scanUnreferencedAssetsWrapsToBeginningAfterLastAsset() {
+        given(assetRepository.findAssetIdsAfter(
+                eq(AssetStatus.ATTACHED),
+                eq(500L),
+                any(Pageable.class)
+        )).willReturn(List.of());
+        given(assetRepository.findAssetIdsAfter(
+                eq(AssetStatus.ATTACHED),
+                eq(0L),
+                any(Pageable.class)
+        )).willReturn(List.of(1L));
+        given(assetRepository.findUnreferencedAssetsByIdIn(
+                eq(List.of(1L)),
+                eq(AssetStatus.ATTACHED),
+                eq(UserStatus.DELETED),
+                eq(MapStatus.DELETED),
+                eq(QuestionStatus.DELETED)
+        )).willReturn(List.of());
+
+        AssetCleanupService.OrphanScanSummary summary = assetCleanupService.scanUnreferencedAssets(500L);
+
+        assertThat(summary.scannedCount()).isEqualTo(1);
+        assertThat(summary.nextCursor()).isEqualTo(1L);
+        assertThat(summary.wrapped()).isTrue();
+    }
+
+    @Test
+    void cleanupExpiredOrphanedAssetsSummarizesPerAssetOutcomes() {
+        given(assetRepository.findOrphanedAssetIdsBefore(
+                eq(AssetStatus.ORPHANED),
+                any(LocalDateTime.class),
+                any(Pageable.class)
+        )).willReturn(List.of(1L, 2L, 3L));
+        given(orphanedAssetCleanupService.cleanup(1L))
+                .willReturn(OrphanedAssetCleanupService.CleanupOutcome.DELETED);
+        given(orphanedAssetCleanupService.cleanup(2L))
+                .willReturn(OrphanedAssetCleanupService.CleanupOutcome.RESTORED);
+        given(orphanedAssetCleanupService.cleanup(3L))
+                .willReturn(OrphanedAssetCleanupService.CleanupOutcome.FAILED);
+
+        AssetCleanupService.OrphanCleanupSummary summary = assetCleanupService.cleanupExpiredOrphanedAssets();
+
+        assertThat(summary.deletedCount()).isEqualTo(1);
+        assertThat(summary.restoredCount()).isEqualTo(1);
+        assertThat(summary.failedCount()).isEqualTo(1);
     }
 
     private Asset imageAsset(Long id, String storageKey) {

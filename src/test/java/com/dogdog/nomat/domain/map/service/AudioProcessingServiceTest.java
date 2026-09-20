@@ -9,6 +9,8 @@ import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.asset.config.AssetS3Properties;
 import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
+import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import java.nio.file.Files;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +20,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectResponse;
@@ -33,6 +36,9 @@ class AudioProcessingServiceTest {
 
     @Mock
     private S3Client s3Client;
+
+    @Mock
+    private AudioProcessingMetrics processingMetrics;
 
     private AssetS3Properties s3Properties;
     private AudioProcessingProperties processingProperties;
@@ -57,13 +63,14 @@ class AudioProcessingServiceTest {
                 audioExtractionCommandRunner,
                 s3Client,
                 s3Properties,
-                processingProperties
+                processingProperties,
+                processingMetrics
         );
     }
 
     @Test
-    void processPendingJobsProcessesConfiguredBatch() throws Exception {
-        given(audioProcessingJobService.getPendingJobIds(5)).willReturn(List.of(1L, 2L));
+    void processAvailableJobsProcessesConfiguredBatch() throws Exception {
+        given(audioProcessingJobService.getProcessableJobIds(5)).willReturn(List.of(1L, 2L));
         given(audioProcessingJobService.startJob(1L)).willReturn(audioProcessingTask(1L));
         given(audioProcessingJobService.startJob(2L)).willReturn(null);
         given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
@@ -76,7 +83,7 @@ class AudioProcessingServiceTest {
                 .given(audioExtractionCommandRunner)
                 .extractYoutubeSegment(any(YoutubeAudioExtractionCommand.class));
 
-        int processedCount = audioProcessingService.processPendingJobs();
+        int processedCount = audioProcessingService.processAvailableJobs();
 
         assertThat(processedCount).isEqualTo(2);
         verify(audioProcessingJobService).startJob(1L);
@@ -124,11 +131,16 @@ class AudioProcessingServiceTest {
                 eq(3L),
                 eq(42000)
         );
-        verify(audioProcessingJobService, never()).failJob(eq(1L), any());
+        verify(audioProcessingJobService, never()).handleJobFailure(
+                eq(1L),
+                any(AudioProcessingFailureCode.class),
+                any(),
+                any(Integer.class)
+        );
     }
 
     @Test
-    void processJobMarksFailedWhenExtractionFails() throws Exception {
+    void processJobDelegatesFailureLifecycleWhenExtractionFails() throws Exception {
         AudioProcessingTask task = audioProcessingTask(1L);
         given(audioProcessingJobService.startJob(1L)).willReturn(task);
         org.mockito.BDDMockito.willThrow(new java.io.IOException("extract failed"))
@@ -137,14 +149,69 @@ class AudioProcessingServiceTest {
 
         audioProcessingService.processJob(1L);
 
-        verify(audioProcessingJobService).failJob(1L, "extract failed");
+        verify(audioProcessingJobService).handleJobFailure(
+                1L,
+                AudioProcessingFailureCode.UNKNOWN,
+                "extract failed",
+                3
+        );
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    }
+
+    @Test
+    void processJobPassesClassifiedSourceFailureToLifecycle() throws Exception {
+        AudioProcessingTask task = audioProcessingTask(1L);
+        given(audioProcessingJobService.startJob(1L)).willReturn(task);
+        org.mockito.BDDMockito.willThrow(new AudioProcessingException(
+                        AudioProcessingFailureCode.SOURCE_UNAVAILABLE,
+                        "Video unavailable"
+                ))
+                .given(audioExtractionCommandRunner)
+                .extractYoutubeSegment(any(YoutubeAudioExtractionCommand.class));
+
+        audioProcessingService.processJob(1L);
+
+        verify(audioProcessingJobService).handleJobFailure(
+                1L,
+                AudioProcessingFailureCode.SOURCE_UNAVAILABLE,
+                "Video unavailable",
+                3
+        );
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    }
+
+    @Test
+    void processJobClassifiesS3UploadFailureAsStorageError() throws Exception {
+        AudioProcessingTask task = audioProcessingTask(1L);
+        given(audioProcessingJobService.startJob(1L)).willReturn(task);
+        org.mockito.BDDMockito.willAnswer(invocation -> {
+                    YoutubeAudioExtractionCommand command = invocation.getArgument(0);
+                    Files.writeString(command.outputFile(), "mp3");
+                    return null;
+                })
+                .given(audioExtractionCommandRunner)
+                .extractYoutubeSegment(any(YoutubeAudioExtractionCommand.class));
+        given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .willThrow(SdkClientException.builder().message("S3 unavailable").build());
+
+        audioProcessingService.processJob(1L);
+
+        verify(audioProcessingJobService).handleJobFailure(
+                1L,
+                AudioProcessingFailureCode.STORAGE_ERROR,
+                "Failed to upload processed audio to S3.",
+                3
+        );
     }
 
     private AudioProcessingTask audioProcessingTask(Long jobId) {
         return new AudioProcessingTask(
                 jobId,
+                100L,
+                20L,
                 10L,
+                1,
+                500L,
                 "https://youtube.com/watch?v=---",
                 60000,
                 102000,

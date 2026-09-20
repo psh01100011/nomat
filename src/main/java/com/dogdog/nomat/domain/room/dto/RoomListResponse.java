@@ -47,12 +47,16 @@ public record RoomListResponse(
             boolean initialHintEnabled,
             int initialHintTriggerSeconds,
             String hostNickname,
+            String hostUserType,
             LocalDateTime createdAt
     ) {
 
         private static RoomSummaryResponse from(RoomState room) {
             String hostNickname = room.findMember(room.hostUserId())
                     .map(RoomMember::nickname)
+                    .orElse(null);
+            String hostUserType = room.findMember(room.hostUserId())
+                    .map(member -> member.userType().name())
                     .orElse(null);
 
             return new RoomSummaryResponse(
@@ -74,6 +78,7 @@ public record RoomListResponse(
                     room.initialHintEnabled(),
                     room.initialHintTriggerSeconds(),
                     hostNickname,
+                    hostUserType,
                     room.createdAt()
             );
         }

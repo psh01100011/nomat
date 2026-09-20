@@ -7,16 +7,22 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.dogdog.nomat.domain.auth.dto.GuestLoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginRequest;
 import com.dogdog.nomat.domain.auth.dto.LoginResponse;
 import com.dogdog.nomat.domain.auth.dto.RefreshResponse;
+import com.dogdog.nomat.domain.auth.dto.ResetPasswordRequest;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
+import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.auth.token.TokenPair;
+import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
 import com.dogdog.nomat.domain.user.entity.User;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,6 +47,9 @@ class AuthServiceTest {
     @Mock
     private AuthTokenProvider authTokenProvider;
 
+    @Mock
+    private EmailVerificationService emailVerificationService;
+
     @InjectMocks
     private AuthService authService;
 
@@ -51,7 +60,8 @@ class AuthServiceTest {
                 "password123!",
                 "password123!",
                 "tester",
-                " tester@example.com "
+                " Tester@Example.COM ",
+                "email-verification-token"
         );
         given(passwordEncoder.encode("password123!")).willReturn("encoded-password");
         given(userRepository.save(any(User.class))).willAnswer(invocation -> invocation.getArgument(0));
@@ -66,6 +76,50 @@ class AuthServiceTest {
         assertThat(savedUser.getPasswordHash()).isEqualTo("encoded-password");
         assertThat(savedUser.getNickname()).isEqualTo("tester");
         assertThat(savedUser.getEmail()).isEqualTo("tester@example.com");
+        assertThat(savedUser.getEmailVerifiedAt()).isNotNull();
+        verify(emailVerificationService).consumeSignupToken(
+                "tester@example.com",
+                "email-verification-token"
+        );
+    }
+
+    @Test
+    void signupAllowsMissingEmailWithoutVerification() {
+        SignupRequest request = new SignupRequest(
+                "testuser",
+                "password123!",
+                "password123!",
+                "tester",
+                null
+        );
+        given(passwordEncoder.encode("password123!")).willReturn("encoded-password");
+
+        authService.signup(request);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(userCaptor.capture());
+        assertThat(userCaptor.getValue().getEmail()).isNull();
+        verify(emailVerificationService, never()).consumeSignupToken(any(), any());
+    }
+
+    @Test
+    void signupRejectsDuplicateNormalizedEmail() {
+        SignupRequest request = new SignupRequest(
+                "testuser",
+                "password123!",
+                "password123!",
+                "tester",
+                " Tester@Example.COM ",
+                "email-verification-token"
+        );
+        given(userRepository.existsByEmail("tester@example.com")).willReturn(true);
+
+        assertThatThrownBy(() -> authService.signup(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("duplicate_email");
+
+        verify(userRepository, never()).save(any(User.class));
+        verify(emailVerificationService, never()).consumeSignupToken(any(), any());
     }
 
     @Test
@@ -90,6 +144,31 @@ class AuthServiceTest {
                 .hasMessageContaining("duplicate_nickname");
 
         verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void resetPasswordChangesPasswordAfterEmailTokenIsConsumed() {
+        User user = User.create("testuser", "old-password-hash", "tester");
+        ReflectionTestUtils.setField(user, "id", 1L);
+        user.verifyEmail("tester@example.com", LocalDateTime.now());
+        ResetPasswordRequest request = new ResetPasswordRequest(
+                "testuser",
+                " Tester@Example.COM ",
+                "completion-token",
+                "newPassword123!",
+                "newPassword123!"
+        );
+        given(userRepository.findByLoginId("testuser")).willReturn(Optional.of(user));
+        given(emailVerificationService.consumePasswordResetToken(
+                "testuser",
+                "tester@example.com",
+                "completion-token"
+        )).willReturn(1L);
+        given(passwordEncoder.encode("newPassword123!")).willReturn("new-password-hash");
+
+        authService.resetPassword(request);
+
+        assertThat(user.getPasswordHash()).isEqualTo("new-password-hash");
     }
 
     @Test
@@ -148,6 +227,33 @@ class AuthServiceTest {
     }
 
     @Test
+    void refreshReturnsNewGuestAccessToken() {
+        Jwt refreshJwt = guestRefreshJwt(-1L, "손님");
+        given(authTokenProvider.decodeRefreshToken("guest-refresh-token")).willReturn(refreshJwt);
+        given(authTokenProvider.issueGuestAccessToken(-1L, "손님")).willReturn("new-guest-access-token");
+
+        RefreshResponse response = authService.refresh("Bearer guest-refresh-token");
+
+        assertThat(response.accessToken()).isEqualTo("new-guest-access-token");
+        verify(userRepository, never()).findById(any());
+    }
+
+    @Test
+    void changeGuestNicknameReturnsTokensForSameGuestUserId() {
+        AuthenticatedUser guest = new AuthenticatedUser(-1L, AuthenticatedUserType.GUEST, "손님");
+        given(authTokenProvider.issueGuest(-1L, "새손님"))
+                .willReturn(new TokenPair("new-access-token", "new-refresh-token"));
+
+        var response = authService.changeGuestNickname(guest, new GuestLoginRequest("새손님"));
+
+        assertThat(response.userId()).isEqualTo(-1L);
+        assertThat(response.userType()).isEqualTo("GUEST");
+        assertThat(response.nickname()).isEqualTo("새손님");
+        assertThat(response.accessToken()).isEqualTo("new-access-token");
+        assertThat(response.refreshToken()).isEqualTo("new-refresh-token");
+    }
+
+    @Test
     void refreshRejectsMissingBearerToken() {
         assertThatThrownBy(() -> authService.refresh(null))
                 .isInstanceOf(BusinessException.class)
@@ -184,6 +290,21 @@ class AuthServiceTest {
                 .issuedAt(now)
                 .expiresAt(now.plusSeconds(60))
                 .claim("userId", userId)
+                .claim("tokenType", "refresh")
+                .build();
+    }
+
+    private Jwt guestRefreshJwt(Long userId, String nickname) {
+        Instant now = Instant.now();
+        return Jwt.withTokenValue("guest-refresh-token")
+                .header("alg", "HS256")
+                .issuer("nomat")
+                .subject("guest:" + userId)
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(60))
+                .claim("userId", userId)
+                .claim("userType", "GUEST")
+                .claim("nickname", nickname)
                 .claim("tokenType", "refresh")
                 .build();
     }
