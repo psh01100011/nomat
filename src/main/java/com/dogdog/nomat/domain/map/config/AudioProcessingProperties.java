@@ -60,4 +60,9 @@ public class AudioProcessingProperties {
     public boolean isYoutubePermitRenewalBeforeExpiry() {
         return youtubePermitRenewalMs < youtubePermitLeaseSeconds * 1000;
     }
+
+    @AssertTrue(message = "audio command timeout must be shorter than the stale processing threshold")
+    public boolean isCommandTimeoutBeforeStaleThreshold() {
+        return commandTimeoutSeconds < processingTimeoutMinutes * 60;
+    }
 }

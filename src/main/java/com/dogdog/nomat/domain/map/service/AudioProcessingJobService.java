@@ -95,15 +95,20 @@ public class AudioProcessingJobService {
     }
 
     @Transactional
-    public void completeJob(
+    public boolean completeJob(
             Long jobId,
+            int expectedAttemptCount,
             String originalFilename,
             String storageKey,
             String url,
             Long sizeBytes,
             Integer durationMs
     ) {
-        AudioProcessingJob job = audioProcessingJobRepository.findById(jobId).orElseThrow();
+        AudioProcessingJob job = audioProcessingJobRepository.findByIdForUpdate(jobId).orElse(null);
+        if (job == null || !job.isActiveAttempt(expectedAttemptCount)) {
+            logObsoleteAttempt(jobId, expectedAttemptCount, job);
+            return false;
+        }
         QuestionMedia media = job.getQuestionMedia();
         User uploader = media.getQuestion().getMap().getCreator();
 
@@ -138,22 +143,34 @@ public class AudioProcessingJobService {
                 duration,
                 sizeBytes
         );
+        return true;
     }
 
     @Transactional
     public AudioProcessingJobStatus handleJobFailure(
             Long jobId,
+            int expectedAttemptCount,
             AudioProcessingFailureCode failureCode,
             String failureMessage,
             int maxRetryAttempts
     ) {
-        AudioProcessingJob job = audioProcessingJobRepository.findById(jobId).orElse(null);
-        if (job == null) {
-            log.error("event=audio_job_failure_state_missing jobId={} failureCode={}", jobId, failureCode);
+        AudioProcessingJob job = audioProcessingJobRepository.findByIdForUpdate(jobId).orElse(null);
+        if (job == null || !job.isActiveAttempt(expectedAttemptCount)) {
+            logObsoleteAttempt(jobId, expectedAttemptCount, job);
             return null;
         }
         retryOrFail(job, failureCode, failureMessage, maxRetryAttempts);
         return job.getStatus();
+    }
+
+    private void logObsoleteAttempt(Long jobId, int expectedAttemptCount, AudioProcessingJob job) {
+        log.warn(
+                "event=audio_job_obsolete_attempt_ignored jobId={} expectedAttempt={} currentAttempt={} status={}",
+                jobId,
+                expectedAttemptCount,
+                job == null ? null : job.getAttemptCount(),
+                job == null ? null : job.getStatus()
+        );
     }
 
     private void retryOrFail(AudioProcessingJob job, int maxRetryAttempts) {

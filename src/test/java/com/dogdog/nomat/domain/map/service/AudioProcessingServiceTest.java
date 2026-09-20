@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.map.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
@@ -73,6 +74,9 @@ class AudioProcessingServiceTest {
         given(audioProcessingJobService.startJob(1L)).willReturn(task);
         given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
                 .willReturn(PutObjectResponse.builder().build());
+        given(audioProcessingJobService.completeJob(
+                any(), anyInt(), any(), any(), any(), any(), anyInt()
+        )).willReturn(true);
         org.mockito.BDDMockito.willAnswer(invocation -> {
                     YoutubeAudioExtractionCommand command = invocation.getArgument(0);
                     Files.writeString(command.outputFile(), "mp3");
@@ -102,6 +106,7 @@ class AudioProcessingServiceTest {
 
         verify(audioProcessingJobService).completeJob(
                 eq(1L),
+                eq(1),
                 eq("question-media-10.mp3"),
                 eq(putObjectCaptor.getValue().key()),
                 eq("https://cdn.nomat.com/" + putObjectCaptor.getValue().key()),
@@ -110,6 +115,7 @@ class AudioProcessingServiceTest {
         );
         verify(audioProcessingJobService, never()).handleJobFailure(
                 eq(1L),
+                anyInt(),
                 any(AudioProcessingFailureCode.class),
                 any(),
                 any(Integer.class)
@@ -128,6 +134,7 @@ class AudioProcessingServiceTest {
 
         verify(audioProcessingJobService).handleJobFailure(
                 1L,
+                1,
                 AudioProcessingFailureCode.UNKNOWN,
                 "extract failed",
                 3
@@ -150,6 +157,7 @@ class AudioProcessingServiceTest {
 
         verify(audioProcessingJobService).handleJobFailure(
                 1L,
+                1,
                 AudioProcessingFailureCode.SOURCE_UNAVAILABLE,
                 "Video unavailable",
                 3
@@ -175,6 +183,7 @@ class AudioProcessingServiceTest {
 
         verify(audioProcessingJobService).handleJobFailure(
                 1L,
+                1,
                 AudioProcessingFailureCode.STORAGE_ERROR,
                 "Failed to upload processed audio to S3.",
                 3

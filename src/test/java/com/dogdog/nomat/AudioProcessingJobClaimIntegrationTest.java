@@ -2,6 +2,7 @@ package com.dogdog.nomat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.dogdog.nomat.domain.asset.repository.AssetRepository;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
 import com.dogdog.nomat.domain.map.entity.Category;
@@ -49,6 +50,9 @@ class AudioProcessingJobClaimIntegrationTest {
 
     @Autowired
     private AudioProcessingJobRepository audioProcessingJobRepository;
+
+    @Autowired
+    private AssetRepository assetRepository;
 
     @Autowired
     private TransactionTemplate transactionTemplate;
@@ -142,6 +146,49 @@ class AudioProcessingJobClaimIntegrationTest {
                     assertThat(job.getStartedAt()).isNull();
                     assertThat(job.getAttemptCount()).isEqualTo(1);
                 });
+    }
+
+    @Test
+    void staleRecoveryRejectsLateCompletionFromTheOriginalServer() throws Exception {
+        List<Long> jobIds = saveStaleJobs();
+        long assetCountBefore = assetRepository.count();
+        CountDownLatch staleRecovered = new CountDownLatch(1);
+        CountDownLatch releaseRecoveryTransaction = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        TransactionTemplate recoveryTransaction = new TransactionTemplate(transactionManager);
+        recoveryTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+
+        try {
+            Future<Integer> recovery = executor.submit(() -> recoveryTransaction.execute(status -> {
+                int count = audioProcessingJobService.recoverStaleProcessingJobs(1, 10, 3);
+                staleRecovered.countDown();
+                await(releaseRecoveryTransaction);
+                return count;
+            }));
+            assertThat(staleRecovered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            Future<Boolean> lateCompletion = executor.submit(() -> audioProcessingJobService.completeJob(
+                    jobIds.getFirst(),
+                    1,
+                    "obsolete.mp3",
+                    "uploads/audios/obsolete.mp3",
+                    "https://cdn.example.com/uploads/audios/obsolete.mp3",
+                    1234L,
+                    30_000
+            ));
+
+            releaseRecoveryTransaction.countDown();
+
+            assertThat(recovery.get(5, TimeUnit.SECONDS)).isEqualTo(1);
+            assertThat(lateCompletion.get(5, TimeUnit.SECONDS)).isFalse();
+        } finally {
+            releaseRecoveryTransaction.countDown();
+            executor.shutdownNow();
+        }
+
+        AudioProcessingJob recoveredJob = audioProcessingJobRepository.findById(jobIds.getFirst()).orElseThrow();
+        assertThat(recoveredJob.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
+        assertThat(assetRepository.count()).isEqualTo(assetCountBefore);
     }
 
     private List<Long> saveQueuedJobs() {

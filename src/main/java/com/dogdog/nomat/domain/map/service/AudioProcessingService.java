@@ -74,14 +74,23 @@ public class AudioProcessingService {
             uploadToS3(outputFile, storageKey);
 
             try {
-                audioProcessingJobService.completeJob(
+                boolean completed = audioProcessingJobService.completeJob(
                         task.jobId(),
+                        task.attemptCount(),
                         outputFile.getFileName().toString(),
                         storageKey,
                         url,
                         Files.size(outputFile),
                         task.durationMs()
                 );
+                if (!completed) {
+                    deleteFromS3Quietly(storageKey);
+                    log.warn(
+                            "event=audio_job_obsolete_result_discarded jobId={} attempt={} storageKey={}",
+                            task.jobId(), task.attemptCount(), storageKey
+                    );
+                    return;
+                }
                 processingMetrics.recordAttempt(
                         AudioProcessingJobStatus.SUCCEEDED,
                         null,
@@ -94,19 +103,27 @@ public class AudioProcessingService {
         } catch (AudioProcessingException exception) {
             AudioProcessingJobStatus status = audioProcessingJobService.handleJobFailure(
                     task.jobId(),
+                    task.attemptCount(),
                     exception.getFailureCode(),
                     exception.getMessage(),
                     processingProperties.getMaxRetryAttempts()
             );
+            if (status == null) {
+                return;
+            }
             processingMetrics.recordAttempt(status, exception.getFailureCode(), elapsedMillis(processingStartedAt));
             logProcessingFailure(task, exception.getFailureCode(), status, exception, processingStartedAt);
         } catch (Exception exception) {
             AudioProcessingJobStatus status = audioProcessingJobService.handleJobFailure(
                     task.jobId(),
+                    task.attemptCount(),
                     AudioProcessingFailureCode.UNKNOWN,
                     exception.getMessage(),
                     processingProperties.getMaxRetryAttempts()
             );
+            if (status == null) {
+                return;
+            }
             processingMetrics.recordAttempt(
                     status,
                     AudioProcessingFailureCode.UNKNOWN,

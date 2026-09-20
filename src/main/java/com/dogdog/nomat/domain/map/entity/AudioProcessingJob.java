@@ -117,6 +117,11 @@ public class AudioProcessingJob {
         return attemptCount < maxRetryAttempts;
     }
 
+    public boolean isActiveAttempt(int expectedAttemptCount) {
+        return status == AudioProcessingJobStatus.PROCESSING
+                && attemptCount == expectedAttemptCount;
+    }
+
     public boolean canRetryManually() {
         return status == AudioProcessingJobStatus.FAILED
                 && failureCode != null

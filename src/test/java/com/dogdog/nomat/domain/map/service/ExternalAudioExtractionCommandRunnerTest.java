@@ -1,8 +1,10 @@
 package com.dogdog.nomat.domain.map.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -59,6 +61,44 @@ class ExternalAudioExtractionCommandRunnerTest {
                 .contains("-t\n90.000")
                 .contains("-acodec\nlibmp3lame")
                 .contains("-b:a\n128k");
+    }
+
+    @Test
+    void sharesOneDeadlineBetweenYtDlpAndFfmpeg() throws Exception {
+        Path downloadedSource = tempDirectory.resolve("source.webm");
+        Path ytDlp = executableScript("slow-yt-dlp", """
+                #!/bin/sh
+                sleep 1.2
+                printf 'source' > "%s"
+                printf '%%s\n' "%s"
+                """.formatted(downloadedSource, downloadedSource));
+        Path ffmpeg = executableScript("slow-ffmpeg", """
+                #!/bin/sh
+                sleep 1.2
+                for arg in "$@"; do
+                  output="$arg"
+                done
+                printf 'mp3' > "$output"
+                """);
+
+        AudioProcessingProperties properties = new AudioProcessingProperties();
+        properties.setCommandTimeoutSeconds(2);
+        properties.setYtDlpPath(ytDlp.toString());
+        properties.setFfmpegPath(ffmpeg.toString());
+        ExternalAudioExtractionCommandRunner runner = new ExternalAudioExtractionCommandRunner(
+                properties,
+                new AudioExtractionFailureClassifier()
+        );
+
+        assertThatThrownBy(() -> runner.extractYoutubeSegment(new YoutubeAudioExtractionCommand(
+                "https://youtube.com/watch?v=test",
+                0,
+                30_000,
+                tempDirectory.resolve("timed-out.mp3")
+        )))
+                .isInstanceOfSatisfying(AudioProcessingException.class, exception ->
+                        assertThat(exception.getFailureCode())
+                                .isEqualTo(AudioProcessingFailureCode.PROCESSING_TIMEOUT));
     }
 
     private Path executableScript(String name, String content) throws Exception {

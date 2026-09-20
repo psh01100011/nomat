@@ -24,6 +24,8 @@ public class ExternalAudioExtractionCommandRunner implements AudioExtractionComm
 
     @Override
     public void extractYoutubeSegment(YoutubeAudioExtractionCommand command) throws IOException, InterruptedException {
+        long deadlineNanos = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(properties.getCommandTimeoutSeconds());
         try {
             Files.createDirectories(command.outputFile().getParent());
         } catch (IOException exception) {
@@ -59,7 +61,7 @@ public class ExternalAudioExtractionCommandRunner implements AudioExtractionComm
         ProcessBuilder ytDlp = new ProcessBuilder(ytDlpCommand);
         ytDlp.redirectOutput(ytDlpOutput.toFile());
         ytDlp.redirectError(ytDlpLog.toFile());
-        runYtDlp(ytDlp, ytDlpLog);
+        runYtDlp(ytDlp, ytDlpLog, deadlineNanos);
 
         Path downloadedSource = downloadedSource(ytDlpOutput, command.outputFile().getParent());
         ProcessBuilder ffmpeg = new ProcessBuilder(
@@ -84,12 +86,16 @@ public class ExternalAudioExtractionCommandRunner implements AudioExtractionComm
         );
         ffmpeg.redirectOutput(ProcessBuilder.Redirect.DISCARD);
         ffmpeg.redirectError(ffmpegLog.toFile());
-        runFfmpeg(ffmpeg, ytDlpLog, ffmpegLog, command.outputFile());
+        runFfmpeg(ffmpeg, ytDlpLog, ffmpegLog, command.outputFile(), deadlineNanos);
     }
 
-    private void runYtDlp(ProcessBuilder processBuilder, Path ytDlpLog) throws IOException, InterruptedException {
+    private void runYtDlp(
+            ProcessBuilder processBuilder,
+            Path ytDlpLog,
+            long deadlineNanos
+    ) throws IOException, InterruptedException {
         Process process = start(processBuilder);
-        waitFor(process);
+        waitFor(process, deadlineNanos);
         if (process.exitValue() == 0) {
             return;
         }
@@ -103,10 +109,11 @@ public class ExternalAudioExtractionCommandRunner implements AudioExtractionComm
             ProcessBuilder processBuilder,
             Path ytDlpLog,
             Path ffmpegLog,
-            Path outputFile
+            Path outputFile,
+            long deadlineNanos
     ) throws IOException, InterruptedException {
         Process process = start(processBuilder);
-        waitFor(process);
+        waitFor(process, deadlineNanos);
 
         String ytDlpFullLog = readFullLog(ytDlpLog);
         String ffmpegFullLog = readFullLog(ffmpegLog);
@@ -137,16 +144,28 @@ public class ExternalAudioExtractionCommandRunner implements AudioExtractionComm
         }
     }
 
-    private void waitFor(Process process) throws IOException, InterruptedException {
-        if (process.waitFor(properties.getCommandTimeoutSeconds(), TimeUnit.SECONDS)) {
-            return;
+    private void waitFor(Process process, long deadlineNanos) throws IOException, InterruptedException {
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        try {
+            if (remainingNanos > 0 && process.waitFor(remainingNanos, TimeUnit.NANOSECONDS)) {
+                return;
+            }
+        } catch (InterruptedException exception) {
+            terminateProcessTree(process);
+            throw exception;
         }
 
-        process.destroyForcibly();
+        terminateProcessTree(process);
         throw new AudioProcessingException(
                 AudioProcessingFailureCode.PROCESSING_TIMEOUT,
-                "Audio extraction command timed out."
+                "Audio extraction deadline exceeded."
         );
+    }
+
+    private void terminateProcessTree(Process process) {
+        List<ProcessHandle> descendants = process.descendants().toList();
+        process.destroyForcibly();
+        descendants.forEach(ProcessHandle::destroyForcibly);
     }
 
     private Path downloadedSource(Path ytDlpOutput, Path workingDirectory) throws IOException {
