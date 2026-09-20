@@ -47,7 +47,7 @@ public class AudioExtractionFailureClassifier {
             return AudioProcessingFailureCode.AUDIO_STREAM_UNAVAILABLE;
         }
 
-        if (containsAny(ffmpegMessage,
+        if (containsAny(combinedMessage,
                 "output file is empty",
                 "nothing was encoded",
                 "could not seek to position",
