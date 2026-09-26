@@ -53,5 +53,12 @@ dependencies {
 }
 
 tasks.named('test') {
-	useJUnitPlatform()
+	useJUnitPlatform {
+		if (!project.hasProperty('includeAudioLoadTest')) {
+			excludeTags 'audio-load'
+		}
+	}
+	if (project.hasProperty('includeAudioLoadTest')) {
+		systemProperty 'audio.load-test.classpath', sourceSets.test.runtimeClasspath.asPath
+	}
 }
