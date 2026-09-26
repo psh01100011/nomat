@@ -12,7 +12,13 @@ import com.dogdog.nomat.domain.map.service.YoutubeAudioExtractionCommand;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -46,24 +52,89 @@ public final class AudioProcessingLoadWorkerProcess {
             if (Boolean.parseBoolean(System.getenv("LOAD_WORKER_RECOVER_STALE"))) {
                 processingService.recoverStaleJobs();
             }
-            int processedCount = processUntilQueueIsEmpty(jobService, processingService);
+            WorkerMetrics metrics = processUntilQueueIsEmpty(
+                    jobService,
+                    processingService,
+                    configuredConcurrency()
+            );
+            writeMetrics(metrics);
+            int processedCount = metrics.processedCount();
             System.out.println("AUDIO_LOAD_WORKER_RESULT processed=" + processedCount);
         }
     }
 
-    private static int processUntilQueueIsEmpty(
+    private static WorkerMetrics processUntilQueueIsEmpty(
             AudioProcessingJobService jobService,
-            AudioProcessingService processingService
-    ) {
-        int processedCount = 0;
-        while (true) {
-            List<AudioProcessingTask> tasks = jobService.claimProcessableJobs(1);
-            if (tasks.isEmpty()) {
-                return processedCount;
+            AudioProcessingService processingService,
+            int concurrency
+    ) throws Exception {
+        AtomicInteger processedCount = new AtomicInteger();
+        ConcurrentLinkedQueue<Long> queueWaitMillis = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<Long> claimMicros = new ConcurrentLinkedQueue<>();
+        ExecutorService executor = Executors.newFixedThreadPool(concurrency);
+        try {
+            List<Future<?>> workers = new ArrayList<>(concurrency);
+            for (int index = 0; index < concurrency; index++) {
+                workers.add(executor.submit(() -> processWorkerLoop(
+                        jobService,
+                        processingService,
+                        processedCount,
+                        queueWaitMillis,
+                        claimMicros
+                )));
             }
-            processingService.processClaimedJob(tasks.getFirst());
-            processedCount++;
+            for (Future<?> worker : workers) {
+                worker.get();
+            }
+        } finally {
+            executor.shutdownNow();
         }
+        return new WorkerMetrics(processedCount.get(), queueWaitMillis, claimMicros);
+    }
+
+    private static void processWorkerLoop(
+            AudioProcessingJobService jobService,
+            AudioProcessingService processingService,
+            AtomicInteger processedCount,
+            ConcurrentLinkedQueue<Long> queueWaitMillis,
+            ConcurrentLinkedQueue<Long> claimMicros
+    ) {
+        while (true) {
+            long claimStartedAt = System.nanoTime();
+            List<AudioProcessingTask> tasks = jobService.claimProcessableJobs(1);
+            long claimDurationMicros = (System.nanoTime() - claimStartedAt) / 1_000;
+            if (tasks.isEmpty()) {
+                return;
+            }
+            AudioProcessingTask task = tasks.getFirst();
+            claimMicros.add(claimDurationMicros);
+            queueWaitMillis.add(task.queueWaitMs());
+            processingService.processClaimedJob(task);
+            processedCount.incrementAndGet();
+        }
+    }
+
+    private static int configuredConcurrency() {
+        String value = System.getenv("LOAD_WORKER_CONCURRENCY");
+        return value == null || value.isBlank() ? 1 : Integer.parseInt(value);
+    }
+
+    private static void writeMetrics(WorkerMetrics metrics) throws java.io.IOException {
+        String metricsFile = System.getenv("LOAD_WORKER_METRICS_FILE");
+        if (metricsFile == null || metricsFile.isBlank()) {
+            return;
+        }
+
+        List<Long> queueWaits = List.copyOf(metrics.queueWaitMillis());
+        List<Long> claimDurations = List.copyOf(metrics.claimMicros());
+        StringBuilder contents = new StringBuilder();
+        for (int index = 0; index < queueWaits.size(); index++) {
+            contents.append(queueWaits.get(index))
+                    .append(',')
+                    .append(claimDurations.get(index))
+                    .append('\n');
+        }
+        Files.writeString(Path.of(metricsFile), contents);
     }
 
     private static void awaitStart(Path startFile) throws Exception {
@@ -95,9 +166,23 @@ public final class AudioProcessingLoadWorkerProcess {
                 public void extractYoutubeSegment(YoutubeAudioExtractionCommand command) throws java.io.IOException {
                     signalProcessingStarted();
                     awaitReleaseIfConfigured();
+                    delayIfConfigured();
                     Files.writeString(command.outputFile(), "test-audio");
                 }
             };
+        }
+
+        private void delayIfConfigured() throws java.io.IOException {
+            String delayMillis = System.getenv("LOAD_WORKER_EXTRACTION_DELAY_MS");
+            if (delayMillis == null || delayMillis.isBlank()) {
+                return;
+            }
+            try {
+                Thread.sleep(Long.parseLong(delayMillis));
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new java.io.IOException("Interrupted during test extraction delay.", exception);
+            }
         }
 
         private void signalProcessingStarted() throws java.io.IOException {
@@ -133,5 +218,12 @@ public final class AudioProcessingLoadWorkerProcess {
                     .putObject(any(PutObjectRequest.class), any(RequestBody.class));
             return client;
         }
+    }
+
+    private record WorkerMetrics(
+            int processedCount,
+            ConcurrentLinkedQueue<Long> queueWaitMillis,
+            ConcurrentLinkedQueue<Long> claimMicros
+    ) {
     }
 }

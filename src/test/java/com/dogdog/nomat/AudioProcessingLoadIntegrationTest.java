@@ -31,6 +31,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -80,6 +82,7 @@ class AudioProcessingLoadIntegrationTest {
     private static final int JOBS_PER_MAP = 50;
     private static final int TOTAL_JOB_COUNT = MAP_COUNT * JOBS_PER_MAP;
     private static final int WORKER_COUNT = 4;
+    private static final long BENCHMARK_EXTRACTION_DELAY_MS = 20;
     private static final String WORKER_RESULT_PREFIX = "AUDIO_LOAD_WORKER_RESULT processed=";
 
     @Container
@@ -231,6 +234,85 @@ class AudioProcessingLoadIntegrationTest {
         assertThat(assetRepository.count()).isEqualTo(assetCountBefore + TOTAL_JOB_COUNT);
     }
 
+    @Test
+    void comparesThroughputAndClaimLatencyByServerAndWorkerCount() throws Exception {
+        List<BenchmarkScenario> scenarios = List.of(
+                new BenchmarkScenario(1, 1),
+                new BenchmarkScenario(1, 2),
+                new BenchmarkScenario(2, 1),
+                new BenchmarkScenario(1, 4),
+                new BenchmarkScenario(2, 2),
+                new BenchmarkScenario(4, 1)
+        );
+        List<BenchmarkResult> results = new ArrayList<>(scenarios.size());
+
+        for (BenchmarkScenario scenario : scenarios) {
+            results.add(runBenchmarkScenario(scenario));
+        }
+
+        System.out.println("AUDIO_LOAD_BENCHMARK serverCount,workerConcurrency,totalWorkers,elapsedMs,jobsPerSecond,queueWaitP50Ms,queueWaitP95Ms,claimP50Micros,claimP95Micros");
+        results.forEach(result -> System.out.println("AUDIO_LOAD_BENCHMARK " + result.toCsv()));
+        assertThat(results).hasSize(scenarios.size());
+    }
+
+    private BenchmarkResult runBenchmarkScenario(BenchmarkScenario scenario) throws Exception {
+        Path processDirectory = Files.createTempDirectory(
+                "nomat-audio-benchmark-%dx%d-".formatted(scenario.serverCount(), scenario.workerConcurrency())
+        );
+        Path startFile = processDirectory.resolve("start");
+        List<WorkerProcess> workers = new ArrayList<>(scenario.serverCount());
+
+        try {
+            for (int sequence = 1; sequence <= scenario.serverCount(); sequence++) {
+                workers.add(startWorkerProcess(
+                        processDirectory,
+                        startFile,
+                        sequence,
+                        WorkerMode.BENCHMARK,
+                        scenario.workerConcurrency()
+                ));
+            }
+            for (WorkerProcess worker : workers) {
+                awaitWorkerReady(worker);
+            }
+
+            long assetCountBefore = assetRepository.count();
+            LoadFixture fixture = createQueuedJobs();
+            long startedAt = System.nanoTime();
+            Files.writeString(startFile, "start");
+            for (WorkerProcess worker : workers) {
+                assertWorkerCompleted(worker);
+            }
+            long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+
+            int processedCount = 0;
+            List<Long> queueWaitMillis = new ArrayList<>(TOTAL_JOB_COUNT);
+            List<Long> claimMicros = new ArrayList<>(TOTAL_JOB_COUNT);
+            for (WorkerProcess worker : workers) {
+                processedCount += readProcessedCount(worker.logFile());
+                readWorkerMetrics(worker.metricsFile(), queueWaitMillis, claimMicros);
+            }
+
+            assertThat(processedCount).isEqualTo(TOTAL_JOB_COUNT);
+            assertThat(queueWaitMillis).hasSize(TOTAL_JOB_COUNT);
+            assertThat(claimMicros).hasSize(TOTAL_JOB_COUNT);
+            assertCompletedFixture(fixture);
+            assertThat(assetRepository.count()).isEqualTo(assetCountBefore + TOTAL_JOB_COUNT);
+
+            return new BenchmarkResult(
+                    scenario,
+                    elapsedMillis,
+                    TOTAL_JOB_COUNT * 1_000.0 / elapsedMillis,
+                    percentile(queueWaitMillis, 50),
+                    percentile(queueWaitMillis, 95),
+                    percentile(claimMicros, 50),
+                    percentile(claimMicros, 95)
+            );
+        } finally {
+            workers.forEach(worker -> worker.process().destroyForcibly());
+        }
+    }
+
     private void processUntilQueueIsEmpty(AtomicInteger processedCount) {
         while (true) {
             List<AudioProcessingTask> tasks = jobService.claimProcessableJobs(1);
@@ -324,8 +406,19 @@ class AudioProcessingLoadIntegrationTest {
             int sequence,
             WorkerMode mode
     ) throws Exception {
+        return startWorkerProcess(directory, startFile, sequence, mode, 1);
+    }
+
+    private WorkerProcess startWorkerProcess(
+            Path directory,
+            Path startFile,
+            int sequence,
+            WorkerMode mode,
+            int workerConcurrency
+    ) throws Exception {
         Path readyFile = directory.resolve("worker-" + sequence + ".ready");
         Path logFile = directory.resolve("worker-" + sequence + ".log");
+        Path metricsFile = directory.resolve("worker-" + sequence + ".csv");
         Path processingFile = directory.resolve("worker-" + sequence + ".processing");
         Path releaseFile = directory.resolve("worker-" + sequence + ".release");
         Path tempDirectory = directory.resolve("worker-" + sequence + "-tmp");
@@ -358,6 +451,8 @@ class AudioProcessingLoadIntegrationTest {
         );
         processBuilder.environment().put("LOAD_WORKER_READY_FILE", readyFile.toString());
         processBuilder.environment().put("LOAD_WORKER_START_FILE", startFile.toString());
+        processBuilder.environment().put("LOAD_WORKER_CONCURRENCY", String.valueOf(workerConcurrency));
+        processBuilder.environment().put("LOAD_WORKER_METRICS_FILE", metricsFile.toString());
         if (mode == WorkerMode.BLOCK_DURING_EXTRACTION) {
             processBuilder.environment().put("LOAD_WORKER_PROCESSING_FILE", processingFile.toString());
             processBuilder.environment().put("LOAD_WORKER_RELEASE_FILE", releaseFile.toString());
@@ -365,9 +460,15 @@ class AudioProcessingLoadIntegrationTest {
         if (mode == WorkerMode.RECOVER_STALE) {
             processBuilder.environment().put("LOAD_WORKER_RECOVER_STALE", "true");
         }
+        if (mode == WorkerMode.BENCHMARK) {
+            processBuilder.environment().put(
+                    "LOAD_WORKER_EXTRACTION_DELAY_MS",
+                    String.valueOf(BENCHMARK_EXTRACTION_DELAY_MS)
+            );
+        }
         processBuilder.redirectErrorStream(true);
         processBuilder.redirectOutput(logFile.toFile());
-        return new WorkerProcess(processBuilder.start(), readyFile, processingFile, logFile);
+        return new WorkerProcess(processBuilder.start(), readyFile, processingFile, logFile, metricsFile);
     }
 
     private void awaitWorkerReady(WorkerProcess worker) throws Exception {
@@ -430,6 +531,24 @@ class AudioProcessingLoadIntegrationTest {
                 .orElseThrow(() -> new AssertionError("Worker result missing:\n" + readLog(logFile)));
     }
 
+    private void readWorkerMetrics(
+            Path metricsFile,
+            List<Long> queueWaitMillis,
+            List<Long> claimMicros
+    ) throws Exception {
+        for (String line : Files.readAllLines(metricsFile, StandardCharsets.UTF_8)) {
+            String[] values = line.split(",");
+            queueWaitMillis.add(Long.parseLong(values[0]));
+            claimMicros.add(Long.parseLong(values[1]));
+        }
+    }
+
+    private long percentile(List<Long> values, int percentile) {
+        List<Long> sorted = values.stream().sorted(Comparator.naturalOrder()).toList();
+        int index = (int) Math.ceil(percentile / 100.0 * sorted.size()) - 1;
+        return sorted.get(Math.max(index, 0));
+    }
+
     private String readLog(Path logFile) {
         try {
             return Files.exists(logFile) ? Files.readString(logFile) : "";
@@ -485,14 +604,43 @@ class AudioProcessingLoadIntegrationTest {
     private enum WorkerMode {
         NORMAL,
         BLOCK_DURING_EXTRACTION,
-        RECOVER_STALE
+        RECOVER_STALE,
+        BENCHMARK
     }
 
     private record WorkerProcess(
             Process process,
             Path readyFile,
             Path processingFile,
-            Path logFile
+            Path logFile,
+            Path metricsFile
     ) {
+    }
+
+    private record BenchmarkScenario(int serverCount, int workerConcurrency) {
+    }
+
+    private record BenchmarkResult(
+            BenchmarkScenario scenario,
+            long elapsedMillis,
+            double jobsPerSecond,
+            long queueWaitP50Millis,
+            long queueWaitP95Millis,
+            long claimP50Micros,
+            long claimP95Micros
+    ) {
+        String toCsv() {
+            return "%d,%d,%d,%d,%.2f,%d,%d,%d,%d".formatted(
+                    scenario.serverCount(),
+                    scenario.workerConcurrency(),
+                    scenario.serverCount() * scenario.workerConcurrency(),
+                    elapsedMillis,
+                    jobsPerSecond,
+                    queueWaitP50Millis,
+                    queueWaitP95Millis,
+                    claimP50Micros,
+                    claimP95Micros
+            );
+        }
     }
 }
