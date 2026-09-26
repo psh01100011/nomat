@@ -7,8 +7,10 @@ import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
 import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
+import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
+import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import com.dogdog.nomat.domain.user.entity.User;
 import java.time.LocalDateTime;
@@ -27,6 +29,7 @@ public class AudioProcessingJobService {
 
     private final AudioProcessingJobRepository audioProcessingJobRepository;
     private final QuestionMediaRepository questionMediaRepository;
+    private final QuizMapRepository quizMapRepository;
     private final AssetRepository assetRepository;
     private final AudioProcessingMetrics processingMetrics;
 
@@ -94,7 +97,7 @@ public class AudioProcessingJobService {
         );
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public boolean completeJob(
             Long jobId,
             int expectedAttemptCount,
@@ -110,7 +113,9 @@ public class AudioProcessingJobService {
             return false;
         }
         QuestionMedia media = job.getQuestionMedia();
-        User uploader = media.getQuestion().getMap().getCreator();
+        Long mapId = media.getQuestion().getMap().getId();
+        QuizMap map = quizMapRepository.findByIdForUpdate(mapId).orElseThrow();
+        User uploader = map.getCreator();
 
         Asset asset = Asset.createAudio(
                 uploader,
@@ -126,7 +131,7 @@ public class AudioProcessingJobService {
 
         media.completeProcessing(asset, durationMs);
         job.succeed();
-        publishMapIfAllMediaReady(media);
+        publishMapIfAllMediaReady(map);
         long duration = job.getStartedAt() == null
                 ? 0
                 : Duration.between(job.getStartedAt(), job.getCompletedAt()).toMillis();
@@ -197,15 +202,15 @@ public class AudioProcessingJobService {
         job.getQuestionMedia().getQuestion().getMap().failProcessing();
     }
 
-    private void publishMapIfAllMediaReady(QuestionMedia media) {
-        Long mapId = media.getQuestion().getMap().getId();
+    private void publishMapIfAllMediaReady(QuizMap map) {
+        Long mapId = map.getId();
         boolean hasUnreadyMedia = questionMediaRepository.existsByQuestionMapIdAndProcessingStatusNot(
                 mapId,
                 QuestionMediaProcessingStatus.READY
         );
 
         if (!hasUnreadyMedia) {
-            media.getQuestion().getMap().publishIfProcessing();
+            map.publishIfProcessing();
         }
     }
 }

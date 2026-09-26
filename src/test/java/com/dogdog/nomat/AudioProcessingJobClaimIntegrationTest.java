@@ -14,6 +14,7 @@ import com.dogdog.nomat.domain.map.entity.QuestionMediaSourceType;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
+import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.map.service.AudioProcessingJobService;
 import com.dogdog.nomat.domain.map.service.AudioProcessingTask;
 import com.dogdog.nomat.domain.user.entity.User;
@@ -26,6 +27,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,6 +52,9 @@ class AudioProcessingJobClaimIntegrationTest {
 
     @Autowired
     private AudioProcessingJobRepository audioProcessingJobRepository;
+
+    @Autowired
+    private QuizMapRepository quizMapRepository;
 
     @Autowired
     private AssetRepository assetRepository;
@@ -191,7 +196,74 @@ class AudioProcessingJobClaimIntegrationTest {
         assertThat(assetRepository.count()).isEqualTo(assetCountBefore);
     }
 
+    @Test
+    void concurrentLastJobsPublishTheirMapAfterBothComplete() throws Exception {
+        ProcessingMapFixture fixture = saveProcessingMap();
+        long assetCountBefore = assetRepository.count();
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<Boolean> first = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return completeJob(fixture.jobIds().get(0));
+            });
+            Future<Boolean> second = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return completeJob(fixture.jobIds().get(1));
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            assertThat(first.get(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(second.get(5, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+        }
+
+        QuizMap map = quizMapRepository.findById(fixture.mapId()).orElseThrow();
+        assertThat(map.getStatus()).isEqualTo(MapStatus.PUBLISHED);
+        assertThat(map.getPublishedAt()).isNotNull();
+        assertThat(assetRepository.count()).isEqualTo(assetCountBefore + 2);
+    }
+
+    @Test
+    void anotherWorkerRecoversAndCompletesAJobAbandonedByAStoppedWorker() {
+        ProcessingMapFixture fixture = saveQueuedMap(1);
+        Long jobId = fixture.jobIds().getFirst();
+        long assetCountBefore = assetRepository.count();
+
+        AudioProcessingTask abandonedTask = audioProcessingJobService
+                .claimProcessableJobs(1)
+                .getFirst();
+        makeJobStale(jobId);
+
+        assertThat(audioProcessingJobService.recoverStaleProcessingJobs(1, 10, 3)).isEqualTo(1);
+        assertThat(completeJob(jobId, abandonedTask.attemptCount())).isFalse();
+
+        AudioProcessingTask recoveredTask = audioProcessingJobService
+                .claimProcessableJobs(1)
+                .getFirst();
+        assertThat(recoveredTask.jobId()).isEqualTo(jobId);
+        assertThat(recoveredTask.attemptCount()).isEqualTo(2);
+        assertThat(completeJob(jobId, recoveredTask.attemptCount())).isTrue();
+
+        AudioProcessingJob completedJob = audioProcessingJobRepository.findById(jobId).orElseThrow();
+        assertThat(completedJob.getStatus()).isEqualTo(AudioProcessingJobStatus.SUCCEEDED);
+        assertThat(quizMapRepository.findById(fixture.mapId()).orElseThrow().getStatus())
+                .isEqualTo(MapStatus.PUBLISHED);
+        assertThat(assetRepository.count()).isEqualTo(assetCountBefore + 1);
+    }
+
     private List<Long> saveQueuedJobs() {
+        return saveQueuedMap(2).jobIds();
+    }
+
+    private ProcessingMapFixture saveQueuedMap(int questionCount) {
         return transactionTemplate.execute(status -> {
             String suffix = UUID.randomUUID().toString().substring(0, 8);
             User creator = User.create("claim-" + suffix, "encoded-password", "nick-" + suffix);
@@ -207,14 +279,18 @@ class AudioProcessingJobClaimIntegrationTest {
                     "선점 경쟁 테스트",
                     "설명",
                     MapVisibility.PRIVATE,
-                    2,
+                    questionCount,
                     MapStatus.PROCESSING
             );
             entityManager.persist(map);
-            AudioProcessingJob first = saveQueuedJob(map, 1);
-            AudioProcessingJob second = saveQueuedJob(map, 2);
+            List<AudioProcessingJob> jobs = IntStream.rangeClosed(1, questionCount)
+                    .mapToObj(sequence -> saveQueuedJob(map, sequence))
+                    .toList();
             entityManager.flush();
-            return List.of(first.getId(), second.getId());
+            return new ProcessingMapFixture(
+                    jobs.stream().map(AudioProcessingJob::getId).toList(),
+                    map.getId()
+            );
         });
     }
 
@@ -228,6 +304,40 @@ class AudioProcessingJobClaimIntegrationTest {
             });
             entityManager.flush();
             return jobIds;
+        });
+    }
+
+    private ProcessingMapFixture saveProcessingMap() {
+        return transactionTemplate.execute(status -> {
+            List<Long> jobIds = saveQueuedJobs();
+            List<AudioProcessingJob> jobs = audioProcessingJobRepository.findAllById(jobIds);
+            jobs.forEach(AudioProcessingJob::start);
+            Long mapId = jobs.getFirst().getQuestionMedia().getQuestion().getMap().getId();
+            entityManager.flush();
+            return new ProcessingMapFixture(jobIds, mapId);
+        });
+    }
+
+    private boolean completeJob(Long jobId) {
+        return completeJob(jobId, 1);
+    }
+
+    private boolean completeJob(Long jobId, int attemptCount) {
+        return audioProcessingJobService.completeJob(
+                jobId,
+                attemptCount,
+                "question-media-" + jobId + ".mp3",
+                "uploads/audios/" + jobId + ".mp3",
+                "https://cdn.example.com/uploads/audios/" + jobId + ".mp3",
+                1234L,
+                30_000
+        );
+    }
+
+    private void makeJobStale(Long jobId) {
+        transactionTemplate.executeWithoutResult(status -> {
+            AudioProcessingJob job = audioProcessingJobRepository.findByIdForUpdate(jobId).orElseThrow();
+            ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
         });
     }
 
@@ -258,5 +368,8 @@ class AudioProcessingJobClaimIntegrationTest {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while coordinating claim transactions.", exception);
         }
+    }
+
+    private record ProcessingMapFixture(List<Long> jobIds, Long mapId) {
     }
 }

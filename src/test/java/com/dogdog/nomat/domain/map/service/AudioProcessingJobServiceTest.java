@@ -25,6 +25,7 @@ import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
+import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import com.dogdog.nomat.domain.user.entity.User;
 import java.time.LocalDateTime;
@@ -46,6 +47,9 @@ class AudioProcessingJobServiceTest {
 
     @Mock
     private QuestionMediaRepository questionMediaRepository;
+
+    @Mock
+    private QuizMapRepository quizMapRepository;
 
     @Mock
     private AssetRepository assetRepository;
@@ -79,6 +83,8 @@ class AudioProcessingJobServiceTest {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
         given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
+        given(quizMapRepository.findByIdForUpdate(100L))
+                .willReturn(Optional.of(job.getQuestionMedia().getQuestion().getMap()));
         given(assetRepository.save(any(Asset.class))).willAnswer(invocation -> invocation.getArgument(0));
         given(questionMediaRepository.existsByQuestionMapIdAndProcessingStatusNot(100L, QuestionMediaProcessingStatus.READY))
                 .willReturn(false);
@@ -114,6 +120,8 @@ class AudioProcessingJobServiceTest {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
         given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
+        given(quizMapRepository.findByIdForUpdate(100L))
+                .willReturn(Optional.of(job.getQuestionMedia().getQuestion().getMap()));
         given(assetRepository.save(any(Asset.class))).willAnswer(invocation -> invocation.getArgument(0));
         given(questionMediaRepository.existsByQuestionMapIdAndProcessingStatusNot(100L, QuestionMediaProcessingStatus.READY))
                 .willReturn(true);

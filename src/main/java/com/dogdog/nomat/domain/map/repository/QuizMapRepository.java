@@ -4,16 +4,22 @@ import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
 import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
+import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface QuizMapRepository extends JpaRepository<QuizMap, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT map FROM QuizMap map WHERE map.id = :mapId")
+    Optional<QuizMap> findByIdForUpdate(@Param("mapId") Long mapId);
 
     @EntityGraph(attributePaths = {"creator", "category", "thumbnailAsset"})
     Optional<QuizMap> findByIdAndStatusNot(Long id, MapStatus status);
