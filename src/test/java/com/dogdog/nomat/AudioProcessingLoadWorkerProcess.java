@@ -43,6 +43,9 @@ public final class AudioProcessingLoadWorkerProcess {
 
             AudioProcessingJobService jobService = context.getBean(AudioProcessingJobService.class);
             AudioProcessingService processingService = context.getBean(AudioProcessingService.class);
+            if (Boolean.parseBoolean(System.getenv("LOAD_WORKER_RECOVER_STALE"))) {
+                processingService.recoverStaleJobs();
+            }
             int processedCount = processUntilQueueIsEmpty(jobService, processingService);
             System.out.println("AUDIO_LOAD_WORKER_RESULT processed=" + processedCount);
         }
@@ -90,9 +93,35 @@ public final class AudioProcessingLoadWorkerProcess {
             return new AudioExtractionCommandRunner() {
                 @Override
                 public void extractYoutubeSegment(YoutubeAudioExtractionCommand command) throws java.io.IOException {
+                    signalProcessingStarted();
+                    awaitReleaseIfConfigured();
                     Files.writeString(command.outputFile(), "test-audio");
                 }
             };
+        }
+
+        private void signalProcessingStarted() throws java.io.IOException {
+            String signalFile = System.getenv("LOAD_WORKER_PROCESSING_FILE");
+            if (signalFile != null && !signalFile.isBlank()) {
+                Files.writeString(Path.of(signalFile), "processing");
+            }
+        }
+
+        private void awaitReleaseIfConfigured() throws java.io.IOException {
+            String releaseFile = System.getenv("LOAD_WORKER_RELEASE_FILE");
+            if (releaseFile == null || releaseFile.isBlank()) {
+                return;
+            }
+
+            Path path = Path.of(releaseFile);
+            while (!Files.exists(path)) {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new java.io.IOException("Interrupted while waiting for test release.", exception);
+                }
+            }
         }
 
         @Bean

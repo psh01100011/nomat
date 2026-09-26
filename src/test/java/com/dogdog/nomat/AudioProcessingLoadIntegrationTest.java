@@ -30,6 +30,7 @@ import jakarta.persistence.EntityManager;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -50,6 +51,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -155,8 +157,8 @@ class AudioProcessingLoadIntegrationTest {
         long assetCountBefore = assetRepository.count();
         Path processDirectory = Files.createTempDirectory("nomat-audio-load-processes-");
         Path startFile = processDirectory.resolve("start");
-        WorkerProcess first = startWorkerProcess(processDirectory, startFile, 1);
-        WorkerProcess second = startWorkerProcess(processDirectory, startFile, 2);
+        WorkerProcess first = startWorkerProcess(processDirectory, startFile, 1, WorkerMode.NORMAL);
+        WorkerProcess second = startWorkerProcess(processDirectory, startFile, 2, WorkerMode.NORMAL);
 
         try {
             awaitWorkerReady(first);
@@ -177,6 +179,55 @@ class AudioProcessingLoadIntegrationTest {
         }
 
         assertCompletedFixture(fixture);
+        assertThat(assetRepository.count()).isEqualTo(assetCountBefore + TOTAL_JOB_COUNT);
+    }
+
+    @Test
+    void anotherProcessRecoversAJobAfterTheProcessingWorkerIsKilled() throws Exception {
+        LoadFixture fixture = createQueuedJobs();
+        long assetCountBefore = assetRepository.count();
+        Path processDirectory = Files.createTempDirectory("nomat-audio-load-failover-");
+        Path firstStartFile = processDirectory.resolve("first.start");
+        WorkerProcess stoppedWorker = startWorkerProcess(
+                processDirectory,
+                firstStartFile,
+                1,
+                WorkerMode.BLOCK_DURING_EXTRACTION
+        );
+
+        Long abandonedJobId;
+        try {
+            awaitWorkerReady(stoppedWorker);
+            Files.writeString(firstStartFile, "start");
+            awaitWorkerProcessing(stoppedWorker);
+            abandonedJobId = findSingleProcessingJob(fixture);
+            stoppedWorker.process().destroyForcibly();
+            assertThat(stoppedWorker.process().waitFor(10, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            stoppedWorker.process().destroyForcibly();
+        }
+
+        makeJobStale(abandonedJobId);
+
+        Path recoveryStartFile = processDirectory.resolve("recovery.start");
+        WorkerProcess recoveryWorker = startWorkerProcess(
+                processDirectory,
+                recoveryStartFile,
+                2,
+                WorkerMode.RECOVER_STALE
+        );
+        try {
+            awaitWorkerReady(recoveryWorker);
+            Files.writeString(recoveryStartFile, "start");
+            assertWorkerCompleted(recoveryWorker);
+            assertThat(readProcessedCount(recoveryWorker.logFile())).isEqualTo(TOTAL_JOB_COUNT);
+        } finally {
+            recoveryWorker.process().destroyForcibly();
+        }
+
+        assertCompletedFixture(fixture);
+        AudioProcessingJob recoveredJob = jobRepository.findById(abandonedJobId).orElseThrow();
+        assertThat(recoveredJob.getAttemptCount()).isEqualTo(2);
         assertThat(assetRepository.count()).isEqualTo(assetCountBefore + TOTAL_JOB_COUNT);
     }
 
@@ -267,9 +318,18 @@ class AudioProcessingLoadIntegrationTest {
                 .allSatisfy(map -> assertThat(map.getStatus()).isEqualTo(MapStatus.PUBLISHED));
     }
 
-    private WorkerProcess startWorkerProcess(Path directory, Path startFile, int sequence) throws Exception {
+    private WorkerProcess startWorkerProcess(
+            Path directory,
+            Path startFile,
+            int sequence,
+            WorkerMode mode
+    ) throws Exception {
         Path readyFile = directory.resolve("worker-" + sequence + ".ready");
         Path logFile = directory.resolve("worker-" + sequence + ".log");
+        Path processingFile = directory.resolve("worker-" + sequence + ".processing");
+        Path releaseFile = directory.resolve("worker-" + sequence + ".release");
+        Path tempDirectory = directory.resolve("worker-" + sequence + "-tmp");
+        Files.createDirectories(tempDirectory);
         String classpath = System.getProperty("audio.load-test.classpath");
         if (classpath == null || classpath.isBlank()) {
             throw new IllegalStateException("Audio load test runtime classpath was not configured.");
@@ -277,6 +337,7 @@ class AudioProcessingLoadIntegrationTest {
 
         ProcessBuilder processBuilder = new ProcessBuilder(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-Djava.io.tmpdir=" + tempDirectory,
                 "-cp",
                 classpath,
                 AudioProcessingLoadWorkerProcess.class.getName(),
@@ -297,9 +358,16 @@ class AudioProcessingLoadIntegrationTest {
         );
         processBuilder.environment().put("LOAD_WORKER_READY_FILE", readyFile.toString());
         processBuilder.environment().put("LOAD_WORKER_START_FILE", startFile.toString());
+        if (mode == WorkerMode.BLOCK_DURING_EXTRACTION) {
+            processBuilder.environment().put("LOAD_WORKER_PROCESSING_FILE", processingFile.toString());
+            processBuilder.environment().put("LOAD_WORKER_RELEASE_FILE", releaseFile.toString());
+        }
+        if (mode == WorkerMode.RECOVER_STALE) {
+            processBuilder.environment().put("LOAD_WORKER_RECOVER_STALE", "true");
+        }
         processBuilder.redirectErrorStream(true);
         processBuilder.redirectOutput(logFile.toFile());
-        return new WorkerProcess(processBuilder.start(), readyFile, logFile);
+        return new WorkerProcess(processBuilder.start(), readyFile, processingFile, logFile);
     }
 
     private void awaitWorkerReady(WorkerProcess worker) throws Exception {
@@ -323,6 +391,34 @@ class AudioProcessingLoadIntegrationTest {
         assertThat(worker.process().exitValue())
                 .withFailMessage("Worker failed:\n%s", readLog(worker.logFile()))
                 .isZero();
+    }
+
+    private void awaitWorkerProcessing(WorkerProcess worker) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (!Files.exists(worker.processingFile())) {
+            if (!worker.process().isAlive()) {
+                throw new AssertionError("Worker exited before processing:\n" + readLog(worker.logFile()));
+            }
+            if (System.nanoTime() >= deadline) {
+                throw new AssertionError("Worker did not start processing:\n" + readLog(worker.logFile()));
+            }
+            Thread.sleep(50);
+        }
+    }
+
+    private Long findSingleProcessingJob(LoadFixture fixture) {
+        List<AudioProcessingJob> processingJobs = jobRepository.findAllById(fixture.jobIds()).stream()
+                .filter(job -> job.getStatus() == AudioProcessingJobStatus.PROCESSING)
+                .toList();
+        assertThat(processingJobs).hasSize(1);
+        return processingJobs.getFirst().getId();
+    }
+
+    private void makeJobStale(Long jobId) {
+        transactionTemplate.executeWithoutResult(status -> {
+            AudioProcessingJob job = jobRepository.findByIdForUpdate(jobId).orElseThrow();
+            ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
+        });
     }
 
     private int readProcessedCount(Path logFile) throws Exception {
@@ -386,6 +482,17 @@ class AudioProcessingLoadIntegrationTest {
     private record LoadFixture(List<Long> mapIds, List<Long> jobIds) {
     }
 
-    private record WorkerProcess(Process process, Path readyFile, Path logFile) {
+    private enum WorkerMode {
+        NORMAL,
+        BLOCK_DURING_EXTRACTION,
+        RECOVER_STALE
+    }
+
+    private record WorkerProcess(
+            Process process,
+            Path readyFile,
+            Path processingFile,
+            Path logFile
+    ) {
     }
 }
