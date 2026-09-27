@@ -4,7 +4,6 @@ public record GuestLoginResponse(
         Long userId,
         String userType,
         String nickname,
-        String accessToken,
-        String refreshToken
+        String accessToken
 ) {
 }

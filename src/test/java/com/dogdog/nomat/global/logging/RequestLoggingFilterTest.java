@@ -3,6 +3,7 @@ package com.dogdog.nomat.global.logging;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.concurrent.atomic.AtomicReference;
+import com.dogdog.nomat.global.http.ClientIpResolver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
@@ -11,7 +12,8 @@ import org.springframework.mock.web.MockHttpServletResponse;
 
 class RequestLoggingFilterTest {
 
-    private final RequestLoggingFilter filter = new RequestLoggingFilter();
+    private final ClientIpResolver clientIpResolver = org.mockito.Mockito.mock(ClientIpResolver.class);
+    private final RequestLoggingFilter filter = new RequestLoggingFilter(clientIpResolver);
 
     @AfterEach
     void clearMdc() {

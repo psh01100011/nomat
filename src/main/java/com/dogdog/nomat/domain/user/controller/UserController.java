@@ -15,6 +15,7 @@ import com.dogdog.nomat.domain.user.dto.UserInfoResponse;
 import com.dogdog.nomat.domain.user.dto.VerifyPasswordRequest;
 import com.dogdog.nomat.domain.user.service.UserService;
 import com.dogdog.nomat.global.dto.ApiResponse;
+import com.dogdog.nomat.global.http.ClientIpResolver;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -36,6 +37,7 @@ public class UserController {
 
     private final UserService userService;
     private final EmailVerificationService emailVerificationService;
+    private final ClientIpResolver clientIpResolver;
 
     @GetMapping("/me")
     public ApiResponse<MyInfoResponse> getMyInfo(@AuthenticationPrincipal Jwt jwt) {
@@ -75,7 +77,11 @@ public class UserController {
         Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of(
                 "success_send_email_verification",
-                emailVerificationService.sendProfileChangeCode(userId, request.email(), servletRequest.getRemoteAddr())
+                emailVerificationService.sendProfileChangeCode(
+                        userId,
+                        request.email(),
+                        clientIpResolver.resolve(servletRequest)
+                )
         );
     }
 

@@ -1,5 +1,6 @@
 package com.dogdog.nomat.global.config;
 
+import com.dogdog.nomat.domain.room.config.RoomWebSocketProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.simp.config.ChannelRegistration;
@@ -15,12 +16,13 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final JwtStompChannelInterceptor jwtStompChannelInterceptor;
     private final StompErrorHandler stompErrorHandler;
+    private final RoomWebSocketProperties roomWebSocketProperties;
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.setErrorHandler(stompErrorHandler);
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*");
+                .setAllowedOrigins(roomWebSocketProperties.getAllowedOrigins().toArray(String[]::new));
     }
 
     @Override

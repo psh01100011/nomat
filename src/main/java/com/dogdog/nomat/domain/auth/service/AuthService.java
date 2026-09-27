@@ -9,6 +9,7 @@ import com.dogdog.nomat.domain.auth.dto.ResetPasswordRequest;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
+import com.dogdog.nomat.domain.auth.model.IssuedAuthSession;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.auth.token.TokenPair;
 import com.dogdog.nomat.domain.emailverification.service.EmailAddressNormalizer;
@@ -33,7 +34,6 @@ import java.util.Objects;
 @Slf4j
 public class AuthService {
 
-    private static final String BEARER_PREFIX = "Bearer ";
     private static final String GUEST_USER_TYPE = "GUEST";
 
     private final UserRepository userRepository;
@@ -85,7 +85,7 @@ public class AuthService {
     }
 
     @Transactional(readOnly = true)
-    public LoginResponse login(LoginRequest request) {
+    public IssuedAuthSession<LoginResponse> login(LoginRequest request) {
         User user = userRepository.findByLoginId(request.loginId())
                 .filter(foundUser -> foundUser.getStatus() == UserStatus.ACTIVE)
                 .orElse(null);
@@ -102,44 +102,40 @@ public class AuthService {
 
         TokenPair tokenPair = authTokenProvider.issue(user);
         log.info("event=member_login_succeeded userId={}", user.getId());
-        return new LoginResponse(user.getId(), tokenPair.accessToken(), tokenPair.refreshToken());
+        return new IssuedAuthSession<>(
+                new LoginResponse(user.getId(), tokenPair.accessToken()),
+                tokenPair.refreshToken()
+        );
     }
 
-    public GuestLoginResponse loginGuest(GuestLoginRequest request) {
+    public IssuedAuthSession<GuestLoginResponse> loginGuest(GuestLoginRequest request) {
         String nickname = request.nickname().trim();
         Long guestUserId = authTokenProvider.generateGuestUserId();
         TokenPair tokenPair = authTokenProvider.issueGuest(guestUserId, nickname);
         log.info("event=guest_login_succeeded userId={}", guestUserId);
 
-        return new GuestLoginResponse(
-                guestUserId,
-                GUEST_USER_TYPE,
-                nickname,
-                tokenPair.accessToken(),
+        return new IssuedAuthSession<>(
+                new GuestLoginResponse(guestUserId, GUEST_USER_TYPE, nickname, tokenPair.accessToken()),
                 tokenPair.refreshToken()
         );
     }
 
-    public GuestLoginResponse changeGuestNickname(AuthenticatedUser authenticatedUser, GuestLoginRequest request) {
+    public IssuedAuthSession<GuestLoginResponse> changeGuestNickname(
+            AuthenticatedUser authenticatedUser,
+            GuestLoginRequest request
+    ) {
         authenticatedUser.requireGuest();
 
         String nickname = request.nickname().trim();
         TokenPair tokenPair = authTokenProvider.issueGuest(authenticatedUser.userId(), nickname);
         log.info("event=guest_nickname_changed userId={}", authenticatedUser.userId());
 
-        return new GuestLoginResponse(
-                authenticatedUser.userId(),
-                GUEST_USER_TYPE,
-                nickname,
-                tokenPair.accessToken(),
+        return new IssuedAuthSession<>(
+                new GuestLoginResponse(
+                        authenticatedUser.userId(), GUEST_USER_TYPE, nickname, tokenPair.accessToken()
+                ),
                 tokenPair.refreshToken()
         );
-    }
-
-    @Transactional(readOnly = true)
-    public RefreshResponse refresh(String authorizationHeader) {
-        String refreshToken = getBearerToken(authorizationHeader);
-        return refreshWithToken(refreshToken);
     }
 
     @Transactional(readOnly = true)
@@ -196,19 +192,6 @@ public class AuthService {
 
     private BusinessException invalidToken() {
         return new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token");
-    }
-
-    private String getBearerToken(String authorizationHeader) {
-        if (authorizationHeader == null || !authorizationHeader.startsWith(BEARER_PREFIX)) {
-            throw invalidToken();
-        }
-
-        String token = authorizationHeader.substring(BEARER_PREFIX.length()).trim();
-        if (token.isBlank()) {
-            throw invalidToken();
-        }
-
-        return token;
     }
 
     private Jwt decodeRefreshToken(String refreshToken) {

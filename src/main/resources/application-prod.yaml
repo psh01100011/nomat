@@ -2,6 +2,19 @@ spring:
   config:
     activate:
       on-profile: prod
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      url: ${REDIS_URL}
+  mail:
+    host: ${MAIL_HOST}
+    port: ${MAIL_PORT}
+    username: ${GMAIL_USERNAME}
+    password: ${GMAIL_APP_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -19,5 +32,29 @@ logging:
     org.springframework: WARN
 
 app:
+  http:
+    trusted-proxy-cidrs: ${TRUSTED_PROXY_CIDRS}
+  admin:
+    api-key: ${ADMIN_API_KEY}
+  room:
+    websocket:
+      allowed-origins:
+        - ${FRONTEND_ORIGIN}
+  email-verification:
+    delivery-mode: smtp
+    mail-from: ${MAIL_FROM}
+  asset:
+    s3:
+      bucket: ${AWS_S3_BUCKET}
+      region: ${AWS_REGION}
+      public-base-url: ${AWS_S3_PUBLIC_BASE_URL}
   audio-processing:
-    enabled: ${AUDIO_PROCESSING_ENABLED:true}
+    enabled: ${AUDIO_PROCESSING_ENABLED}
+    yt-dlp-path: ${YT_DLP_PATH:yt-dlp}
+    ffmpeg-path: ${FFMPEG_PATH:ffmpeg}
+  auth:
+    cookie:
+      secure: true
+      same-site: Lax
+    jwt:
+      secret: ${JWT_SECRET}

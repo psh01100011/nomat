@@ -1,6 +1,7 @@
 package com.dogdog.nomat.domain.auth.controller;
 
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
+import com.dogdog.nomat.domain.auth.model.IssuedAuthSession;
 import com.dogdog.nomat.domain.auth.dto.GuestLoginRequest;
 import com.dogdog.nomat.domain.auth.dto.GuestLoginResponse;
 import com.dogdog.nomat.domain.auth.dto.LoginRequest;
@@ -19,6 +20,7 @@ import com.dogdog.nomat.domain.emailverification.dto.SendPasswordResetVerificati
 import com.dogdog.nomat.domain.emailverification.dto.SendEmailVerificationRequest;
 import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
 import com.dogdog.nomat.global.dto.ApiResponse;
+import com.dogdog.nomat.global.http.ClientIpResolver;
 import jakarta.validation.Valid;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
@@ -28,12 +30,10 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -48,6 +48,7 @@ public class AuthController {
 
     private final AuthService authService;
     private final EmailVerificationService emailVerificationService;
+    private final ClientIpResolver clientIpResolver;
 
     @Value("${app.auth.jwt.access-token-validity-seconds}")
     private long accessTokenValiditySeconds;
@@ -75,7 +76,7 @@ public class AuthController {
     ) {
         return ApiResponse.of(
                 "success_send_email_verification",
-                emailVerificationService.sendSignupCode(request.email(), servletRequest.getRemoteAddr())
+                emailVerificationService.sendSignupCode(request.email(), clientIpResolver.resolve(servletRequest))
         );
     }
 
@@ -96,7 +97,10 @@ public class AuthController {
     ) {
         return ApiResponse.of(
                 "success_send_account_recovery_email",
-                emailVerificationService.sendLoginIdRecoveryCode(request.email(), servletRequest.getRemoteAddr())
+                emailVerificationService.sendLoginIdRecoveryCode(
+                        request.email(),
+                        clientIpResolver.resolve(servletRequest)
+                )
         );
     }
 
@@ -120,7 +124,7 @@ public class AuthController {
                 emailVerificationService.sendPasswordResetCode(
                         request.loginId(),
                         request.email(),
-                        servletRequest.getRemoteAddr()
+                        clientIpResolver.resolve(servletRequest)
                 )
         );
     }
@@ -147,8 +151,9 @@ public class AuthController {
             @Valid @RequestBody LoginRequest request,
             jakarta.servlet.http.HttpServletResponse response
     ) {
-        LoginResponse loginResponse = authService.login(request);
-        addAuthCookies(response, loginResponse.accessToken(), loginResponse.refreshToken());
+        IssuedAuthSession<LoginResponse> session = authService.login(request);
+        LoginResponse loginResponse = session.response();
+        addAuthCookies(response, loginResponse.accessToken(), session.refreshToken());
         return ApiResponse.of("success_login", loginResponse);
     }
 
@@ -158,8 +163,9 @@ public class AuthController {
             @Valid @RequestBody GuestLoginRequest request,
             jakarta.servlet.http.HttpServletResponse response
     ) {
-        GuestLoginResponse loginResponse = authService.loginGuest(request);
-        addAuthCookies(response, loginResponse.accessToken(), loginResponse.refreshToken());
+        IssuedAuthSession<GuestLoginResponse> session = authService.loginGuest(request);
+        GuestLoginResponse loginResponse = session.response();
+        addAuthCookies(response, loginResponse.accessToken(), session.refreshToken());
         return ApiResponse.of("success_guest_login", loginResponse);
     }
 
@@ -170,21 +176,22 @@ public class AuthController {
             @Valid @RequestBody GuestLoginRequest request,
             jakarta.servlet.http.HttpServletResponse response
     ) {
-        GuestLoginResponse loginResponse = authService.changeGuestNickname(AuthenticatedUser.from(jwt), request);
-        addAuthCookies(response, loginResponse.accessToken(), loginResponse.refreshToken());
+        IssuedAuthSession<GuestLoginResponse> session = authService.changeGuestNickname(
+                AuthenticatedUser.from(jwt),
+                request
+        );
+        GuestLoginResponse loginResponse = session.response();
+        addAuthCookies(response, loginResponse.accessToken(), session.refreshToken());
         return ApiResponse.of("success_modify_guest_nickname", loginResponse);
     }
 
     @PostMapping("/refresh")
     @ResponseStatus(HttpStatus.OK)
     public ApiResponse<RefreshResponse> refresh(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorizationHeader,
             @CookieValue(value = REFRESH_TOKEN_COOKIE_NAME, required = false) String refreshTokenCookie,
             jakarta.servlet.http.HttpServletResponse response
     ) {
-        RefreshResponse refreshResponse = StringUtils.hasText(authorizationHeader)
-                ? authService.refresh(authorizationHeader)
-                : authService.refreshWithToken(refreshTokenCookie);
+        RefreshResponse refreshResponse = authService.refreshWithToken(refreshTokenCookie);
         addCookie(response, ACCESS_TOKEN_COOKIE_NAME, refreshResponse.accessToken(), accessTokenValiditySeconds);
         return ApiResponse.of("success_refresh", refreshResponse);
     }
