@@ -2,6 +2,14 @@ spring:
   config:
     activate:
       on-profile: prod
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+    validate-migration-naming: true
 
 logging:
   level:

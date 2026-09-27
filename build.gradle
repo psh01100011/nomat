@@ -57,6 +57,9 @@ tasks.named('test') {
 		if (!project.hasProperty('includeAudioLoadTest')) {
 			excludeTags 'audio-load'
 		}
+		if (!project.hasProperty('includeAudioRealBenchmark')) {
+			excludeTags 'audio-real-benchmark'
+		}
 	}
 	if (project.hasProperty('includeAudioLoadTest')) {
 		systemProperty 'audio.load-test.classpath', sourceSets.test.runtimeClasspath.asPath
