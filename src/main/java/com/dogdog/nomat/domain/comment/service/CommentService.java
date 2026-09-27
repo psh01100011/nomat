@@ -17,6 +17,7 @@ import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.util.Objects;
+import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -51,8 +52,8 @@ public class CommentService {
         String content = normalizeContent(request.content());
         QuizMap map = getPublicPublishedMap(mapId);
 
+        quizMapRepository.incrementCommentCount(mapId);
         MapComment comment = mapCommentRepository.save(MapComment.create(map, writer, content));
-        map.increaseCommentCount();
         log.info("event=map_comment_created commentId={} mapId={} userId={}", comment.getId(), mapId, userId);
 
         return CreateMapCommentResponse.from(comment);
@@ -84,8 +85,17 @@ public class CommentService {
         MapComment comment = getActiveComment(commentId);
         validateCommentWriter(comment, userId);
 
-        comment.delete();
-        comment.getMap().decreaseCommentCount();
+        Long mapId = comment.getMap().getId();
+        int decrementedRows = quizMapRepository.decrementCommentCount(mapId);
+        int deletedRows = mapCommentRepository.deleteIfActive(
+                commentId,
+                MapCommentStatus.ACTIVE,
+                MapCommentStatus.DELETED,
+                LocalDateTime.now()
+        );
+        if (deletedRows == 0 && decrementedRows > 0) {
+            quizMapRepository.incrementCommentCount(mapId);
+        }
         log.info("event=map_comment_deleted commentId={} mapId={} userId={}", commentId, comment.getMap().getId(), userId);
     }
 

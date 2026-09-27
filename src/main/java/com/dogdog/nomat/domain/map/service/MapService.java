@@ -23,9 +23,7 @@ import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureType;
-import com.dogdog.nomat.domain.map.entity.MapFavorite;
 import com.dogdog.nomat.domain.map.entity.MapFavoriteId;
-import com.dogdog.nomat.domain.map.entity.MapLike;
 import com.dogdog.nomat.domain.map.entity.MapLikeId;
 import com.dogdog.nomat.domain.map.entity.MapStatus;
 import com.dogdog.nomat.domain.map.entity.MapVisibility;
@@ -195,12 +193,12 @@ public class MapService {
         }
 
         if (map.getVersion() != request.version()) {
-            throw new BusinessException(
-                    HttpStatus.CONFLICT,
-                    "map_version_conflict",
-                    Map.of("currentVersion", map.getVersion())
-            );
+            throw mapVersionConflict(map.getVersion());
         }
+        if (quizMapRepository.claimVersion(mapId, request.version()) == 0) {
+            throw mapVersionConflict(quizMapRepository.findVersion(mapId));
+        }
+        map.claimVersion();
 
         MapPatchState patchState = resolveMapPatch(map, request.map(), creator);
         QuestionChanges questionChanges = questionChanges(request.questions());
@@ -356,68 +354,58 @@ public class MapService {
 
     @Transactional
     public MapLikeResponse likeMap(Long userId, Long mapId) {
-        User user = getAuthenticatedUser(userId);
+        getAuthenticatedUser(userId);
         QuizMap map = getPublicPublishedMap(mapId);
-        MapLikeId likeId = new MapLikeId(mapId, userId);
-
-        if (mapLikeRepository.existsById(likeId)) {
+        quizMapRepository.incrementLikeCount(mapId);
+        if (mapLikeRepository.insertIfAbsent(mapId, userId) == 0) {
             throw new BusinessException(HttpStatus.CONFLICT, "already_liked_map");
         }
-
-        mapLikeRepository.save(MapLike.create(map, user));
-        map.increaseLikeCount();
+        long likeCount = quizMapRepository.findLikeCount(mapId);
         log.debug("event=map_liked mapId={} userId={}", mapId, userId);
 
-        return new MapLikeResponse(map.getId(), true, map.getLikeCount());
+        return new MapLikeResponse(map.getId(), true, likeCount);
     }
 
     @Transactional
     public MapLikeResponse unlikeMap(Long userId, Long mapId) {
         getAuthenticatedUser(userId);
         QuizMap map = getPublicPublishedMap(mapId);
-        MapLikeId likeId = new MapLikeId(mapId, userId);
-
-        mapLikeRepository.findById(likeId)
-                .ifPresent(like -> {
-                    mapLikeRepository.delete(like);
-                    map.decreaseLikeCount();
-                });
+        int decrementedRows = quizMapRepository.decrementLikeCount(mapId);
+        if (mapLikeRepository.deleteByMapIdAndUserId(mapId, userId) == 0 && decrementedRows > 0) {
+            quizMapRepository.incrementLikeCount(mapId);
+        }
+        long likeCount = quizMapRepository.findLikeCount(mapId);
         log.debug("event=map_unliked mapId={} userId={}", mapId, userId);
 
-        return new MapLikeResponse(map.getId(), false, map.getLikeCount());
+        return new MapLikeResponse(map.getId(), false, likeCount);
     }
 
     @Transactional
     public MapFavoriteResponse favoriteMap(Long userId, Long mapId) {
-        User user = getAuthenticatedUser(userId);
+        getAuthenticatedUser(userId);
         QuizMap map = getPublicPublishedMap(mapId);
-        MapFavoriteId favoriteId = new MapFavoriteId(mapId, userId);
-
-        if (mapFavoriteRepository.existsById(favoriteId)) {
+        quizMapRepository.incrementFavoriteCount(mapId);
+        if (mapFavoriteRepository.insertIfAbsent(mapId, userId) == 0) {
             throw new BusinessException(HttpStatus.CONFLICT, "already_favorited_map");
         }
-
-        mapFavoriteRepository.save(MapFavorite.create(map, user));
-        map.increaseFavoriteCount();
+        long favoriteCount = quizMapRepository.findFavoriteCount(mapId);
         log.debug("event=map_favorited mapId={} userId={}", mapId, userId);
 
-        return new MapFavoriteResponse(map.getId(), true, map.getFavoriteCount());
+        return new MapFavoriteResponse(map.getId(), true, favoriteCount);
     }
 
     @Transactional
     public MapFavoriteResponse unfavoriteMap(Long userId, Long mapId) {
         getAuthenticatedUser(userId);
         QuizMap map = getPublicPublishedMap(mapId);
-        MapFavoriteId favoriteId = new MapFavoriteId(mapId, userId);
-
-        mapFavoriteRepository.findById(favoriteId)
-                .ifPresent(favorite -> {
-                    mapFavoriteRepository.delete(favorite);
-                    map.decreaseFavoriteCount();
-                });
+        int decrementedRows = quizMapRepository.decrementFavoriteCount(mapId);
+        if (mapFavoriteRepository.deleteByMapIdAndUserId(mapId, userId) == 0 && decrementedRows > 0) {
+            quizMapRepository.incrementFavoriteCount(mapId);
+        }
+        long favoriteCount = quizMapRepository.findFavoriteCount(mapId);
         log.debug("event=map_unfavorited mapId={} userId={}", mapId, userId);
 
-        return new MapFavoriteResponse(map.getId(), false, map.getFavoriteCount());
+        return new MapFavoriteResponse(map.getId(), false, favoriteCount);
     }
 
     @Transactional(readOnly = true)
@@ -1871,6 +1859,14 @@ public class MapService {
 
     private BusinessException mapNotFound() {
         return new BusinessException(HttpStatus.NOT_FOUND, "map_not_found");
+    }
+
+    private BusinessException mapVersionConflict(int currentVersion) {
+        return new BusinessException(
+                HttpStatus.CONFLICT,
+                "map_version_conflict",
+                Map.of("currentVersion", currentVersion)
+        );
     }
 
     private BusinessException audioProcessingRetryNotAllowed() {

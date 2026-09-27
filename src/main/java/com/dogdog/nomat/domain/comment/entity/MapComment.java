@@ -78,17 +78,6 @@ public class MapComment {
         this.updatedAt = LocalDateTime.now();
     }
 
-    public void delete() {
-        if (status == MapCommentStatus.DELETED) {
-            return;
-        }
-
-        this.status = MapCommentStatus.DELETED;
-        LocalDateTime now = LocalDateTime.now();
-        this.updatedAt = now;
-        this.deletedAt = now;
-    }
-
     @PrePersist
     void prePersist() {
         LocalDateTime now = LocalDateTime.now();

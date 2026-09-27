@@ -5,7 +5,6 @@ import com.dogdog.nomat.domain.game.entity.GameQuestionResult;
 import com.dogdog.nomat.domain.game.entity.GamePlayerResult;
 import com.dogdog.nomat.domain.game.entity.GameSession;
 import com.dogdog.nomat.domain.game.entity.GameSessionEndedReason;
-import com.dogdog.nomat.domain.game.entity.MapPlayHistory;
 import com.dogdog.nomat.domain.game.repository.GamePlayerResultRepository;
 import com.dogdog.nomat.domain.game.repository.GameQuestionResultRepository;
 import com.dogdog.nomat.domain.game.repository.GameSessionRepository;
@@ -83,9 +82,7 @@ public class RoomGameResultService {
         if (persistedResult == null) {
             return;
         }
-        roomEventPublisher.publish(result.events().isEmpty()
-                ? List.of(RoomDomainEvent.gameEnded(result.room(), reason, endedAt))
-                : result.events());
+        roomEventPublisher.publish(List.of(RoomDomainEvent.gameEnded(result.room(), reason, endedAt)));
         log.info(
                 "event=room_game_ended roomId={} gameSessionId={} mapId={} reason={} memberCount={} completedQuestions={}",
                 roomId,
@@ -151,6 +148,7 @@ public class RoomGameResultService {
         User endedByUser = persistentMemberId(room, endedByUserId)
                 .flatMap(userRepository::findById)
                 .orElse(null);
+        quizMapRepository.addPlayCount(map.getId(), gameState.initialPlayerCount());
         GameSession session = gameSessionRepository.saveAndFlush(toGameSession(
                 room,
                 gameState,
@@ -161,7 +159,6 @@ public class RoomGameResultService {
         ));
         saveQuestionResults(session, room, gameState);
         savePlayerResultsAndHistories(session, room, gameState, map, endedAt);
-        map.increasePlayCount();
         return new PersistedGameResult(session.getId(), map.getId());
     }
 
@@ -180,7 +177,7 @@ public class RoomGameResultService {
                 room.title(),
                 room.hasPassword(),
                 room.maxPlayers(),
-                room.memberCount(),
+                gameState.initialPlayerCount(),
                 room.selectedQuestionCount(),
                 gameState.randomSeed(),
                 room.answerTimeLimitSeconds(),
@@ -298,12 +295,7 @@ public class RoomGameResultService {
     }
 
     private void updatePlayHistory(User user, QuizMap map, int score, LocalDateTime endedAt) {
-        MapPlayHistory history = mapPlayHistoryRepository.findByUserIdAndMapId(user.getId(), map.getId())
-                .orElseGet(() -> MapPlayHistory.create(user, map, score, endedAt));
-        if (history.getId() != null) {
-            history.recordPlay(score, endedAt);
-        }
-        mapPlayHistoryRepository.save(history);
+        mapPlayHistoryRepository.recordPlay(user.getId(), map.getId(), score, endedAt);
     }
 
     private GameSessionEndedReason endedReason(RoomEndedReason reason) {

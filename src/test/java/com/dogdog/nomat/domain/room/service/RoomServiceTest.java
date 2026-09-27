@@ -34,6 +34,7 @@ import com.dogdog.nomat.domain.room.dto.RoomGameSnapshotResponse;
 import com.dogdog.nomat.domain.room.dto.RoomInviteResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
+import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomMember;
@@ -48,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
@@ -88,10 +90,24 @@ class RoomServiceTest {
     private RoomGameProgressService roomGameProgressService;
 
     @Mock
+    private RoomGameResultService roomGameResultService;
+
+    @Mock
+    private RoomMutationLock roomMutationLock;
+
+    @Mock
     private PasswordEncoder passwordEncoder;
 
     @InjectMocks
     private RoomService roomService;
+
+    @BeforeEach
+    void executeRoomMutations() {
+        org.mockito.Mockito.lenient().doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(1).run();
+            return null;
+        }).when(roomMutationLock).execute(any(), any());
+    }
 
     @Test
     void createRoomSavesWaitingRoomInRedis() {
@@ -802,6 +818,19 @@ class RoomServiceTest {
     }
 
     @Test
+    void leaveRoomEndsPlayingGameWhenLastMemberLeaves() {
+        User host = user(3L);
+        RoomState room = room(25L, "혼자 하는 게임", 15L, 1).started("seed", now());
+        given(userRepository.findById(3L)).willReturn(Optional.of(host));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        roomService.leaveRoom(memberAuth(3L), 25L);
+
+        verify(roomGameResultService).endGame(25L, 3L, RoomEndedReason.ALL_LEFT);
+        verify(roomRedisRepository, never()).saveLeftRoom(any(), any());
+    }
+
+    @Test
     void modifyRoomSettingsUpdatesWaitingRoomAndPublishesEvent() {
         User host = user(3L);
         RoomState room = passwordRoom(25L, "encoded-password");
@@ -877,6 +906,18 @@ class RoomServiceTest {
 
         verify(roomRedisRepository).saveLeftRoom(any(RoomState.class), eq(4L));
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void disconnectEndsPlayingGameWhenLastMemberLeaves() {
+        RoomState room = room(25L, "혼자 하는 게임", 15L, 1).started("seed", now());
+        given(roomRedisRepository.findJoinedRoomId(3L)).willReturn(Optional.of(25L));
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
+
+        roomService.leaveCurrentRoomByDisconnect(3L);
+
+        verify(roomGameResultService).endGame(25L, 3L, RoomEndedReason.ALL_LEFT);
+        verify(roomRedisRepository, never()).saveLeftRoom(any(), any());
     }
 
     @Test

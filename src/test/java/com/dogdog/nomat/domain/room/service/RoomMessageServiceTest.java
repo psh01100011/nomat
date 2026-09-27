@@ -239,6 +239,7 @@ class RoomMessageServiceTest {
                 null,
                 Set.of(),
                 Map.of(userId, 0),
+                1,
                 Map.of(),
                 now(),
                 null
@@ -260,6 +261,7 @@ class RoomMessageServiceTest {
                 null,
                 Set.of(),
                 Map.of(3L, 0),
+                1,
                 Map.of(),
                 now(),
                 null
@@ -281,6 +283,7 @@ class RoomMessageServiceTest {
                 "정답",
                 Set.of(),
                 Map.of(3L, 100),
+                1,
                 Map.of(),
                 now(),
                 null

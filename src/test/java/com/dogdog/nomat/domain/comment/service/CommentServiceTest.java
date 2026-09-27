@@ -83,7 +83,7 @@ class CommentServiceTest {
         assertThat(response.writer().nickname()).isEqualTo("tester1");
         assertThat(response.writer().profileImageUrl()).isEqualTo(profileImage.getUrl());
         assertThat(response.createdAt()).isEqualTo(LocalDateTime.of(2026, 8, 21, 10, 0));
-        assertThat(map.getCommentCount()).isEqualTo(6L);
+        verify(quizMapRepository).incrementCommentCount(100L);
 
         ArgumentCaptor<MapComment> commentCaptor = ArgumentCaptor.forClass(MapComment.class);
         verify(mapCommentRepository).save(commentCaptor.capture());
@@ -247,13 +247,17 @@ class CommentServiceTest {
 
         given(userRepository.findById(1L)).willReturn(Optional.of(writer));
         given(mapCommentRepository.findByIdAndStatus(200L, MapCommentStatus.ACTIVE)).willReturn(Optional.of(comment));
+        given(mapCommentRepository.deleteIfActive(any(), any(), any(), any())).willReturn(1);
 
         commentService.deleteMapComment(1L, 200L);
 
-        assertThat(comment.getStatus()).isEqualTo(MapCommentStatus.DELETED);
-        assertThat(comment.getDeletedAt()).isNotNull();
-        assertThat(comment.getUpdatedAt()).isEqualTo(comment.getDeletedAt());
-        assertThat(map.getCommentCount()).isEqualTo(2L);
+        verify(quizMapRepository).decrementCommentCount(100L);
+        verify(mapCommentRepository).deleteIfActive(
+                org.mockito.ArgumentMatchers.eq(200L),
+                org.mockito.ArgumentMatchers.eq(MapCommentStatus.ACTIVE),
+                org.mockito.ArgumentMatchers.eq(MapCommentStatus.DELETED),
+                any(LocalDateTime.class)
+        );
     }
 
     @Test

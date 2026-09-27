@@ -3,6 +3,7 @@ package com.dogdog.nomat.domain.room.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.AdditionalAnswers.returnsFirstArg;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -14,7 +15,6 @@ import com.dogdog.nomat.domain.game.entity.GameQuestionResult;
 import com.dogdog.nomat.domain.game.entity.GameSession;
 import com.dogdog.nomat.domain.game.entity.GameSessionEndedReason;
 import com.dogdog.nomat.domain.game.entity.GameSessionStatus;
-import com.dogdog.nomat.domain.game.entity.MapPlayHistory;
 import com.dogdog.nomat.domain.game.entity.TimeLimitMode;
 import com.dogdog.nomat.domain.game.repository.GamePlayerResultRepository;
 import com.dogdog.nomat.domain.game.repository.GameQuestionResultRepository;
@@ -122,16 +122,15 @@ class RoomGameResultServiceTest {
         given(gameSessionRepository.saveAndFlush(any(GameSession.class))).will(returnsFirstArg());
         given(questionRepository.findAllById(List.of(1L))).willReturn(List.of(question));
         given(userRepository.findAllById(List.of(3L))).willReturn(List.of(host));
-        given(mapPlayHistoryRepository.findByUserIdAndMapId(3L, 15L)).willReturn(Optional.empty());
 
-        roomGameResultService.endGame(25L, null, RoomEndedReason.COMPLETED);
+        roomGameResultService.endGame(25L, null, RoomEndedReason.ALL_LEFT);
 
         ArgumentCaptor<GameSession> sessionCaptor = ArgumentCaptor.forClass(GameSession.class);
         verify(gameSessionRepository).saveAndFlush(sessionCaptor.capture());
         GameSession session = sessionCaptor.getValue();
         assertThat(session.getSourceRoomId()).isEqualTo(25L);
-        assertThat(session.getStatus()).isEqualTo(GameSessionStatus.COMPLETED);
-        assertThat(session.getEndedReason()).isEqualTo(GameSessionEndedReason.COMPLETED);
+        assertThat(session.getStatus()).isEqualTo(GameSessionStatus.ABORTED);
+        assertThat(session.getEndedReason()).isEqualTo(GameSessionEndedReason.ALL_LEFT);
         assertThat(session.getPlayerCount()).isEqualTo(2);
         assertThat(session.getSelectedQuestionCount()).isEqualTo(1);
 
@@ -151,14 +150,15 @@ class RoomGameResultServiceTest {
         assertThat(playerResult.getRank()).isEqualTo(2);
         assertThat(playerResult.getCorrectCount()).isEqualTo(1);
 
-        verify(mapPlayHistoryRepository).save(any(MapPlayHistory.class));
-        assertThat(map.getPlayCount()).isEqualTo(1);
+        verify(mapPlayHistoryRepository).recordPlay(eq(3L), eq(15L), eq(100), any(LocalDateTime.class));
+        verify(quizMapRepository).addPlayCount(15L, 2);
         verify(roomRedisRepository).deleteRoom(org.mockito.ArgumentMatchers.argThat(deletedRoom ->
                 deletedRoom.status().name().equals("ENDED")
         ));
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
                         && events.getFirst().type() == RoomDomainEventType.GAME_ENDED
+                        && events.getFirst().endedReason() == RoomEndedReason.ALL_LEFT
         ));
     }
 
@@ -220,6 +220,7 @@ class RoomGameResultServiceTest {
                 "정답",
                 Set.of(),
                 Map.of(3L, 100, -1L, 200),
+                2,
                 Map.of(1, new RoomGameQuestionOutcome(
                         1L,
                         1,

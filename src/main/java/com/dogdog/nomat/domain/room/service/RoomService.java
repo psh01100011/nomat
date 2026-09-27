@@ -28,6 +28,7 @@ import com.dogdog.nomat.domain.room.dto.RoomInviteResponse;
 import com.dogdog.nomat.domain.room.dto.RoomListResponse;
 import com.dogdog.nomat.domain.room.model.RoomCommand;
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
+import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
 import com.dogdog.nomat.domain.room.model.RoomMember;
@@ -78,6 +79,8 @@ public class RoomService {
     private final RoomStateMachine roomStateMachine;
     private final RoomEventPublisher roomEventPublisher;
     private final RoomGameProgressService roomGameProgressService;
+    private final RoomGameResultService roomGameResultService;
+    private final RoomMutationLock roomMutationLock;
     private final PasswordEncoder passwordEncoder;
 
     @Transactional
@@ -335,22 +338,10 @@ public class RoomService {
         return RoomDetailResponse.from(result.room());
     }
 
-    @Transactional
     public void leaveRoom(AuthenticatedUser authenticatedUser, Long roomId) {
         validateAuthenticatedUser(authenticatedUser);
         Long userId = authenticatedUser.userId();
-
-        RoomState room = roomRedisRepository.findById(roomId)
-                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_or_member_not_found"));
-
-        RoomTransitionResult result = roomStateMachine.transition(
-                room,
-                RoomCommand.leave(userId, LocalDateTime.now())
-        );
-
-        roomRedisRepository.saveLeftRoom(result.room(), userId);
-        roomEventPublisher.publish(result.events());
-        log.info("event=room_left roomId={} userId={} reason=REQUESTED", roomId, userId);
+        roomMutationLock.execute(roomId, () -> leaveRoom(userId, roomId, false, "REQUESTED"));
     }
 
     @Transactional
@@ -388,7 +379,6 @@ public class RoomService {
         return RoomDetailResponse.from(updatedRoom);
     }
 
-    @Transactional
     public void leaveCurrentRoomByDisconnect(Long userId) {
         roomRedisRepository.findJoinedRoomId(userId)
                 .ifPresent(roomId -> leaveRoomByDisconnect(userId, roomId));
@@ -476,8 +466,21 @@ public class RoomService {
     }
 
     private void leaveRoomByDisconnect(Long userId, Long roomId) {
+        roomMutationLock.execute(roomId, () -> leaveRoom(userId, roomId, true, "DISCONNECTED"));
+    }
+
+    private void leaveRoom(Long userId, Long roomId, boolean ignoreMissing, String reason) {
         RoomState room = roomRedisRepository.findById(roomId).orElse(null);
         if (room == null || !room.hasMember(userId)) {
+            if (!ignoreMissing) {
+                throw new BusinessException(HttpStatus.NOT_FOUND, "room_or_member_not_found");
+            }
+            return;
+        }
+
+        if (room.status() == RoomStatus.PLAYING && room.memberCount() == 1) {
+            roomGameResultService.endGame(roomId, userId, RoomEndedReason.ALL_LEFT);
+            log.info("event=room_left roomId={} userId={} reason={} gameEndedReason=ALL_LEFT", roomId, userId, reason);
             return;
         }
 
@@ -488,7 +491,7 @@ public class RoomService {
 
         roomRedisRepository.saveLeftRoom(result.room(), userId);
         roomEventPublisher.publish(result.events());
-        log.info("event=room_left roomId={} userId={} reason=DISCONNECTED", roomId, userId);
+        log.info("event=room_left roomId={} userId={} reason={}", roomId, userId, reason);
     }
 
     private void validateMinimumPlayers(RoomState room) {

@@ -319,6 +319,7 @@ class RoomRedisRepositoryTest {
                 null,
                 Set.of(),
                 Map.of(3L, 0, 4L, 0),
+                2,
                 Map.of(),
                 now(),
                 null
@@ -340,6 +341,7 @@ class RoomRedisRepositoryTest {
                 null,
                 Set.of(),
                 Map.of(3L, 0, 4L, 0),
+                2,
                 Map.of(),
                 now(),
                 null

@@ -21,9 +21,11 @@ import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.DynamicUpdate;
 
 @Getter
 @Entity
+@DynamicUpdate
 @Table(
         name = "maps",
         indexes = {
@@ -238,6 +240,9 @@ public class QuizMap {
         this.visibility = visibility;
         this.questionCount = questionCount;
         changeStatus(status);
+    }
+
+    public void claimVersion() {
         this.version++;
     }
 
@@ -248,40 +253,6 @@ public class QuizMap {
 
         this.status = MapStatus.DELETED;
         this.deletedAt = LocalDateTime.now();
-    }
-
-    public void increaseLikeCount() {
-        this.likeCount++;
-    }
-
-    public void decreaseLikeCount() {
-        if (likeCount > 0) {
-            this.likeCount--;
-        }
-    }
-
-    public void increaseFavoriteCount() {
-        this.favoriteCount++;
-    }
-
-    public void decreaseFavoriteCount() {
-        if (favoriteCount > 0) {
-            this.favoriteCount--;
-        }
-    }
-
-    public void increasePlayCount() {
-        this.playCount++;
-    }
-
-    public void increaseCommentCount() {
-        this.commentCount++;
-    }
-
-    public void decreaseCommentCount() {
-        if (commentCount > 0) {
-            this.commentCount--;
-        }
     }
 
     private void changeStatus(MapStatus status) {

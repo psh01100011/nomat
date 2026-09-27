@@ -83,7 +83,7 @@ class GameSessionSourceRoomConcurrencyIntegrationTest {
             entityManager.clear();
             return quizMapRepository.findById(mapId).orElseThrow().getPlayCount();
         });
-        assertThat(playCount).isEqualTo(1);
+        assertThat(playCount).isEqualTo(2);
     }
 
     private boolean saveGameResult(
@@ -103,6 +103,7 @@ class GameSessionSourceRoomConcurrencyIntegrationTest {
                         ready.countDown();
                         await(start);
                     }
+                    quizMapRepository.addPlayCount(mapId, 2);
                     gameSessionRepository.saveAndFlush(GameSession.complete(
                             25L,
                             map,
@@ -123,7 +124,6 @@ class GameSessionSourceRoomConcurrencyIntegrationTest {
                             LocalDateTime.now().minusMinutes(1),
                             LocalDateTime.now()
                     ));
-                    map.increasePlayCount();
                     return true;
                 }));
             } catch (DataIntegrityViolationException exception) {
