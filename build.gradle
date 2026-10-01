@@ -60,8 +60,14 @@ tasks.named('test') {
 		if (!project.hasProperty('includeAudioRealBenchmark')) {
 			excludeTags 'audio-real-benchmark'
 		}
+		if (!project.hasProperty('includeMultiServerProcessTest')) {
+			excludeTags 'multi-server-process'
+		}
 	}
 	if (project.hasProperty('includeAudioLoadTest')) {
 		systemProperty 'audio.load-test.classpath', sourceSets.test.runtimeClasspath.asPath
+	}
+	if (project.hasProperty('includeMultiServerProcessTest')) {
+		systemProperty 'multi-server-test.classpath', sourceSets.test.runtimeClasspath.asPath
 	}
 }
