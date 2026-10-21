@@ -96,9 +96,10 @@ app:
     youtube-permit-lease-seconds: ${AUDIO_PROCESSING_YOUTUBE_PERMIT_LEASE_SECONDS:120}
     youtube-permit-renewal-ms: ${AUDIO_PROCESSING_YOUTUBE_PERMIT_RENEWAL_MS:30000}
     initial-delay-ms: 10000
-    fixed-delay-ms: 30000
+    fixed-delay-ms: ${AUDIO_PROCESSING_SCHEDULER_FIXED_DELAY_MS:10000}
     command-timeout-seconds: 300
-    processing-timeout-minutes: 10
+    heartbeat-interval-ms: ${AUDIO_PROCESSING_HEARTBEAT_INTERVAL_MS:20000}
+    heartbeat-timeout-seconds: ${AUDIO_PROCESSING_HEARTBEAT_TIMEOUT_SECONDS:90}
     delayed-threshold-minutes: ${AUDIO_PROCESSING_DELAYED_THRESHOLD_MINUTES:30}
     max-retry-attempts: 3
     yt-dlp-path: ${YT_DLP_PATH:yt-dlp}

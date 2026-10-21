@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.map.scheduler;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -33,6 +34,9 @@ class AudioProcessingWorkerDispatcherTest {
     private YoutubeRequestConcurrencyLimiter concurrencyLimiter;
 
     @Mock
+    private AudioProcessingHeartbeatManager heartbeatManager;
+
+    @Mock
     private YoutubeRequestConcurrencyLimiter.Permit firstPermit;
 
     @Mock
@@ -53,7 +57,8 @@ class AudioProcessingWorkerDispatcherTest {
                 audioProcessingService,
                 properties,
                 taskExecutor,
-                concurrencyLimiter
+                concurrencyLimiter,
+                heartbeatManager
         );
         AudioProcessingTask first = task(1L);
         AudioProcessingTask second = task(2L);
@@ -77,6 +82,8 @@ class AudioProcessingWorkerDispatcherTest {
         submittedTasks.remove().run();
 
         verify(audioProcessingService).processClaimedJob(first);
+        verify(heartbeatManager).register(first);
+        verify(heartbeatManager).unregister(first);
         verify(audioProcessingJobService, times(1)).claimProcessableJobs(1);
         assertThat(submittedTasks).hasSize(2);
         assertThat(dispatcher.dispatchAvailableJobs()).isZero();
@@ -89,6 +96,34 @@ class AudioProcessingWorkerDispatcherTest {
         verify(firstPermit, times(2)).close();
         verify(secondPermit).close();
         verify(thirdPermit).close();
+    }
+
+    @Test
+    void immediatelyRecoversAJobWhenTheWorkerExitsUnexpectedly() {
+        AudioProcessingProperties properties = new AudioProcessingProperties();
+        properties.setBatchSize(1);
+        properties.setWorkerConcurrency(1);
+        AudioProcessingTask task = task(1L);
+        AudioProcessingWorkerDispatcher dispatcher = new AudioProcessingWorkerDispatcher(
+                audioProcessingJobService,
+                audioProcessingService,
+                properties,
+                Runnable::run,
+                concurrencyLimiter,
+                heartbeatManager
+        );
+        given(concurrencyLimiter.tryAcquire())
+                .willReturn(Optional.of(firstPermit), Optional.empty());
+        given(audioProcessingJobService.claimProcessableJobs(1)).willReturn(List.of(task));
+        RuntimeException failure = new RuntimeException("unexpected worker failure");
+        doThrow(failure).when(audioProcessingService).processClaimedJob(task);
+
+        assertThat(dispatcher.dispatchAvailableJobs()).isEqualTo(1);
+
+        verify(audioProcessingService).handleUnexpectedWorkerFailure(task, failure);
+        verify(heartbeatManager).register(task);
+        verify(heartbeatManager).unregister(task);
+        verify(firstPermit).close();
     }
 
     private AudioProcessingTask task(Long jobId) {

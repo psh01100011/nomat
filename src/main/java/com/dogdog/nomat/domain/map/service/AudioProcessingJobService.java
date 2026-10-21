@@ -41,8 +41,8 @@ public class AudioProcessingJobService {
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public int recoverStaleProcessingJobs(int batchSize, long processingTimeoutMinutes, int maxRetryAttempts) {
-        LocalDateTime threshold = LocalDateTime.now().minusMinutes(processingTimeoutMinutes);
+    public int recoverStaleProcessingJobs(int batchSize, long heartbeatTimeoutSeconds, int maxRetryAttempts) {
+        LocalDateTime threshold = LocalDateTime.now().minusSeconds(heartbeatTimeoutSeconds);
         List<AudioProcessingJob> jobs = audioProcessingJobRepository
                 .findStaleForUpdateSkipLocked(threshold, batchSize);
         jobs.forEach(job -> {
@@ -58,6 +58,18 @@ public class AudioProcessingJobService {
             );
         });
         return jobs.size();
+    }
+
+    @Transactional
+    public int refreshProcessingHeartbeats(List<AudioProcessingTask> tasks) {
+        LocalDateTime heartbeatAt = LocalDateTime.now();
+        return tasks.stream()
+                .mapToInt(task -> audioProcessingJobRepository.refreshHeartbeat(
+                        task.jobId(),
+                        task.attemptCount(),
+                        heartbeatAt
+                ))
+                .sum();
     }
 
     @Transactional

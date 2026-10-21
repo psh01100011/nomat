@@ -59,8 +59,11 @@ ALB의 HTTPS 리스너는 HTTP 요청을 HTTPS로 리디렉션하고 `/api`, `/a
 AUDIO_PROCESSING_ENABLED=true
 YT_DLP_PATH=yt-dlp
 FFMPEG_PATH=ffmpeg
+AUDIO_PROCESSING_HEARTBEAT_INTERVAL_MS=20000
+AUDIO_PROCESSING_HEARTBEAT_TIMEOUT_SECONDS=90
 ```
 
 워커가 활성화되면 시작 시 `yt-dlp --version`과 `ffmpeg -version`을 실행한다. 명령을 찾을 수 없거나 실행 결과가 실패이면 해당 서버를 트래픽에 투입하지 않는다.
+실행 중인 작업은 20초마다 heartbeat를 갱신하고, 90초 동안 갱신이 없으면 다른 서버가 중단된 작업으로 회수한다.
 
 장애 대응 등으로 API 전용 서버가 필요할 때만 `AUDIO_PROCESSING_ENABLED=false`를 사용한다. 이 경우 외부 실행 파일 검사는 생략되지만 방 타이머, WebSocket, 정리 스케줄 등 다른 서버 기능은 그대로 실행된다.

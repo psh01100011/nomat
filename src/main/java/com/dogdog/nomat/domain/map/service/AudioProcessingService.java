@@ -38,9 +38,43 @@ public class AudioProcessingService {
     public int recoverStaleJobs() {
         return audioProcessingJobService.recoverStaleProcessingJobs(
                 processingProperties.getBatchSize(),
-                processingProperties.getProcessingTimeoutMinutes(),
+                processingProperties.getHeartbeatTimeoutSeconds(),
                 processingProperties.getMaxRetryAttempts()
         );
+    }
+
+    public void handleUnexpectedWorkerFailure(AudioProcessingTask task, RuntimeException exception) {
+        AudioProcessingJobStatus status;
+        try {
+            status = audioProcessingJobService.handleJobFailure(
+                    task.jobId(),
+                    task.attemptCount(),
+                    AudioProcessingFailureCode.INTERNAL_ERROR,
+                    exception.getMessage(),
+                    processingProperties.getMaxRetryAttempts()
+            );
+        } catch (RuntimeException recoveryException) {
+            log.error(
+                    "event=audio_job_unexpected_failure_recovery_failed jobId={} attempt={}",
+                    task.jobId(),
+                    task.attemptCount(),
+                    recoveryException
+            );
+            return;
+        }
+
+        if (status != null) {
+            try {
+                processingMetrics.recordAttempt(status, AudioProcessingFailureCode.INTERNAL_ERROR, 0);
+            } catch (RuntimeException metricsException) {
+                log.warn(
+                        "event=audio_job_unexpected_failure_metric_failed jobId={} attempt={}",
+                        task.jobId(),
+                        task.attemptCount(),
+                        metricsException
+                );
+            }
+        }
     }
 
     public void processJob(Long jobId) {

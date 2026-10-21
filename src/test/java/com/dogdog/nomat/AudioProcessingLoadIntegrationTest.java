@@ -519,6 +519,7 @@ class AudioProcessingLoadIntegrationTest {
         transactionTemplate.executeWithoutResult(status -> {
             AudioProcessingJob job = jobRepository.findByIdForUpdate(jobId).orElseThrow();
             ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
+            ReflectionTestUtils.setField(job, "heartbeatAt", LocalDateTime.now().minusMinutes(20));
         });
     }
 

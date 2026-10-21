@@ -75,6 +75,7 @@ class AudioProcessingJobServiceTest {
         assertThat(task.durationMs()).isEqualTo(42000);
         assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.PROCESSING);
         assertThat(job.getAttemptCount()).isEqualTo(1);
+        assertThat(job.getHeartbeatAt()).isNotNull();
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PROCESSING);
     }
 
@@ -108,6 +109,7 @@ class AudioProcessingJobServiceTest {
         assertThat(audioAsset.getDurationMs()).isEqualTo(42000);
 
         assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.SUCCEEDED);
+        assertThat(job.getHeartbeatAt()).isNull();
         assertThat(job.getQuestionMedia().getAsset()).isEqualTo(audioAsset);
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.READY);
         assertThat(job.getQuestionMedia().getFailureMessage()).isNull();
@@ -157,6 +159,7 @@ class AudioProcessingJobServiceTest {
         );
 
         assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
+        assertThat(job.getHeartbeatAt()).isNull();
         assertThat(job.getFailureCode()).isEqualTo(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR);
         assertThat(job.getFailureMessage()).isEqualTo("extract failed");
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.RETRYING);
@@ -299,7 +302,7 @@ class AudioProcessingJobServiceTest {
         given(audioProcessingJobRepository.findStaleForUpdateSkipLocked(any(), anyInt()))
                 .willReturn(List.of(job));
 
-        int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 10, 3);
+        int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 90, 3);
 
         assertThat(recoveredCount).isEqualTo(1);
         assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
@@ -318,7 +321,7 @@ class AudioProcessingJobServiceTest {
         given(audioProcessingJobRepository.findStaleForUpdateSkipLocked(any(), anyInt()))
                 .willReturn(List.of(job));
 
-        int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 10, 2);
+        int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 90, 2);
 
         assertThat(recoveredCount).isEqualTo(1);
         assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.FAILED);

@@ -28,7 +28,7 @@ class FlywayMigrationIntegrationTest {
 
     @Test
     void emptyDatabaseIsMigratedAndValidatedAgainstJpaEntities() {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("1");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("2");
 
         List<String> tables = jdbcTemplate.queryForList("""
                 SELECT table_name

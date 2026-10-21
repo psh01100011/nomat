@@ -22,6 +22,7 @@ public class AudioProcessingWorkerDispatcher {
     private final AudioProcessingProperties properties;
     private final TaskExecutor taskExecutor;
     private final YoutubeRequestConcurrencyLimiter concurrencyLimiter;
+    private final AudioProcessingHeartbeatManager heartbeatManager;
 
     private int activeWorkerCount;
 
@@ -30,13 +31,15 @@ public class AudioProcessingWorkerDispatcher {
             AudioProcessingService audioProcessingService,
             AudioProcessingProperties properties,
             @Qualifier("audioProcessingTaskExecutor") TaskExecutor taskExecutor,
-            YoutubeRequestConcurrencyLimiter concurrencyLimiter
+            YoutubeRequestConcurrencyLimiter concurrencyLimiter,
+            AudioProcessingHeartbeatManager heartbeatManager
     ) {
         this.audioProcessingJobService = audioProcessingJobService;
         this.audioProcessingService = audioProcessingService;
         this.properties = properties;
         this.taskExecutor = taskExecutor;
         this.concurrencyLimiter = concurrencyLimiter;
+        this.heartbeatManager = heartbeatManager;
     }
 
     public int dispatchAvailableJobs() {
@@ -94,9 +97,19 @@ public class AudioProcessingWorkerDispatcher {
         AudioProcessingTask task = claimedTask.task();
         try {
             taskExecutor.execute(() -> {
+                heartbeatManager.register(task);
                 try {
                     audioProcessingService.processClaimedJob(task);
+                } catch (RuntimeException exception) {
+                    log.error(
+                            "event=audio_worker_unexpected_failure jobId={} attempt={}",
+                            task.jobId(),
+                            task.attemptCount(),
+                            exception
+                    );
+                    audioProcessingService.handleUnexpectedWorkerFailure(task, exception);
                 } finally {
+                    heartbeatManager.unregister(task);
                     claimedTask.permit().close();
                     workerCompleted();
                 }

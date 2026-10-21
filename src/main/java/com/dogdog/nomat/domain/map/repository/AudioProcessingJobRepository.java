@@ -14,6 +14,7 @@ import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.jpa.domain.Specification;
@@ -36,14 +37,28 @@ public interface AudioProcessingJobRepository extends
             SELECT job.*
             FROM audio_processing_jobs job
             WHERE job.status = 'PROCESSING'
-              AND job.started_at < :startedBefore
-            ORDER BY job.started_at ASC, job.id ASC
+              AND job.heartbeat_at < :heartbeatBefore
+            ORDER BY job.heartbeat_at ASC, job.id ASC
             LIMIT :batchSize
             FOR UPDATE SKIP LOCKED
             """, nativeQuery = true)
     List<AudioProcessingJob> findStaleForUpdateSkipLocked(
-            @Param("startedBefore") LocalDateTime startedBefore,
+            @Param("heartbeatBefore") LocalDateTime heartbeatBefore,
             @Param("batchSize") int batchSize
+    );
+
+    @Modifying
+    @Query("""
+            UPDATE AudioProcessingJob job
+            SET job.heartbeatAt = :heartbeatAt
+            WHERE job.id = :jobId
+              AND job.status = com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus.PROCESSING
+              AND job.attemptCount = :attemptCount
+            """)
+    int refreshHeartbeat(
+            @Param("jobId") Long jobId,
+            @Param("attemptCount") int attemptCount,
+            @Param("heartbeatAt") LocalDateTime heartbeatAt
     );
 
     Optional<AudioProcessingJob> findByQuestionMediaId(Long questionMediaId);

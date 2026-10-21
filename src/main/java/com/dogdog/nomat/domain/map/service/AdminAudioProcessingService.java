@@ -97,10 +97,13 @@ public class AdminAudioProcessingService {
     public AdminAudioProcessingJobResponse recoverStaleJob(Long jobId) {
         AudioProcessingJob job = getJobForUpdate(jobId);
         LocalDateTime staleBefore = LocalDateTime.now()
-                .minusMinutes(processingProperties.getProcessingTimeoutMinutes());
+                .minusSeconds(processingProperties.getHeartbeatTimeoutSeconds());
+        LocalDateTime lastHeartbeatAt = job.getHeartbeatAt() == null
+                ? job.getStartedAt()
+                : job.getHeartbeatAt();
         if (job.getStatus() != AudioProcessingJobStatus.PROCESSING
-                || job.getStartedAt() == null
-                || job.getStartedAt().isAfter(staleBefore)) {
+                || lastHeartbeatAt == null
+                || lastHeartbeatAt.isAfter(staleBefore)) {
             throw new BusinessException(HttpStatus.CONFLICT, "admin_audio_job_not_stale");
         }
 

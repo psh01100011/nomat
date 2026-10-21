@@ -28,6 +28,10 @@ import lombok.NoArgsConstructor;
                 @Index(
                         name = "idx_audio_processing_jobs_status_started_at_id",
                         columnList = "status, started_at, id"
+                ),
+                @Index(
+                        name = "idx_audio_processing_jobs_status_heartbeat_at_id",
+                        columnList = "status, heartbeat_at, id"
                 )
         }
 )
@@ -65,6 +69,9 @@ public class AudioProcessingJob {
     @Column(name = "started_at")
     private LocalDateTime startedAt;
 
+    @Column(name = "heartbeat_at")
+    private LocalDateTime heartbeatAt;
+
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
@@ -77,9 +84,11 @@ public class AudioProcessingJob {
     }
 
     public void start() {
+        LocalDateTime now = LocalDateTime.now();
         this.status = AudioProcessingJobStatus.PROCESSING;
         this.attemptCount++;
-        this.startedAt = LocalDateTime.now();
+        this.startedAt = now;
+        this.heartbeatAt = now;
         this.failureMessage = null;
         this.failureCode = null;
         this.questionMedia.startProcessing();
@@ -101,6 +110,7 @@ public class AudioProcessingJob {
         this.failureMessage = null;
         this.failureCode = null;
         this.startedAt = null;
+        this.heartbeatAt = null;
         this.completedAt = null;
     }
 
@@ -109,6 +119,7 @@ public class AudioProcessingJob {
         this.failureCode = failureCode;
         this.failureMessage = truncate(failureMessage);
         this.startedAt = null;
+        this.heartbeatAt = null;
         this.completedAt = null;
         this.questionMedia.retryProcessing();
     }
@@ -131,6 +142,7 @@ public class AudioProcessingJob {
     public void succeed() {
         this.status = AudioProcessingJobStatus.SUCCEEDED;
         this.completedAt = LocalDateTime.now();
+        this.heartbeatAt = null;
         this.failureMessage = null;
         this.failureCode = null;
     }
@@ -138,6 +150,7 @@ public class AudioProcessingJob {
     public void fail(AudioProcessingFailureCode failureCode, String failureMessage) {
         this.status = AudioProcessingJobStatus.FAILED;
         this.completedAt = LocalDateTime.now();
+        this.heartbeatAt = null;
         this.failureCode = failureCode;
         this.failureMessage = truncate(failureMessage);
         this.questionMedia.failProcessing(failureCode);

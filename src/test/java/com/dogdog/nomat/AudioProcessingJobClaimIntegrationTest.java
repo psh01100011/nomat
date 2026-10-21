@@ -125,7 +125,7 @@ class AudioProcessingJobClaimIntegrationTest {
 
         try {
             Future<Integer> first = executor.submit(() -> recoveryTransaction.execute(status -> {
-                int count = audioProcessingJobService.recoverStaleProcessingJobs(1, 10, 3);
+                int count = audioProcessingJobService.recoverStaleProcessingJobs(1, 90, 3);
                 firstRecovered.countDown();
                 await(releaseFirstTransaction);
                 return count;
@@ -133,7 +133,7 @@ class AudioProcessingJobClaimIntegrationTest {
             assertThat(firstRecovered.await(5, TimeUnit.SECONDS)).isTrue();
 
             Future<Integer> second = executor.submit(() ->
-                    audioProcessingJobService.recoverStaleProcessingJobs(1, 10, 3)
+                    audioProcessingJobService.recoverStaleProcessingJobs(1, 90, 3)
             );
             assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(1);
 
@@ -165,7 +165,7 @@ class AudioProcessingJobClaimIntegrationTest {
 
         try {
             Future<Integer> recovery = executor.submit(() -> recoveryTransaction.execute(status -> {
-                int count = audioProcessingJobService.recoverStaleProcessingJobs(1, 10, 3);
+                int count = audioProcessingJobService.recoverStaleProcessingJobs(1, 90, 3);
                 staleRecovered.countDown();
                 await(releaseRecoveryTransaction);
                 return count;
@@ -242,7 +242,7 @@ class AudioProcessingJobClaimIntegrationTest {
                 .getFirst();
         makeJobStale(jobId);
 
-        assertThat(audioProcessingJobService.recoverStaleProcessingJobs(1, 10, 3)).isEqualTo(1);
+        assertThat(audioProcessingJobService.recoverStaleProcessingJobs(1, 90, 3)).isEqualTo(1);
         assertThat(completeJob(jobId, abandonedTask.attemptCount())).isFalse();
 
         AudioProcessingTask recoveredTask = audioProcessingJobService
@@ -257,6 +257,20 @@ class AudioProcessingJobClaimIntegrationTest {
         assertThat(quizMapRepository.findById(fixture.mapId()).orElseThrow().getStatus())
                 .isEqualTo(MapStatus.PUBLISHED);
         assertThat(assetRepository.count()).isEqualTo(assetCountBefore + 1);
+    }
+
+    @Test
+    void refreshedHeartbeatPreventsRecoveryOfAnActiveJob() {
+        ProcessingMapFixture fixture = saveQueuedMap(1);
+        AudioProcessingTask task = audioProcessingJobService.claimProcessableJobs(1).getFirst();
+        makeJobStale(task.jobId());
+
+        assertThat(audioProcessingJobService.refreshProcessingHeartbeats(List.of(task))).isEqualTo(1);
+        assertThat(audioProcessingJobService.recoverStaleProcessingJobs(1, 90, 3)).isZero();
+
+        AudioProcessingJob job = audioProcessingJobRepository.findById(task.jobId()).orElseThrow();
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.PROCESSING);
+        assertThat(job.getHeartbeatAt()).isAfter(LocalDateTime.now().minusSeconds(10));
     }
 
     private List<Long> saveQueuedJobs() {
@@ -301,6 +315,7 @@ class AudioProcessingJobClaimIntegrationTest {
             audioProcessingJobRepository.findAllById(jobIds).forEach(job -> {
                 job.start();
                 ReflectionTestUtils.setField(job, "startedAt", staleStartedAt);
+                ReflectionTestUtils.setField(job, "heartbeatAt", staleStartedAt);
             });
             entityManager.flush();
             return jobIds;
@@ -338,6 +353,7 @@ class AudioProcessingJobClaimIntegrationTest {
         transactionTemplate.executeWithoutResult(status -> {
             AudioProcessingJob job = audioProcessingJobRepository.findByIdForUpdate(jobId).orElseThrow();
             ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
+            ReflectionTestUtils.setField(job, "heartbeatAt", LocalDateTime.now().minusMinutes(20));
         });
     }
 

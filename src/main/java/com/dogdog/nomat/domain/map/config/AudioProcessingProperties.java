@@ -36,13 +36,16 @@ public class AudioProcessingProperties {
     private long initialDelayMs = 10000;
 
     @Positive
-    private long fixedDelayMs = 30000;
+    private long fixedDelayMs = 10000;
 
     @Positive
     private long commandTimeoutSeconds = 300;
 
     @Positive
-    private long processingTimeoutMinutes = 10;
+    private long heartbeatIntervalMs = 20000;
+
+    @Positive
+    private long heartbeatTimeoutSeconds = 90;
 
     @Positive
     private long delayedThresholdMinutes = 30;
@@ -61,8 +64,8 @@ public class AudioProcessingProperties {
         return youtubePermitRenewalMs < youtubePermitLeaseSeconds * 1000;
     }
 
-    @AssertTrue(message = "audio command timeout must be shorter than the stale processing threshold")
-    public boolean isCommandTimeoutBeforeStaleThreshold() {
-        return commandTimeoutSeconds < processingTimeoutMinutes * 60;
+    @AssertTrue(message = "audio heartbeat interval must be shorter than its timeout")
+    public boolean isHeartbeatIntervalBeforeTimeout() {
+        return heartbeatIntervalMs < heartbeatTimeoutSeconds * 1000;
     }
 }
