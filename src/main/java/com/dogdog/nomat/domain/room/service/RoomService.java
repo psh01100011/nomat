@@ -134,7 +134,6 @@ public class RoomService {
         return CreateRoomResponse.from(room);
     }
 
-    @Transactional(readOnly = true)
     public RoomListResponse getRooms(
             String keyword,
             Long mapId,
@@ -160,7 +159,6 @@ public class RoomService {
         );
     }
 
-    @Transactional(readOnly = true)
     public RoomListResponse getRooms(
             String keyword,
             Long mapId,
@@ -203,7 +201,6 @@ public class RoomService {
         );
     }
 
-    @Transactional(readOnly = true)
     public RoomDetailResponse getRoom(Long roomId) {
         RoomState room = roomRedisRepository.findById(roomId)
                 .filter(foundRoom -> isListableStatus(foundRoom.status()))
@@ -212,7 +209,6 @@ public class RoomService {
         return RoomDetailResponse.from(room);
     }
 
-    @Transactional(readOnly = true)
     public CurrentRoomResponse getCurrentRoom(AuthenticatedUser authenticatedUser) {
         validateAuthenticatedUser(authenticatedUser);
         Long userId = authenticatedUser.userId();
@@ -223,7 +219,6 @@ public class RoomService {
                 .orElse(null);
     }
 
-    @Transactional(readOnly = true)
     public RoomGameSnapshotResponse getGameSnapshot(AuthenticatedUser authenticatedUser, Long roomId) {
         validateAuthenticatedUser(authenticatedUser);
         Long userId = authenticatedUser.userId();
