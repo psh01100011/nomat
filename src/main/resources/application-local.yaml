@@ -19,6 +19,14 @@ spring:
     redis:
       url: redis://localhost:6379
 
+management:
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:9091}
+    address: ${MANAGEMENT_SERVER_ADDRESS:127.0.0.1}
+  metrics:
+    tags:
+      environment: local
+
 logging:
   level:
     com.dogdog.nomat: DEBUG

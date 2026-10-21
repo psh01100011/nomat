@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.room.service;
 
 import com.dogdog.nomat.domain.room.config.RoomEventProperties;
 import com.dogdog.nomat.domain.room.dto.RoomEventMessage;
+import com.dogdog.nomat.domain.room.monitoring.RoomMonitoringMetrics;
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ public class RoomEventPublisher {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final RoomEventProperties eventProperties;
+    private final RoomMonitoringMetrics metrics;
 
     public void publish(List<RoomDomainEvent> events) {
         events.forEach(this::publish);
@@ -26,8 +28,13 @@ public class RoomEventPublisher {
         try {
             String payload = objectMapper.writeValueAsString(RoomEventMessage.from(event));
             redisTemplate.convertAndSend(eventProperties.getChannel(), payload);
+            metrics.recordEventPublished(event.type(), "success");
         } catch (JacksonException exception) {
+            metrics.recordEventPublished(event.type(), "serialization_failed");
             throw new IllegalStateException("Failed to serialize room event.", exception);
+        } catch (RuntimeException exception) {
+            metrics.recordEventPublished(event.type(), "publish_failed");
+            throw exception;
         }
     }
 }

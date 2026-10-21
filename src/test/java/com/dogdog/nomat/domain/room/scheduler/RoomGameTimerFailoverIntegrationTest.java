@@ -10,6 +10,7 @@ import com.dogdog.nomat.domain.room.config.RoomLifecycleProperties;
 import com.dogdog.nomat.domain.room.model.ClaimedRoomGameTimer;
 import com.dogdog.nomat.domain.room.model.RoomGameTimer;
 import com.dogdog.nomat.domain.room.model.RoomGameTimerType;
+import com.dogdog.nomat.domain.room.monitoring.RoomMonitoringMetrics;
 import com.dogdog.nomat.domain.room.repository.RoomGameTimerRepository;
 import com.dogdog.nomat.domain.room.service.RoomGameProgressService;
 import com.dogdog.nomat.domain.room.service.RoomGameTimerExecutionGuard;
@@ -71,7 +72,8 @@ class RoomGameTimerFailoverIntegrationTest {
                             timerProperties,
                             lifecycleProperties
                     ),
-                    timerProperties
+                    timerProperties,
+                    mock(RoomMonitoringMetrics.class)
             );
 
             awaitTimerExecution(secondScheduler, executedTimers, timers.size());

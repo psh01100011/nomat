@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import com.dogdog.nomat.domain.room.config.RoomEventProperties;
 import com.dogdog.nomat.domain.room.dto.RoomEventMessage;
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
+import com.dogdog.nomat.domain.room.monitoring.RoomMonitoringMetrics;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,9 @@ class RoomEventPublisherTest {
     @Mock
     private RoomEventProperties eventProperties;
 
+    @Mock
+    private RoomMonitoringMetrics metrics;
+
     @Test
     void publishSendsSerializedEventToSharedRedisChannel() throws Exception {
         RoomDomainEvent event = RoomDomainEvent.chatMessage(
@@ -41,10 +45,11 @@ class RoomEventPublisherTest {
         );
         given(objectMapper.writeValueAsString(any(RoomEventMessage.class))).willReturn("serialized-event");
         given(eventProperties.getChannel()).willReturn("nomat:rooms:events");
-        RoomEventPublisher publisher = new RoomEventPublisher(redisTemplate, objectMapper, eventProperties);
+        RoomEventPublisher publisher = new RoomEventPublisher(redisTemplate, objectMapper, eventProperties, metrics);
 
         publisher.publish(List.of(event));
 
         verify(redisTemplate).convertAndSend("nomat:rooms:events", "serialized-event");
+        verify(metrics).recordEventPublished(event.type(), "success");
     }
 }

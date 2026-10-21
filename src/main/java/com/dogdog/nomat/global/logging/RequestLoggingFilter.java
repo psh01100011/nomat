@@ -54,7 +54,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return "/actuator/health".equals(request.getServletPath());
+        return request.getServletPath().startsWith("/actuator/");
     }
 
     private String resolveRequestId(String candidate) {

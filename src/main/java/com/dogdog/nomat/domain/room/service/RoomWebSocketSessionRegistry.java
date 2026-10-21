@@ -62,6 +62,10 @@ public class RoomWebSocketSessionRegistry {
         return activeSessionExists;
     }
 
+    public int localSessionCount() {
+        return userIdsBySessionId.size();
+    }
+
     private String sessionKey(String sessionId) {
         return SESSION_KEY_PREFIX + sessionId;
     }

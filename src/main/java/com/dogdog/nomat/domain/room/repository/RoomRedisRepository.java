@@ -97,6 +97,15 @@ public class RoomRedisRepository {
                 .toList();
     }
 
+    public long countActiveRooms() {
+        Long count = redisTemplate.opsForZSet().count(
+                ROOM_EXPIRES_AT_INDEX_KEY,
+                System.currentTimeMillis(),
+                Double.POSITIVE_INFINITY
+        );
+        return count == null ? 0 : count;
+    }
+
     public Optional<RoomState> findById(Long roomId) {
         String room = redisTemplate.opsForValue().get(roomKey(roomId));
         if (room == null) {

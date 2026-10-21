@@ -128,6 +128,7 @@ class RoomMultiServerProcessIntegrationTest {
                 NomatApplication.class.getName(),
                 "--spring.profiles.active=local",
                 "--server.port=" + port,
+                "--management.server.port=0",
                 "--spring.datasource.url=" + MYSQL.getJdbcUrl(),
                 "--spring.datasource.username=" + MYSQL.getUsername(),
                 "--spring.datasource.password=" + MYSQL.getPassword(),

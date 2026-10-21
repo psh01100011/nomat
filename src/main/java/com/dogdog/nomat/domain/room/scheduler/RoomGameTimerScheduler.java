@@ -2,6 +2,7 @@ package com.dogdog.nomat.domain.room.scheduler;
 
 import com.dogdog.nomat.domain.room.config.RoomGameTimerProperties;
 import com.dogdog.nomat.domain.room.model.ClaimedRoomGameTimer;
+import com.dogdog.nomat.domain.room.monitoring.RoomMonitoringMetrics;
 import com.dogdog.nomat.domain.room.repository.RoomGameTimerRepository;
 import com.dogdog.nomat.domain.room.service.RoomGameProgressService;
 import com.dogdog.nomat.domain.room.service.RoomGameTimerExecutionGuard;
@@ -22,6 +23,7 @@ public class RoomGameTimerScheduler {
     private final RoomGameProgressService roomGameProgressService;
     private final RoomGameTimerExecutionGuard executionGuard;
     private final RoomGameTimerProperties properties;
+    private final RoomMonitoringMetrics metrics;
 
     @Scheduled(
             initialDelayString = "${app.room.game-timer.initial-delay-ms:1000}",
@@ -29,12 +31,14 @@ public class RoomGameTimerScheduler {
             scheduler = "roomGameTimerTaskScheduler"
     )
     public void processDueTimers() {
+        Instant claimedAt = Instant.now();
         List<ClaimedRoomGameTimer> timers = roomGameTimerRepository.claimDue(
-                Instant.now(),
+                claimedAt,
                 properties.leaseDuration(),
                 properties.getBatchSize()
         );
         for (ClaimedRoomGameTimer claimedTimer : timers) {
+            metrics.recordTimerClaim(claimedTimer.timer(), claimedAt);
             ExecutionStatus executionStatus;
             try {
                 executionStatus = executionGuard.execute(
@@ -42,6 +46,7 @@ public class RoomGameTimerScheduler {
                         () -> roomGameProgressService.executeTimer(claimedTimer.timer())
                 );
             } catch (RuntimeException exception) {
+                metrics.recordTimerFailure(claimedTimer.timer(), "execution");
                 log.error(
                         "event=room_game_timer_execution_failed roomId={} questionIndex={} timerType={}",
                         claimedTimer.timer().roomId(),
@@ -51,6 +56,7 @@ public class RoomGameTimerScheduler {
                 );
                 continue;
             }
+            metrics.recordTimerExecution(claimedTimer.timer(), executionStatus);
             if (executionStatus == ExecutionStatus.BUSY) {
                 continue;
             }
@@ -58,6 +64,7 @@ public class RoomGameTimerScheduler {
             try {
                 roomGameTimerRepository.complete(claimedTimer);
             } catch (RuntimeException exception) {
+                metrics.recordTimerFailure(claimedTimer.timer(), "completion");
                 log.error(
                         "event=room_game_timer_completion_failed roomId={} questionIndex={} timerType={}",
                         claimedTimer.timer().roomId(),
