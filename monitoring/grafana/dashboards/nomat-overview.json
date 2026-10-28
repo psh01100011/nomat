@@ -41,8 +41,8 @@
       "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
       "id": 4,
       "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
-      "targets": [{"expr": "sum(nomat_audio_jobs_current)", "refId": "A"}],
-      "title": "Audio jobs",
+      "targets": [{"expr": "sum(max by (status) (nomat_audio_jobs_current{status=~\"QUEUED|RETRYING|PROCESSING\"}))", "refId": "A"}],
+      "title": "Active audio jobs",
       "type": "stat"
     },
     {
@@ -87,8 +87,8 @@
       "gridPos": {"h": 8, "w": 8, "x": 0, "y": 12},
       "id": 8,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"expr": "nomat_audio_jobs_current", "legendFormat": "{{status}}", "refId": "A"}],
-      "title": "Audio jobs by status",
+      "targets": [{"expr": "max by (status) (nomat_audio_jobs_current{status=~\"QUEUED|RETRYING|PROCESSING\"})", "legendFormat": "{{status}}", "refId": "A"}],
+      "title": "Active audio jobs by status",
       "type": "timeseries"
     },
     {
@@ -98,16 +98,27 @@
       "id": 9,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"expr": "nomat_audio_jobs_oldest_age_seconds", "legendFormat": "oldest {{state}}", "refId": "A"},
-        {"expr": "histogram_quantile(0.95, sum by (le) (rate(nomat_audio_jobs_queue_wait_seconds_bucket[10m])))", "legendFormat": "queue p95", "refId": "B"}
+        {"expr": "max by (state) (nomat_audio_jobs_oldest_age_seconds)", "legendFormat": "oldest {{state}}", "refId": "A"}
       ],
-      "title": "Audio queue delay",
+      "title": "Active audio job age",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"decimals": 0, "min": 0, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 12},
+      "id": 18,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "sum by (outcome) (increase(nomat_audio_jobs_attempts_total[5m]))", "legendFormat": "{{outcome}}", "refId": "A"}
+      ],
+      "title": "Audio attempts in last 5m",
       "type": "timeseries"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}]}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 12},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 36},
       "id": 10,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"expr": "up", "legendFormat": "{{job}}", "refId": "A"}],
@@ -122,7 +133,8 @@
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {"expr": "mysql_global_status_threads_connected", "legendFormat": "connections", "refId": "A"},
-        {"expr": "rate(mysql_global_status_queries[5m])", "legendFormat": "queries/s", "refId": "B"}
+        {"expr": "rate(mysql_global_status_queries[5m])", "legendFormat": "all statements/s", "refId": "B"},
+        {"expr": "rate(mysql_global_status_commands_total{command=\"select\"}[5m])", "legendFormat": "SELECT/s", "refId": "C"}
       ],
       "title": "MySQL activity",
       "type": "timeseries"
@@ -209,5 +221,5 @@
   "timezone": "browser",
   "title": "NOMAT Overview",
   "uid": "nomat-overview",
-  "version": 2
+  "version": 3
 }
