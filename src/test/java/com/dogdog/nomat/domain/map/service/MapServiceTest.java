@@ -24,6 +24,7 @@ import com.dogdog.nomat.domain.map.dto.ModifyMapRequest;
 import com.dogdog.nomat.domain.map.dto.ModifyMapResponse;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
+import com.dogdog.nomat.domain.map.dto.UpdateMapDraftRequest;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
@@ -948,6 +949,62 @@ class MapServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void modifyMapEnqueuesEveryYoutubeQuestionWhenPublishingDraft() {
+        User creator = activeUser(1L);
+        Category category = category(10L);
+        QuizMap map = quizMap(100L, creator, category, MapStatus.DRAFT);
+        Question firstQuestion = question(200L, map);
+        Question secondQuestion = Question.create(map, 2, "두 번째 노래는?");
+        ReflectionTestUtils.setField(secondQuestion, "id", 201L);
+        QuestionAnswer firstAnswer = QuestionAnswer.create(firstQuestion, "첫 정답", "첫정답", true);
+        QuestionAnswer secondAnswer = QuestionAnswer.create(secondQuestion, "두 번째 정답", "두번째정답", true);
+        QuestionMedia firstMedia = QuestionMedia.create(
+                firstQuestion,
+                null,
+                QuestionMediaSourceType.YOUTUBE,
+                "https://www.youtube.com/watch?v=first",
+                0,
+                20_000,
+                20_000
+        );
+        QuestionMedia secondMedia = QuestionMedia.create(
+                secondQuestion,
+                null,
+                QuestionMediaSourceType.YOUTUBE,
+                "https://www.youtube.com/watch?v=second",
+                20_000,
+                40_000,
+                20_000
+        );
+        ReflectionTestUtils.setField(firstMedia, "id", 300L);
+        ReflectionTestUtils.setField(secondMedia, "id", 301L);
+        LocalDateTime draftRequestedAt = LocalDateTime.now().minusDays(1);
+        ReflectionTestUtils.setField(firstMedia, "processingRequestedAt", draftRequestedAt);
+        ReflectionTestUtils.setField(secondMedia, "processingRequestedAt", draftRequestedAt);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+        given(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(100L, QuestionStatus.ACTIVE))
+                .willReturn(List.of(firstQuestion, secondQuestion));
+        given(questionAnswerRepository.findByQuestionIdInOrderByQuestionIdAscIdAsc(List.of(200L, 201L)))
+                .willReturn(List.of(firstAnswer, secondAnswer));
+        given(questionMediaRepository.findByQuestionIdIn(List.of(200L, 201L)))
+                .willReturn(List.of(firstMedia, secondMedia));
+
+        mapService.modifyMap(1L, 100L, new ModifyMapRequest(1, null, null));
+
+        ArgumentCaptor<AudioProcessingJob> jobCaptor = ArgumentCaptor.forClass(AudioProcessingJob.class);
+        verify(audioProcessingJobRepository, Mockito.times(2)).save(jobCaptor.capture());
+        assertThat(jobCaptor.getAllValues())
+                .extracting(AudioProcessingJob::getQuestionMedia)
+                .containsExactlyInAnyOrder(firstMedia, secondMedia);
+        assertThat(firstMedia.getProcessingRequestedAt()).isAfter(draftRequestedAt);
+        assertThat(secondMedia.getProcessingRequestedAt()).isEqualTo(firstMedia.getProcessingRequestedAt());
+        assertThat(map.getStatus()).isEqualTo(MapStatus.PROCESSING);
+    }
+
+    @Test
     void modifyMapRejectsVersionConflict() {
         User creator = activeUser(1L);
         Category category = category(10L);
@@ -963,6 +1020,81 @@ class MapServiceTest {
                 .hasMessageContaining("map_version_conflict");
 
         verify(questionRepository, never()).findByMapIdAndStatusOrderByQuestionOrderAsc(any(), any());
+    }
+
+    @Test
+    void updateMapDraftKeepsIncompleteMapAsDraftAndAdvancesVersion() {
+        User creator = activeUser(1L);
+        QuizMap map = QuizMap.draft(
+                creator,
+                null,
+                null,
+                QuestionType.AUDIO,
+                null,
+                null,
+                MapVisibility.PRIVATE,
+                0
+        );
+        ReflectionTestUtils.setField(map, "id", 100L);
+        UpdateMapDraftRequest request = new UpdateMapDraftRequest(
+                1,
+                null,
+                null,
+                "AUDIO",
+                null,
+                null,
+                "PRIVATE",
+                List.of(new UpdateMapDraftRequest.QuestionRequest(
+                        null,
+                        "temp-1",
+                        null,
+                        null,
+                        List.of()
+                ))
+        );
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+        given(questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(100L, QuestionStatus.ACTIVE))
+                .willReturn(List.of());
+        given(questionRepository.save(any(Question.class))).willAnswer(invocation -> {
+            Question question = invocation.getArgument(0);
+            ReflectionTestUtils.setField(question, "id", 200L);
+            return question;
+        });
+
+        ModifyMapResponse response = mapService.updateMapDraft(1L, 100L, request);
+
+        assertThat(response.version()).isEqualTo(2);
+        assertThat(response.createdQuestions()).hasSize(1);
+        assertThat(response.createdQuestions().getFirst().questionId()).isEqualTo(200L);
+        assertThat(map.getStatus()).isEqualTo(MapStatus.DRAFT);
+        assertThat(map.getQuestionCount()).isEqualTo(1);
+        verify(audioProcessingJobRepository, never()).save(any(AudioProcessingJob.class));
+    }
+
+    @Test
+    void updateMapDraftRejectsPublishedMap() {
+        User creator = activeUser(1L);
+        QuizMap map = quizMap(100L, creator, category(10L), MapStatus.PUBLISHED);
+        UpdateMapDraftRequest request = new UpdateMapDraftRequest(
+                1,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of()
+        );
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED)).willReturn(Optional.of(map));
+
+        assertThatThrownBy(() -> mapService.updateMapDraft(1L, 100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("map_draft_update_not_allowed");
+
+        verify(quizMapRepository, never()).claimVersion(any(), anyInt());
     }
 
     @Test

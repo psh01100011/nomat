@@ -18,6 +18,7 @@ import com.dogdog.nomat.domain.map.dto.ModifyMapRequest;
 import com.dogdog.nomat.domain.map.dto.ModifyMapResponse;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
+import com.dogdog.nomat.domain.map.dto.UpdateMapDraftRequest;
 import com.dogdog.nomat.domain.map.entity.Category;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
@@ -180,10 +181,110 @@ public class MapService {
     }
 
     @Transactional
+    public ModifyMapResponse updateMapDraft(Long userId, Long mapId, UpdateMapDraftRequest request) {
+        User creator = getVerifiedMapCreator(userId);
+        QuizMap map = quizMapRepository.findByIdAndStatusNot(mapId, MapStatus.DELETED)
+                .orElseThrow(this::mapOrQuestionNotFound);
+        if (!Objects.equals(map.getCreator().getId(), userId)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_map_access");
+        }
+        if (map.getStatus() != MapStatus.DRAFT) {
+            throw new BusinessException(HttpStatus.CONFLICT, "map_draft_update_not_allowed");
+        }
+        if (map.getVersion() != request.version()) {
+            throw mapVersionConflict(map.getVersion());
+        }
+        if (quizMapRepository.claimVersion(mapId, request.version()) == 0) {
+            throw mapVersionConflict(quizMapRepository.findVersion(mapId));
+        }
+        map.claimVersion();
+
+        Category category = getActiveCategoryOrNull(request.categoryId());
+        QuestionType questionType = parseQuestionTypeOrNull(request.questionType());
+        MapVisibility visibility = parseVisibilityForDraft(request.visibility());
+        Asset thumbnailAsset = resolveDraftThumbnail(map, request.thumbnailAssetId(), creator);
+        String title = normalizeOptionalText(request.title(), MAX_MAP_TITLE_LENGTH, "invalid_map_title_length");
+        String description = normalizeOptionalText(request.description(), MAX_MAP_DESCRIPTION_LENGTH, "invalid_request");
+        List<UpdateMapDraftRequest.QuestionRequest> requestedQuestions = request.questions() == null
+                ? List.of()
+                : request.questions();
+        validateDraftUpdateQuestions(questionType, requestedQuestions);
+
+        List<Question> existingQuestions = questionRepository.findByMapIdAndStatusOrderByQuestionOrderAsc(
+                mapId,
+                QuestionStatus.ACTIVE
+        );
+        Map<Long, Question> existingQuestionsById = existingQuestions.stream()
+                .collect(Collectors.toMap(Question::getId, Function.identity()));
+        validateDraftQuestionTargets(existingQuestionsById, requestedQuestions);
+
+        List<Long> existingQuestionIds = existingQuestions.stream().map(Question::getId).toList();
+        Map<Long, List<QuestionAnswer>> answersByQuestionId = questionAnswerRepository
+                .findByQuestionIdInOrderByQuestionIdAscIdAsc(existingQuestionIds)
+                .stream()
+                .collect(Collectors.groupingBy(answer -> answer.getQuestion().getId()));
+        Map<Long, QuestionMedia> mediaByQuestionId = questionMediaRepository.findByQuestionIdIn(existingQuestionIds)
+                .stream()
+                .collect(Collectors.toMap(media -> media.getQuestion().getId(), Function.identity()));
+
+        Set<Long> retainedQuestionIds = requestedQuestions.stream()
+                .map(UpdateMapDraftRequest.QuestionRequest::questionId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Set<Long> deletedQuestionIds = existingQuestionIds.stream()
+                .filter(questionId -> !retainedQuestionIds.contains(questionId))
+                .collect(Collectors.toSet());
+        deleteQuestions(existingQuestionsById, deletedQuestionIds, answersByQuestionId, mediaByQuestionId);
+
+        List<ModifyMapResponse.CreatedQuestionResponse> createdQuestions = new ArrayList<>();
+        int nextQuestionOrder = existingQuestions.stream()
+                .mapToInt(Question::getQuestionOrder)
+                .max()
+                .orElse(0) + 1;
+        for (UpdateMapDraftRequest.QuestionRequest questionRequest : requestedQuestions) {
+            if (questionRequest.questionId() == null) {
+                Question question = createDraftQuestion(
+                        map,
+                        questionType,
+                        questionRequest,
+                        nextQuestionOrder++,
+                        creator
+                );
+                createdQuestions.add(new ModifyMapResponse.CreatedQuestionResponse(
+                        questionRequest.clientId(),
+                        question.getId()
+                ));
+            } else {
+                updateDraftQuestion(
+                        existingQuestionsById.get(questionRequest.questionId()),
+                        questionType,
+                        questionRequest,
+                        creator,
+                        mediaByQuestionId
+                );
+            }
+        }
+
+        map.updateDraft(
+                category,
+                thumbnailAsset,
+                questionType,
+                title,
+                description,
+                visibility,
+                requestedQuestions.size()
+        );
+        LocalDateTime updatedAt = map.getUpdatedAt() == null ? LocalDateTime.now() : map.getUpdatedAt();
+        log.info("event=map_draft_updated mapId={} userId={} questionCount={}", mapId, userId, requestedQuestions.size());
+        return ModifyMapResponse.of(map, createdQuestions, updatedAt);
+    }
+
+    @Transactional
     public ModifyMapResponse modifyMap(Long userId, Long mapId, ModifyMapRequest request) {
         User creator = getAuthenticatedUser(userId);
         QuizMap map = quizMapRepository.findByIdAndStatusNot(mapId, MapStatus.DELETED)
                 .orElseThrow(this::mapOrQuestionNotFound);
+        boolean publishingDraft = map.getStatus() == MapStatus.DRAFT;
 
         if (!Objects.equals(map.getCreator().getId(), userId)) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "forbidden_map_access");
@@ -230,7 +331,8 @@ public class MapService {
                 answersByQuestionId,
                 mediaByQuestionId,
                 patchState.questionType(),
-                creator
+                creator,
+                !publishingDraft
         );
         List<Question> createdQuestions = new ArrayList<>();
         List<ModifyMapResponse.CreatedQuestionResponse> createdQuestionResponses = createQuestions(
@@ -241,7 +343,8 @@ public class MapService {
                 answersByQuestionId,
                 mediaByQuestionId,
                 patchState.questionType(),
-                creator
+                creator,
+                !publishingDraft
         );
 
         List<Question> activeQuestions = new ArrayList<>();
@@ -262,6 +365,9 @@ public class MapService {
         );
         if (hadSourceFailures && !hasSourceFailures(activeQuestions, mediaByQuestionId)) {
             retryFailedServerJobs(mapId, LocalDateTime.now());
+        }
+        if (publishingDraft) {
+            enqueueDraftAudioJobs(activeQuestions, mediaByQuestionId);
         }
 
         MapStatus status = resolveProcessingStatus(activeQuestions, mediaByQuestionId);
@@ -647,6 +753,121 @@ public class MapService {
         return new MapPatchState(title, category, questionType, thumbnailAsset, description, visibility);
     }
 
+    private Asset resolveDraftThumbnail(QuizMap map, Long thumbnailAssetId, User creator) {
+        Asset existingThumbnail = map.getThumbnailAsset();
+        if (existingThumbnail == null && thumbnailAssetId == null) {
+            return null;
+        }
+        if (existingThumbnail != null && Objects.equals(existingThumbnail.getId(), thumbnailAssetId)) {
+            return existingThumbnail;
+        }
+        return thumbnailAssetId == null ? null : getImageAssetToAttach(thumbnailAssetId, creator);
+    }
+
+    private void validateDraftUpdateQuestions(
+            QuestionType questionType,
+            List<UpdateMapDraftRequest.QuestionRequest> questions
+    ) {
+        if (questions.size() > MAX_QUESTION_COUNT) {
+            throw invalidRequest();
+        }
+        for (UpdateMapDraftRequest.QuestionRequest question : questions) {
+            if (question == null) {
+                throw invalidRequest();
+            }
+            validateDraftQuestionPrompt(question.promptText());
+            validateDraftAnswers(question.answers());
+            if (question.media() != null && StringUtils.hasText(question.media().sourceType())) {
+                validateDraftMedia(questionType, question.media());
+            }
+        }
+    }
+
+    private void validateDraftQuestionTargets(
+            Map<Long, Question> existingQuestionsById,
+            List<UpdateMapDraftRequest.QuestionRequest> requestedQuestions
+    ) {
+        Set<Long> requestedQuestionIds = new HashSet<>();
+        for (UpdateMapDraftRequest.QuestionRequest request : requestedQuestions) {
+            Long questionId = request.questionId();
+            if (questionId == null) {
+                continue;
+            }
+            if (!requestedQuestionIds.add(questionId) || !existingQuestionsById.containsKey(questionId)) {
+                throw mapOrQuestionNotFound();
+            }
+        }
+    }
+
+    private Question createDraftQuestion(
+            QuizMap map,
+            QuestionType questionType,
+            UpdateMapDraftRequest.QuestionRequest request,
+            int questionOrder,
+            User creator
+    ) {
+        Question question = questionRepository.save(Question.create(
+                map,
+                questionOrder,
+                normalizeOptionalQuestionPrompt(request.promptText())
+        ));
+        List<QuestionAnswer> answers = createDraftAnswers(question, request.answers());
+        if (!answers.isEmpty()) {
+            questionAnswerRepository.saveAll(answers);
+        }
+        QuestionMedia media = createDraftQuestionMedia(question, questionType, request.media(), creator);
+        if (media != null) {
+            questionMediaRepository.save(media);
+        }
+        return question;
+    }
+
+    private void updateDraftQuestion(
+            Question question,
+            QuestionType questionType,
+            UpdateMapDraftRequest.QuestionRequest request,
+            User creator,
+            Map<Long, QuestionMedia> mediaByQuestionId
+    ) {
+        question.update(normalizeOptionalQuestionPrompt(request.promptText()));
+        questionAnswerRepository.deleteByQuestionId(question.getId());
+        questionAnswerRepository.flush();
+        List<QuestionAnswer> answers = createDraftAnswers(question, request.answers());
+        if (!answers.isEmpty()) {
+            questionAnswerRepository.saveAll(answers);
+        }
+        updateDraftQuestionMedia(question, questionType, request.media(), creator, mediaByQuestionId);
+    }
+
+    private void updateDraftQuestionMedia(
+            Question question,
+            QuestionType questionType,
+            UpdateMapDraftRequest.MediaRequest mediaRequest,
+            User creator,
+            Map<Long, QuestionMedia> mediaByQuestionId
+    ) {
+        if (mediaRequest == null || !StringUtils.hasText(mediaRequest.sourceType())) {
+            removeQuestionMedia(question.getId(), mediaByQuestionId);
+            return;
+        }
+        QuestionMedia replacement = createDraftQuestionMedia(question, questionType, mediaRequest, creator);
+        QuestionMedia existingMedia = mediaByQuestionId.get(question.getId());
+        if (existingMedia == null) {
+            questionMediaRepository.save(replacement);
+            mediaByQuestionId.put(question.getId(), replacement);
+            return;
+        }
+        existingMedia.update(
+                replacement.getAsset(),
+                replacement.getSourceType(),
+                replacement.getSourceUrl(),
+                replacement.getStartTimeMs(),
+                replacement.getEndTimeMs(),
+                replacement.getDurationMs()
+        );
+        audioProcessingJobRepository.deleteByQuestionMediaId(existingMedia.getId());
+    }
+
     private String readTextField(Map<String, Object> node, String fieldName, boolean required, Integer maxLength) {
         Object field = node.get(fieldName);
         if (field == null) {
@@ -756,7 +977,8 @@ public class MapService {
             Map<Long, List<QuestionAnswer>> answersByQuestionId,
             Map<Long, QuestionMedia> mediaByQuestionId,
             QuestionType questionType,
-            User creator
+            User creator,
+            boolean syncAudioJob
     ) {
         for (ModifyMapRequest.UpdateQuestionRequest request : updateRequests) {
             validateModifyQuestion(questionType, request.promptText(), request.media(), request.answers());
@@ -768,7 +990,7 @@ public class MapService {
             List<QuestionAnswer> answers = createAnswers(question, request.answers());
             questionAnswerRepository.saveAll(answers);
             answersByQuestionId.put(question.getId(), answers);
-            updateQuestionMedia(question, questionType, request.media(), creator, mediaByQuestionId);
+            updateQuestionMedia(question, questionType, request.media(), creator, mediaByQuestionId, syncAudioJob);
         }
     }
 
@@ -780,7 +1002,8 @@ public class MapService {
             Map<Long, List<QuestionAnswer>> answersByQuestionId,
             Map<Long, QuestionMedia> mediaByQuestionId,
             QuestionType questionType,
-            User creator
+            User creator,
+            boolean syncAudioJob
     ) {
         List<ModifyMapResponse.CreatedQuestionResponse> responses = new ArrayList<>();
         int nextQuestionOrder = existingQuestions.stream()
@@ -804,7 +1027,9 @@ public class MapService {
             QuestionMedia media = createModifiedQuestionMedia(question, questionType, request.media(), creator);
             if (media != null) {
                 questionMediaRepository.save(media);
-                syncAudioProcessingJob(media);
+                if (syncAudioJob) {
+                    syncAudioProcessingJob(media);
+                }
                 mediaByQuestionId.put(question.getId(), media);
             }
 
@@ -866,7 +1091,8 @@ public class MapService {
             QuestionType questionType,
             ModifyMapRequest.MediaRequest mediaRequest,
             User creator,
-            Map<Long, QuestionMedia> mediaByQuestionId
+            Map<Long, QuestionMedia> mediaByQuestionId,
+            boolean syncAudioJob
     ) {
         if (mediaRequest == null) {
             removeQuestionMedia(question.getId(), mediaByQuestionId);
@@ -878,7 +1104,9 @@ public class MapService {
         if (existingMedia == null) {
             questionMediaRepository.save(newMedia);
             mediaByQuestionId.put(question.getId(), newMedia);
-            syncAudioProcessingJob(newMedia);
+            if (syncAudioJob) {
+                syncAudioProcessingJob(newMedia);
+            }
             return;
         }
 
@@ -898,7 +1126,23 @@ public class MapService {
                 newMedia.getDurationMs()
         );
         mediaByQuestionId.put(question.getId(), existingMedia);
-        syncAudioProcessingJob(existingMedia);
+        if (syncAudioJob) {
+            syncAudioProcessingJob(existingMedia);
+        }
+    }
+
+    private void enqueueDraftAudioJobs(
+            List<Question> activeQuestions,
+            Map<Long, QuestionMedia> mediaByQuestionId
+    ) {
+        LocalDateTime requestedAt = LocalDateTime.now();
+        activeQuestions.stream()
+                .map(question -> mediaByQuestionId.get(question.getId()))
+                .filter(Objects::nonNull)
+                .filter(media -> media.getSourceType() == QuestionMediaSourceType.YOUTUBE)
+                .peek(media -> media.requestReprocessing(requestedAt))
+                .map(AudioProcessingJob::create)
+                .forEach(audioProcessingJobRepository::save);
     }
 
     private boolean hasSameMedia(QuestionMedia existingMedia, QuestionMedia newMedia) {
@@ -1499,6 +1743,27 @@ public class MapService {
         }
     }
 
+    private void validateDraftMedia(QuestionType questionType, UpdateMapDraftRequest.MediaRequest media) {
+        QuestionMediaSourceType sourceType = parseMediaSourceType(media.sourceType());
+        if (sourceType == QuestionMediaSourceType.UPLOAD) {
+            if (questionType == QuestionType.TEXT) {
+                throw invalidRequest();
+            }
+            return;
+        }
+        if (sourceType == QuestionMediaSourceType.YOUTUBE) {
+            if (questionType == QuestionType.IMAGE || questionType == QuestionType.TEXT) {
+                throw invalidRequest();
+            }
+            if (StringUtils.hasText(media.sourceUrl())) {
+                validateYoutubeUrl(media.sourceUrl());
+            }
+            validateDraftMediaTimeRange(media.startTimeMs(), media.endTimeMs());
+            return;
+        }
+        throw invalidRequest();
+    }
+
     private void validateDraftMediaTimeRange(Long startTimeMs, Long endTimeMs) {
         if (startTimeMs != null) {
             validateNonNegativeMillis(startTimeMs);
@@ -1721,6 +1986,40 @@ public class MapService {
             durationMs = startTimeMs == null || endTimeMs == null ? null : endTimeMs - startTimeMs;
         }
 
+        return QuestionMedia.create(
+                question,
+                asset,
+                sourceType,
+                normalizeMediaSourceUrl(sourceType, media.sourceUrl()),
+                startTimeMs,
+                endTimeMs,
+                durationMs
+        );
+    }
+
+    private QuestionMedia createDraftQuestionMedia(
+            Question question,
+            QuestionType questionType,
+            UpdateMapDraftRequest.MediaRequest media,
+            User creator
+    ) {
+        if (media == null || !StringUtils.hasText(media.sourceType())) {
+            return null;
+        }
+
+        QuestionMediaSourceType sourceType = parseMediaSourceType(media.sourceType());
+        Asset asset = null;
+        Integer startTimeMs = null;
+        Integer endTimeMs = null;
+        Integer durationMs = null;
+        if (sourceType == QuestionMediaSourceType.UPLOAD) {
+            asset = getDraftMediaAssetToAttach(media.assetId(), creator, questionType);
+        }
+        if (sourceType == QuestionMediaSourceType.YOUTUBE) {
+            startTimeMs = media.startTimeMs() == null ? null : toIntegerMillis(media.startTimeMs());
+            endTimeMs = media.endTimeMs() == null ? null : toIntegerMillis(media.endTimeMs());
+            durationMs = startTimeMs == null || endTimeMs == null ? null : endTimeMs - startTimeMs;
+        }
         return QuestionMedia.create(
                 question,
                 asset,

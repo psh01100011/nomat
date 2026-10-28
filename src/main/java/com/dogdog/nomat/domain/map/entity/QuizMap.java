@@ -240,6 +240,27 @@ public class QuizMap {
         changeStatus(status);
     }
 
+    public void updateDraft(
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount
+    ) {
+        if (status != MapStatus.DRAFT) {
+            throw new IllegalStateException("Only draft maps can be updated as drafts.");
+        }
+        this.category = category;
+        this.thumbnailAsset = thumbnailAsset;
+        this.questionType = questionType;
+        this.title = title;
+        this.description = description;
+        this.visibility = visibility;
+        this.questionCount = questionCount;
+    }
+
     public void claimVersion() {
         this.version++;
     }

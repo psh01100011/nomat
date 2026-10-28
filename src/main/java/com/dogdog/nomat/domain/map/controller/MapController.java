@@ -17,6 +17,7 @@ import com.dogdog.nomat.domain.map.dto.ModifyMapRequest;
 import com.dogdog.nomat.domain.map.dto.ModifyMapResponse;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftRequest;
 import com.dogdog.nomat.domain.map.dto.SaveMapDraftResponse;
+import com.dogdog.nomat.domain.map.dto.UpdateMapDraftRequest;
 import com.dogdog.nomat.domain.map.service.MapService;
 import com.dogdog.nomat.domain.report.dto.ReportMapRequest;
 import com.dogdog.nomat.domain.report.dto.ReportMapResponse;
@@ -65,6 +66,16 @@ public class MapController {
     ) {
         Long userId = AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of("success_save_map_draft", mapService.saveMapDraft(userId, request));
+    }
+
+    @PatchMapping("/{mapId}/draft")
+    public ApiResponse<ModifyMapResponse> updateMapDraft(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long mapId,
+            @Valid @RequestBody UpdateMapDraftRequest request
+    ) {
+        Long userId = AuthenticatedUser.from(jwt).requireMemberId();
+        return ApiResponse.of("success_update_map_draft", mapService.updateMapDraft(userId, mapId, request));
     }
 
     @PostMapping("/{mapId}/like")
