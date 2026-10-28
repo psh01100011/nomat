@@ -47,8 +47,38 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"decimals": 0, "min": 0, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 4},
+      "id": 19,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "sum(executor_active_threads{application=\"nomat\",name=\"audioProcessingTaskExecutor\"})", "refId": "A"}],
+      "title": "Working audio workers",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"decimals": 0, "min": 0, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 4},
+      "id": 20,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "clamp_min(sum(executor_pool_core_threads{application=\"nomat\",name=\"audioProcessingTaskExecutor\"}) - sum(executor_active_threads{application=\"nomat\",name=\"audioProcessingTaskExecutor\"}), 0)", "refId": "A"}],
+      "title": "Idle audio workers",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"decimals": 0, "min": 0, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 4},
+      "id": 21,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "sum(max by (status) (nomat_audio_jobs_current{status=~\"QUEUED|RETRYING\"}))", "refId": "A"}],
+      "title": "Waiting audio jobs",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 4},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
       "id": 5,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [{"expr": "process_cpu_usage{application=\"nomat\"}", "legendFormat": "{{instance}}", "refId": "A"}],
@@ -58,7 +88,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 4},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8},
       "id": 6,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
@@ -71,7 +101,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 4},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8},
       "id": 7,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
@@ -84,7 +114,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 12},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
       "id": 8,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [{"expr": "max by (status) (nomat_audio_jobs_current{status=~\"QUEUED|RETRYING|PROCESSING\"})", "legendFormat": "{{status}}", "refId": "A"}],
@@ -94,7 +124,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 12},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
       "id": 9,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
@@ -106,7 +136,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"decimals": 0, "min": 0, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 12},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
       "id": 18,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
@@ -118,7 +148,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}]}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 36},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 40},
       "id": 10,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"expr": "up", "legendFormat": "{{job}}", "refId": "A"}],
@@ -128,7 +158,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 20},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 24},
       "id": 11,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
@@ -142,7 +172,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 20},
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 24},
       "id": 12,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
@@ -155,7 +185,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 20},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 24},
       "id": 13,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
@@ -168,7 +198,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "cores"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 20},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 24},
       "id": 14,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [{"expr": "sum(rate(container_cpu_usage_seconds_total{id=~\"/docker/.+\"}[5m]))", "legendFormat": "Docker containers", "refId": "A"}],
@@ -178,7 +208,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 28},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 32},
       "id": 15,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
@@ -191,7 +221,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 28},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 32},
       "id": 16,
       "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
@@ -204,7 +234,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 28},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 32},
       "id": 17,
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [{"expr": "histogram_quantile(0.95, sum by (le, type) (rate(nomat_room_game_timer_lag_seconds_bucket[5m])))", "legendFormat": "{{type}} p95", "refId": "A"}],
