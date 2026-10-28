@@ -488,7 +488,7 @@ public class MapService {
             getAuthenticatedUser(userId);
         }
 
-        QuizMap map = getPublicPublishedMap(mapId);
+        QuizMap map = getPublishedMapForDetail(userId, mapId);
 
         boolean liked = userId != null && mapLikeRepository.existsById(new MapLikeId(mapId, userId));
         boolean favorited = userId != null && mapFavoriteRepository.existsById(new MapFavoriteId(mapId, userId));
@@ -541,6 +541,41 @@ public class MapService {
         }
 
         return map;
+    }
+
+    private QuizMap getPublishedMapForDetail(Long userId, Long mapId) {
+        QuizMap map = quizMapRepository.findByIdAndStatusAndVisibility(
+                        mapId,
+                        MapStatus.PUBLISHED,
+                        MapVisibility.PUBLIC
+                )
+                .orElseGet(() -> getOwnedPublishedMap(userId, mapId));
+        validateAudioMapReady(map);
+        return map;
+    }
+
+    private QuizMap getOwnedPublishedMap(Long userId, Long mapId) {
+        if (userId == null) {
+            throw mapNotFound();
+        }
+
+        QuizMap map = quizMapRepository.findByIdAndStatusNot(mapId, MapStatus.DELETED)
+                .orElseThrow(this::mapNotFound);
+        if (map.getStatus() != MapStatus.PUBLISHED
+                || !Objects.equals(map.getCreator().getId(), userId)) {
+            throw mapNotFound();
+        }
+        return map;
+    }
+
+    private void validateAudioMapReady(QuizMap map) {
+        if (map.getQuestionType() == QuestionType.AUDIO
+                && questionMediaRepository.existsByQuestionMapIdAndProcessingStatusNot(
+                        map.getId(),
+                        QuestionMediaProcessingStatus.READY
+                )) {
+            throw mapNotFound();
+        }
     }
 
     private Set<Long> getLikedMapIds(Long userId, List<QuizMap> maps) {

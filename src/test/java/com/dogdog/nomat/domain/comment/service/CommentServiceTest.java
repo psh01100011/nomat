@@ -345,6 +345,31 @@ class CommentServiceTest {
     }
 
     @Test
+    void getMapCommentsReturnsPrivatePublishedMapCommentsToCreator() {
+        User creator = activeUser(1L);
+        User writer = activeUser(2L);
+        QuizMap map = quizMap(100L, creator, category(10L));
+        ReflectionTestUtils.setField(map, "visibility", MapVisibility.PRIVATE);
+        MapComment comment = comment(200L, map, writer, "기존 댓글", LocalDateTime.of(2026, 8, 15, 10, 0));
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(
+                100L,
+                MapStatus.PUBLISHED,
+                MapVisibility.PUBLIC
+        )).willReturn(Optional.empty());
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED))
+                .willReturn(Optional.of(map));
+        given(mapCommentRepository.findByMapIdAndStatus(any(), any(), any(Pageable.class)))
+                .willReturn(new PageImpl<>(List.of(comment)));
+
+        MapCommentListResponse response = commentService.getMapComments(1L, 100L, 0, 20, "latest");
+
+        assertThat(response.comments()).hasSize(1);
+        assertThat(response.comments().getFirst().content()).isEqualTo("기존 댓글");
+    }
+
+    @Test
     void getMapCommentsReturnsDeletedWritersAsAnonymousUsers() {
         User writer = activeUser(2L);
         writer.delete();

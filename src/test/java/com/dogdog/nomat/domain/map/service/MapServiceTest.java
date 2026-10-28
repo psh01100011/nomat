@@ -203,6 +203,46 @@ class MapServiceTest {
     }
 
     @Test
+    void getMapReturnsPrivatePublishedMapToCreator() {
+        User creator = activeUser(1L);
+        QuizMap map = quizMap(100L, creator, category(10L), MapStatus.PUBLISHED);
+        ReflectionTestUtils.setField(map, "visibility", MapVisibility.PRIVATE);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(
+                100L,
+                MapStatus.PUBLISHED,
+                MapVisibility.PUBLIC
+        )).willReturn(Optional.empty());
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED))
+                .willReturn(Optional.of(map));
+
+        MapDetailResponse response = mapService.getMap(1L, 100L);
+
+        assertThat(response.mapId()).isEqualTo(100L);
+    }
+
+    @Test
+    void getMapRejectsPrivatePublishedMapForAnotherUser() {
+        User viewer = activeUser(1L);
+        QuizMap map = quizMap(100L, activeUser(2L), category(10L), MapStatus.PUBLISHED);
+        ReflectionTestUtils.setField(map, "visibility", MapVisibility.PRIVATE);
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(viewer));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(
+                100L,
+                MapStatus.PUBLISHED,
+                MapVisibility.PUBLIC
+        )).willReturn(Optional.empty());
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED))
+                .willReturn(Optional.of(map));
+
+        assertThatThrownBy(() -> mapService.getMap(1L, 100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("map_not_found");
+    }
+
+    @Test
     void getMapRejectsMapThatIsNotPublicPublished() {
         given(quizMapRepository.findByIdAndStatusAndVisibility(100L, MapStatus.PUBLISHED, MapVisibility.PUBLIC))
                 .willReturn(Optional.empty());

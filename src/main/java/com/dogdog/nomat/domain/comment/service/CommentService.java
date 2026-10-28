@@ -50,7 +50,7 @@ public class CommentService {
             throw invalidRequest();
         }
         String content = normalizeContent(request.content());
-        QuizMap map = getPublicPublishedMap(mapId);
+        QuizMap map = getPublishedMapForCommentAccess(userId, mapId);
 
         quizMapRepository.incrementCommentCount(mapId);
         MapComment comment = mapCommentRepository.save(MapComment.create(map, writer, content));
@@ -106,7 +106,7 @@ public class CommentService {
         }
         validatePage(page, size);
         Pageable pageable = PageRequest.of(page, size, sortBy(sort));
-        getPublicPublishedMap(mapId);
+        getPublishedMapForCommentAccess(userId, mapId);
 
         return MapCommentListResponse.from(
                 mapCommentRepository.findByMapIdAndStatus(mapId, MapCommentStatus.ACTIVE, pageable),
@@ -120,13 +120,27 @@ public class CommentService {
                 .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
     }
 
-    private QuizMap getPublicPublishedMap(Long mapId) {
+    private QuizMap getPublishedMapForCommentAccess(Long userId, Long mapId) {
         return quizMapRepository.findByIdAndStatusAndVisibility(
                         mapId,
                         MapStatus.PUBLISHED,
                         MapVisibility.PUBLIC
                 )
+                .orElseGet(() -> getOwnedPublishedMap(userId, mapId));
+    }
+
+    private QuizMap getOwnedPublishedMap(Long userId, Long mapId) {
+        if (userId == null) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "map_not_found");
+        }
+
+        QuizMap map = quizMapRepository.findByIdAndStatusNot(mapId, MapStatus.DELETED)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "map_not_found"));
+        if (map.getStatus() != MapStatus.PUBLISHED
+                || !Objects.equals(map.getCreator().getId(), userId)) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "map_not_found");
+        }
+        return map;
     }
 
     private MapComment getActiveComment(Long commentId) {

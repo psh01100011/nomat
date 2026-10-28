@@ -178,7 +178,9 @@ public class MapController {
             @RequestParam(defaultValue = "latest") String sort,
             @RequestParam(required = false) Long creatorId
     ) {
-        Long userId = getUserIdOrNull(jwt);
+        Long userId = creatorId == null
+                ? getUserIdOrNull(jwt)
+                : AuthenticatedUser.from(jwt).requireMemberId();
         return ApiResponse.of(
                 "success_get_maps",
                 mapService.getMaps(userId, keyword, categoryId, questionType, page, size, sort, creatorId)
