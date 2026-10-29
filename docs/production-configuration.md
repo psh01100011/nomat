@@ -57,6 +57,8 @@ ALB의 HTTPS 리스너는 HTTP 요청을 HTTPS로 리디렉션하고 `/api`, `/a
 
 ```text
 AUDIO_PROCESSING_ENABLED=true
+AUDIO_PROCESSING_WORKER_CONCURRENCY=2
+AUDIO_PROCESSING_YOUTUBE_MAX_CONCURRENCY=4
 YT_DLP_PATH=yt-dlp
 FFMPEG_PATH=ffmpeg
 AUDIO_PROCESSING_HEARTBEAT_INTERVAL_MS=20000
@@ -67,3 +69,5 @@ AUDIO_PROCESSING_HEARTBEAT_TIMEOUT_SECONDS=90
 실행 중인 작업은 20초마다 heartbeat를 갱신하고, 90초 동안 갱신이 없으면 다른 서버가 중단된 작업으로 회수한다.
 
 장애 대응 등으로 API 전용 서버가 필요할 때만 `AUDIO_PROCESSING_ENABLED=false`를 사용한다. 이 경우 외부 실행 파일 검사는 생략되지만 방 타이머, WebSocket, 정리 스케줄 등 다른 서버 기능은 그대로 실행된다.
+
+초기 운영에서는 모든 API 서버가 서버당 오디오 워커 2개를 겸한다. Redis 분산 permit으로 전체 서버의 YouTube 동시 처리를 4개로 제한한다. 전용 오디오 워커 ASG는 대기시간이나 API 지연이 실제 운영에서 문제가 될 때 다시 검토한다.
