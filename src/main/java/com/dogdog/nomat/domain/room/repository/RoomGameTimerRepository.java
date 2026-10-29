@@ -121,7 +121,7 @@ public class RoomGameTimerRepository {
                 ),
                 String.valueOf(timer.dueAt().toEpochMilli()),
                 timer.memberKey(),
-                String.valueOf(lifecycleProperties.inactivityTtl().toMillis())
+                String.valueOf(lifecycleProperties.timerTrackingTtl().toMillis())
         );
     }
 
@@ -141,6 +141,10 @@ public class RoomGameTimerRepository {
         )) {
             remove(roomId, questionIndex, type);
         }
+    }
+
+    public void removeWaitingTimeout(Long roomId) {
+        remove(roomId, -1, RoomGameTimerType.WAITING_TIMEOUT);
     }
 
     public void removeAll(Long roomId) {

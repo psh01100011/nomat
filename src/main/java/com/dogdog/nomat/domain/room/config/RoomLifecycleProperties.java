@@ -18,7 +18,18 @@ public class RoomLifecycleProperties {
     @Min(5)
     private long inactivityTtlMinutes = 15;
 
+    @Min(5)
+    private long waitingMaxLifetimeMinutes = 30;
+
     public Duration inactivityTtl() {
         return Duration.ofMinutes(inactivityTtlMinutes);
+    }
+
+    public Duration waitingMaxLifetime() {
+        return Duration.ofMinutes(waitingMaxLifetimeMinutes);
+    }
+
+    public Duration timerTrackingTtl() {
+        return inactivityTtl().plus(waitingMaxLifetime());
     }
 }

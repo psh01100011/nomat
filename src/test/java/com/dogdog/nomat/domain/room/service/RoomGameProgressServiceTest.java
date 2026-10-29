@@ -51,8 +51,23 @@ class RoomGameProgressServiceTest {
     @Mock
     private RoomGameResultService roomGameResultService;
 
+    @Mock
+    private RoomWaitingExpirationService roomWaitingExpirationService;
+
     @InjectMocks
     private RoomGameProgressService roomGameProgressService;
+
+    @Test
+    void waitingTimeoutDelegatesToWaitingExpirationService() {
+        roomGameProgressService.executeTimer(new RoomGameTimer(
+                25L,
+                -1,
+                RoomGameTimerType.WAITING_TIMEOUT,
+                java.time.Instant.now()
+        ));
+
+        verify(roomWaitingExpirationService).expire(25L);
+    }
 
     @Test
     void startFirstQuestionSavesCurrentQuestionAndPublishesQuestionStarted() {

@@ -53,6 +53,7 @@ app:
   room:
     lifecycle:
       inactivity-ttl-minutes: ${ROOM_INACTIVITY_TTL_MINUTES:15}
+      waiting-max-lifetime-minutes: ${ROOM_WAITING_MAX_LIFETIME_MINUTES:30}
     game-timer:
       initial-delay-ms: ${ROOM_GAME_TIMER_INITIAL_DELAY_MS:1000}
       fixed-delay-ms: ${ROOM_GAME_TIMER_FIXED_DELAY_MS:100}

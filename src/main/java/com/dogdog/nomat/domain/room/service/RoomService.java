@@ -50,6 +50,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -81,6 +82,7 @@ public class RoomService {
     private final RoomGameProgressService roomGameProgressService;
     private final RoomGameResultService roomGameResultService;
     private final RoomMutationLock roomMutationLock;
+    private final RoomWaitingExpirationService roomWaitingExpirationService;
     private final PasswordEncoder passwordEncoder;
 
     @Transactional
@@ -126,6 +128,7 @@ public class RoomService {
         if (!roomRedisRepository.createRoom(room)) {
             throw new BusinessException(HttpStatus.CONFLICT, "already_joined_room");
         }
+        roomWaitingExpirationService.schedule(room);
 
         log.info(
                 "event=room_created roomId={} mapId={} userId={} userType={} hasPassword={} maxPlayers={}",
@@ -426,6 +429,12 @@ public class RoomService {
     @Transactional
     public RoomDetailResponse startGame(AuthenticatedUser authenticatedUser, Long roomId) {
         validateAuthenticatedUser(authenticatedUser);
+        AtomicReference<RoomDetailResponse> response = new AtomicReference<>();
+        roomMutationLock.execute(roomId, () -> response.set(startGameLocked(authenticatedUser, roomId)));
+        return response.get();
+    }
+
+    private RoomDetailResponse startGameLocked(AuthenticatedUser authenticatedUser, Long roomId) {
         Long hostUserId = authenticatedUser.userId();
 
         RoomState room = roomRedisRepository.findById(roomId)
@@ -451,6 +460,7 @@ public class RoomService {
         );
 
         roomRedisRepository.saveStartedRoom(result.room(), gameState);
+        roomWaitingExpirationService.cancel(roomId);
         roomEventPublisher.publish(result.events());
         roomGameProgressService.startFirstQuestion(result.room());
         log.info(

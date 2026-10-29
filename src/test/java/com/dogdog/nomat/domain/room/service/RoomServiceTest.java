@@ -96,6 +96,9 @@ class RoomServiceTest {
     private RoomMutationLock roomMutationLock;
 
     @Mock
+    private RoomWaitingExpirationService roomWaitingExpirationService;
+
+    @Mock
     private PasswordEncoder passwordEncoder;
 
     @InjectMocks
@@ -130,6 +133,7 @@ class RoomServiceTest {
         ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
         verify(roomRedisRepository).createRoom(roomCaptor.capture());
         RoomState room = roomCaptor.getValue();
+        verify(roomWaitingExpirationService).schedule(room);
         assertThat(room.roomId()).isEqualTo(25L);
         assertThat(room.status()).isEqualTo(RoomStatus.WAITING);
         assertThat(room.mapId()).isEqualTo(15L);
@@ -1052,6 +1056,7 @@ class RoomServiceTest {
         ArgumentCaptor<RoomState> roomCaptor = ArgumentCaptor.forClass(RoomState.class);
         ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
         verify(roomRedisRepository).saveStartedRoom(roomCaptor.capture(), gameStateCaptor.capture());
+        verify(roomWaitingExpirationService).cancel(25L);
 
         RoomState savedRoom = roomCaptor.getValue();
         RoomGameState gameState = gameStateCaptor.getValue();

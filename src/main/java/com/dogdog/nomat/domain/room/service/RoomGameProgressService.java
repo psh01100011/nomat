@@ -35,6 +35,7 @@ public class RoomGameProgressService {
     private final RoomGameTimerRepository roomGameTimerRepository;
     private final RoomEventPublisher roomEventPublisher;
     private final RoomGameResultService roomGameResultService;
+    private final RoomWaitingExpirationService roomWaitingExpirationService;
 
     public void startFirstQuestion(RoomState room) {
         startQuestion(room, 0);
@@ -76,6 +77,7 @@ public class RoomGameProgressService {
 
     public void executeTimer(RoomGameTimer timer) {
         switch (timer.type()) {
+            case WAITING_TIMEOUT -> roomWaitingExpirationService.expire(timer.roomId());
             case HINT -> revealHint(timer.roomId(), timer.questionIndex());
             case QUESTION_TIMEOUT -> endQuestionByTimeout(timer.roomId(), timer.questionIndex());
             case NEXT_QUESTION -> continueAfterQuestionEnded(timer.roomId(), timer.questionIndex());
