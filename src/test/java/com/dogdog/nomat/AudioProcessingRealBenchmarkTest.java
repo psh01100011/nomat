@@ -40,9 +40,6 @@ import tools.jackson.databind.ObjectMapper;
 class AudioProcessingRealBenchmarkTest {
 
     private static final int SOURCE_SAMPLE_COUNT = 23;
-    private static final int QUESTION_COUNT = 100;
-    private static final int MINIMUM_SUCCESS_COUNT = 100;
-    private static final Duration COMPLETION_TIMEOUT = Duration.ofMinutes(20);
     private static final DateTimeFormatter TITLE_TIMESTAMP = DateTimeFormatter.ofPattern("MMdd-HHmmss");
 
     @Autowired
@@ -60,11 +57,26 @@ class AudioProcessingRealBenchmarkTest {
     @Value("${audio.benchmark.server-base-url:http://127.0.0.1:8080/api}")
     private String serverBaseUrl;
 
+    @Value("${AUDIO_BENCHMARK_QUESTION_COUNT:100}")
+    private int questionCount;
+
+    @Value("${AUDIO_BENCHMARK_MINIMUM_SUCCESS_COUNT:0}")
+    private int configuredMinimumSuccessCount;
+
+    @Value("${AUDIO_BENCHMARK_COMPLETION_TIMEOUT_MINUTES:20}")
+    private long completionTimeoutMinutes;
+
+    @Value("${AUDIO_BENCHMARK_LABEL:manual}")
+    private String benchmarkLabel;
+
     @Test
     void measuresCurrentYoutubeExtractionAndS3UploadPipeline() throws Exception {
         List<SourceSample> sourceSamples = findSourceSamples();
         assertThat(sourceSamples).hasSizeGreaterThanOrEqualTo(20);
-        List<SourceSample> samples = repeatSamples(sourceSamples, QUESTION_COUNT);
+        assertThat(questionCount).isPositive();
+        assertThat(completionTimeoutMinutes).isPositive();
+        assertThat(minimumSuccessCount()).isBetween(1, questionCount);
+        List<SourceSample> samples = repeatSamples(sourceSamples, questionCount);
 
         Long creatorId = requiredLong("""
                 SELECT id
@@ -89,7 +101,7 @@ class AudioProcessingRealBenchmarkTest {
                 authTokenProvider.issueAccessToken(creator)
         );
 
-        int maxProcessingCount = awaitTerminalJobs(created.mapId(), QUESTION_COUNT);
+        int maxProcessingCount = awaitTerminalJobs(created.mapId(), questionCount);
         BenchmarkResult result = loadResult(
                 created.mapId(),
                 requestedAt,
@@ -101,8 +113,8 @@ class AudioProcessingRealBenchmarkTest {
 
         assertThat(result.successCount())
                 .withFailMessage("At least %s successful real samples are required; failures=%s",
-                        MINIMUM_SUCCESS_COUNT, result.failures())
-                .isGreaterThanOrEqualTo(MINIMUM_SUCCESS_COUNT);
+                        minimumSuccessCount(), result.failures())
+                .isGreaterThanOrEqualTo(minimumSuccessCount());
     }
 
     private List<SourceSample> findSourceSamples() {
@@ -197,11 +209,18 @@ class AudioProcessingRealBenchmarkTest {
     }
 
     private int awaitTerminalJobs(Long mapId, int expectedCount) throws Exception {
-        long deadline = System.nanoTime() + COMPLETION_TIMEOUT.toNanos();
+        long startedAt = System.nanoTime();
+        long deadline = startedAt + Duration.ofMinutes(completionTimeoutMinutes).toNanos();
+        long nextProgressAt = startedAt;
         int maxProcessingCount = 0;
         while (System.nanoTime() < deadline) {
             JobCounts counts = loadJobCounts(mapId);
             maxProcessingCount = Math.max(maxProcessingCount, counts.processingCount());
+            long now = System.nanoTime();
+            if (now >= nextProgressAt || counts.terminalCount() == expectedCount) {
+                printProgress(mapId, expectedCount, counts, Duration.ofNanos(now - startedAt).toSeconds());
+                nextProgressAt = now + Duration.ofSeconds(10).toNanos();
+            }
             if (counts.totalCount() == expectedCount && counts.terminalCount() == expectedCount) {
                 return maxProcessingCount;
             }
@@ -214,8 +233,10 @@ class AudioProcessingRealBenchmarkTest {
         return jdbcTemplate.queryForObject("""
                         SELECT
                           COUNT(*) AS total_count,
-                          SUM(job.status IN ('SUCCEEDED', 'FAILED')) AS terminal_count,
-                          SUM(job.status = 'PROCESSING') AS processing_count
+                          COALESCE(SUM(job.status = 'QUEUED'), 0) AS queued_count,
+                          COALESCE(SUM(job.status = 'PROCESSING'), 0) AS processing_count,
+                          COALESCE(SUM(job.status = 'SUCCEEDED'), 0) AS succeeded_count,
+                          COALESCE(SUM(job.status = 'FAILED'), 0) AS failed_count
                         FROM audio_processing_jobs job
                         JOIN question_media media ON media.id = job.question_media_id
                         JOIN questions question ON question.id = media.question_id
@@ -223,11 +244,25 @@ class AudioProcessingRealBenchmarkTest {
                         """,
                 (resultSet, rowNumber) -> new JobCounts(
                         resultSet.getInt("total_count"),
-                        resultSet.getInt("terminal_count"),
-                        resultSet.getInt("processing_count")
+                        resultSet.getInt("queued_count"),
+                        resultSet.getInt("processing_count"),
+                        resultSet.getInt("succeeded_count"),
+                        resultSet.getInt("failed_count")
                 ),
                 mapId
         );
+    }
+
+    private void printProgress(Long mapId, int expectedCount, JobCounts counts, long elapsedSeconds) {
+        System.out.println("AUDIO_REAL_BENCHMARK_PROGRESS label=" + benchmarkLabel
+                + " mapId=" + mapId
+                + " elapsedSec=" + elapsedSeconds
+                + " completed=" + counts.terminalCount() + "/" + expectedCount
+                + " succeeded=" + counts.succeededCount()
+                + " failed=" + counts.failedCount()
+                + " processing=" + counts.processingCount()
+                + " queued=" + counts.queuedCount());
+        System.out.flush();
     }
 
     private BenchmarkResult loadResult(
@@ -320,8 +355,13 @@ class AudioProcessingRealBenchmarkTest {
         return value;
     }
 
+    private int minimumSuccessCount() {
+        return configuredMinimumSuccessCount > 0 ? configuredMinimumSuccessCount : questionCount;
+    }
+
     private void printResult(BenchmarkResult result) {
-        System.out.println("AUDIO_REAL_BENCHMARK mapId=" + result.mapId()
+        System.out.println("AUDIO_REAL_BENCHMARK label=" + benchmarkLabel
+                + " mapId=" + result.mapId()
                 + " samples=" + result.sampleCount()
                 + " distinctVideos=" + result.distinctVideoCount()
                 + " succeeded=" + result.successCount()
@@ -339,7 +379,16 @@ class AudioProcessingRealBenchmarkTest {
     private record SourceSample(String sourceUrl, long startTimeMs, long endTimeMs) {
     }
 
-    private record JobCounts(int totalCount, int terminalCount, int processingCount) {
+    private record JobCounts(
+            int totalCount,
+            int queuedCount,
+            int processingCount,
+            int succeededCount,
+            int failedCount
+    ) {
+        private int terminalCount() {
+            return succeededCount + failedCount;
+        }
     }
 
     private record ApiCreationResult(Long mapId, long responseMillis) {

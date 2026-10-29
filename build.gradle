@@ -67,6 +67,11 @@ tasks.named('test') {
 	if (project.hasProperty('includeAudioLoadTest')) {
 		systemProperty 'audio.load-test.classpath', sourceSets.test.runtimeClasspath.asPath
 	}
+	if (project.hasProperty('includeAudioRealBenchmark')) {
+		testLogging {
+			showStandardStreams = true
+		}
+	}
 	if (project.hasProperty('includeMultiServerProcessTest')) {
 		systemProperty 'multi-server-test.classpath', sourceSets.test.runtimeClasspath.asPath
 	}

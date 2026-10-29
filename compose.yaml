@@ -58,7 +58,7 @@ services:
     command:
       - --mysqld.address=mysql:3306
       - --mysqld.username=exporter
-    restart: unless-stopped
+    restart: "no"
 
   redis-exporter:
     image: ghcr.io/oliver006/redis_exporter:v1.93.0-alpine
@@ -68,7 +68,7 @@ services:
         condition: service_healthy
     environment:
       REDIS_ADDR: redis://redis:6379
-    restart: unless-stopped
+    restart: "no"
 
   cadvisor:
     image: ghcr.io/google/cadvisor:0.60.6
@@ -79,10 +79,11 @@ services:
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
+      - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock:ro
       - /sys:/sys:ro
       - /var/lib/docker:/var/lib/docker:ro
       - /dev/disk:/dev/disk:ro
-    restart: unless-stopped
+    restart: "no"
 
   prometheus:
     image: prom/prometheus:v3.5.5
@@ -104,7 +105,7 @@ services:
       - --storage.tsdb.retention.time=7d
       - --storage.tsdb.retention.size=1GB
       - --web.enable-lifecycle
-    restart: unless-stopped
+    restart: "no"
 
   grafana:
     image: grafana/grafana:13.2.1
@@ -123,7 +124,7 @@ services:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - nomat-grafana-data:/var/lib/grafana
-    restart: unless-stopped
+    restart: "no"
 
 volumes:
   nomat-mysql-data:
