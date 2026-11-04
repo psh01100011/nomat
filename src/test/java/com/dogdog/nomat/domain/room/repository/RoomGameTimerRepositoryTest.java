@@ -38,7 +38,7 @@ class RoomGameTimerRepositoryTest {
     @BeforeEach
     void setUp() {
         org.mockito.Mockito.lenient()
-                .when(lifecycleProperties.inactivityTtl())
+                .when(lifecycleProperties.timerTrackingTtl())
                 .thenReturn(Duration.ofMinutes(15));
     }
 
