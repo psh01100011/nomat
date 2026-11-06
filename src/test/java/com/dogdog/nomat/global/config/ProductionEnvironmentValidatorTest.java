@@ -71,6 +71,23 @@ class ProductionEnvironmentValidatorTest {
         verify(commandAvailabilityChecker).verifyAudioTools(audioProcessingProperties);
     }
 
+    @Test
+    void rejectsSmtpOrLogDeliveryInProduction() {
+        for (String mode : List.of("smtp", "log")) {
+            environment.setProperty("app.email-verification.delivery-mode", mode);
+            assertThatThrownBy(validator()::afterPropertiesSet)
+                    .hasMessageContaining("delivery-mode must be ses");
+        }
+    }
+
+    @Test
+    void requiresSesRegionWithoutLeakingSecrets() {
+        environment.setProperty("app.email-verification.ses-region", "");
+        assertThatThrownBy(validator()::afterPropertiesSet)
+                .hasMessageContaining("ses-region must be configured")
+                .hasMessageNotContaining("database-secret");
+    }
+
     private ProductionEnvironmentValidator validator() {
         return new ProductionEnvironmentValidator(
                 environment,
@@ -86,9 +103,8 @@ class ProductionEnvironmentValidatorTest {
                 .withProperty("spring.datasource.username", "nomat")
                 .withProperty("spring.datasource.password", "database-secret")
                 .withProperty("spring.data.redis.url", "redis://redis:6379")
-                .withProperty("spring.mail.host", "smtp.gmail.com")
-                .withProperty("spring.mail.username", "sender@example.com")
-                .withProperty("spring.mail.password", "mail-secret")
+                .withProperty("app.email-verification.delivery-mode", "ses")
+                .withProperty("app.email-verification.ses-region", "ap-northeast-2")
                 .withProperty("app.email-verification.mail-from", "sender@example.com")
                 .withProperty("app.asset.s3.bucket", "nomat-assets")
                 .withProperty("app.asset.s3.region", "ap-northeast-2")

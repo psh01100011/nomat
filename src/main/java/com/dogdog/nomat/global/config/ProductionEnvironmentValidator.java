@@ -44,9 +44,10 @@ public class ProductionEnvironmentValidator implements InitializingBean {
         requireText(errors, "spring.datasource.username");
         requireText(errors, "spring.datasource.password");
         requireText(errors, "spring.data.redis.url");
-        requireText(errors, "spring.mail.host");
-        requireText(errors, "spring.mail.username");
-        requireText(errors, "spring.mail.password");
+        if (!"ses".equals(environment.getProperty("app.email-verification.delivery-mode"))) {
+            errors.add("app.email-verification.delivery-mode must be ses in production");
+        }
+        requireText(errors, "app.email-verification.ses-region");
         requireText(errors, "app.email-verification.mail-from");
         requireText(errors, "app.asset.s3.bucket");
         requireText(errors, "app.asset.s3.region");

@@ -10,11 +10,6 @@ spring:
   data:
     redis:
       url: ${REDIS_URL}
-  mail:
-    host: ${MAIL_HOST}
-    port: ${MAIL_PORT}
-    username: ${GMAIL_USERNAME}
-    password: ${GMAIL_APP_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -25,6 +20,9 @@ spring:
     validate-migration-naming: true
 
 management:
+  health:
+    mail:
+      enabled: false
   server:
     port: ${MANAGEMENT_SERVER_PORT:9091}
     address: ${MANAGEMENT_SERVER_ADDRESS:0.0.0.0}
@@ -49,8 +47,9 @@ app:
       allowed-origins:
         - ${FRONTEND_ORIGIN}
   email-verification:
-    delivery-mode: smtp
+    delivery-mode: ses
     mail-from: ${MAIL_FROM}
+    ses-region: ${AWS_REGION}
   asset:
     s3:
       bucket: ${AWS_S3_BUCKET}
