@@ -1,25 +1,40 @@
 package com.dogdog.nomat.domain.room.service;
 
+import com.dogdog.nomat.domain.room.config.RoomEventProperties;
 import com.dogdog.nomat.domain.room.dto.RoomEventMessage;
+import com.dogdog.nomat.domain.room.monitoring.RoomMonitoringMetrics;
 import com.dogdog.nomat.domain.room.model.RoomDomainEvent;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 @RequiredArgsConstructor
 public class RoomEventPublisher {
 
-    private static final String ROOM_TOPIC_PREFIX = "/topic/rooms/";
-
-    private final SimpMessagingTemplate messagingTemplate;
+    private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;
+    private final RoomEventProperties eventProperties;
+    private final RoomMonitoringMetrics metrics;
 
     public void publish(List<RoomDomainEvent> events) {
         events.forEach(this::publish);
     }
 
     private void publish(RoomDomainEvent event) {
-        messagingTemplate.convertAndSend(ROOM_TOPIC_PREFIX + event.roomId(), RoomEventMessage.from(event));
+        try {
+            String payload = objectMapper.writeValueAsString(RoomEventMessage.from(event));
+            redisTemplate.convertAndSend(eventProperties.getChannel(), payload);
+            metrics.recordEventPublished(event.type(), "success");
+        } catch (JacksonException exception) {
+            metrics.recordEventPublished(event.type(), "serialization_failed");
+            throw new IllegalStateException("Failed to serialize room event.", exception);
+        } catch (RuntimeException exception) {
+            metrics.recordEventPublished(event.type(), "publish_failed");
+            throw exception;
+        }
     }
 }

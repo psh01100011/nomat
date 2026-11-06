@@ -40,6 +40,7 @@ public class RoomMessageService {
         String content = normalizeContent(request.content());
         String clientMessageId = normalizeClientMessageId(request.clientMessageId());
         roomMessageRateLimiter.checkAllowed(roomId, userId, clientMessageId);
+        roomRedisRepository.refreshRoomActivity(room);
         LocalDateTime now = LocalDateTime.now();
         List<RoomDomainEvent> events = new ArrayList<>();
         events.add(RoomDomainEvent.chatMessage(

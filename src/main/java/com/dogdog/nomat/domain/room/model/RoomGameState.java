@@ -20,6 +20,7 @@ public record RoomGameState(
         String currentQuestionWinnerAnswer,
         Set<Long> currentQuestionSkipVoterUserIds,
         Map<Long, Integer> scores,
+        int initialPlayerCount,
         Map<Integer, RoomGameQuestionOutcome> questionOutcomes,
         LocalDateTime startedAt,
         LocalDateTime endedAt
@@ -31,6 +32,7 @@ public record RoomGameState(
                 ? Set.of()
                 : Set.copyOf(currentQuestionSkipVoterUserIds);
         scores = scores == null ? Map.of() : Map.copyOf(scores);
+        initialPlayerCount = initialPlayerCount > 0 ? initialPlayerCount : scores.size();
         questionOutcomes = questionOutcomes == null ? Map.of() : Map.copyOf(questionOutcomes);
     }
 
@@ -55,6 +57,7 @@ public record RoomGameState(
                 null,
                 Set.of(),
                 scores,
+                scores == null ? 0 : scores.size(),
                 Map.of(),
                 startedAt,
                 null
@@ -100,6 +103,7 @@ public record RoomGameState(
                 null,
                 Set.of(),
                 scores,
+                initialPlayerCount,
                 questionOutcomes,
                 this.startedAt,
                 endedAt
@@ -121,6 +125,7 @@ public record RoomGameState(
                 currentQuestionWinnerAnswer,
                 currentQuestionSkipVoterUserIds,
                 scores,
+                initialPlayerCount,
                 questionOutcomes,
                 startedAt,
                 endedAt
@@ -158,6 +163,7 @@ public record RoomGameState(
                 currentQuestionWinnerAnswer,
                 currentQuestionSkipVoterUserIds,
                 scores,
+                initialPlayerCount,
                 nextOutcomes,
                 startedAt,
                 this.endedAt
@@ -198,6 +204,7 @@ public record RoomGameState(
                 answer,
                 currentQuestionSkipVoterUserIds,
                 nextScores,
+                initialPlayerCount,
                 nextOutcomes,
                 startedAt,
                 this.endedAt
@@ -230,6 +237,34 @@ public record RoomGameState(
                 currentQuestionWinnerAnswer,
                 nextSkipVoterUserIds,
                 scores,
+                initialPlayerCount,
+                questionOutcomes,
+                startedAt,
+                endedAt
+        );
+    }
+
+    public RoomGameState withoutMember(Long userId) {
+        Map<Long, Integer> nextScores = new java.util.HashMap<>(scores);
+        nextScores.remove(userId);
+        Set<Long> nextSkipVoterUserIds = new HashSet<>(currentQuestionSkipVoterUserIds);
+        nextSkipVoterUserIds.remove(userId);
+
+        return new RoomGameState(
+                roomId,
+                randomSeed,
+                questions,
+                currentQuestionIndex,
+                currentQuestionStartedAt,
+                currentQuestionDurationSeconds,
+                currentQuestionEndsAt,
+                currentQuestionEndedAt,
+                hintRevealed,
+                currentQuestionWinnerUserId,
+                currentQuestionWinnerAnswer,
+                nextSkipVoterUserIds,
+                nextScores,
+                initialPlayerCount,
                 questionOutcomes,
                 startedAt,
                 endedAt
@@ -267,6 +302,7 @@ public record RoomGameState(
                 null,
                 currentQuestionSkipVoterUserIds,
                 scores,
+                initialPlayerCount,
                 nextOutcomes,
                 startedAt,
                 this.endedAt
@@ -304,6 +340,7 @@ public record RoomGameState(
                 null,
                 currentQuestionSkipVoterUserIds,
                 scores,
+                initialPlayerCount,
                 nextOutcomes,
                 startedAt,
                 this.endedAt

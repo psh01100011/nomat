@@ -10,7 +10,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -46,8 +45,7 @@ public class Question {
     @Column(name = "question_order", nullable = false)
     private int questionOrder;
 
-    @Lob
-    @Column(name = "prompt_text")
+    @Column(name = "prompt_text", columnDefinition = "TEXT")
     private String promptText;
 
     @Column(name = "status", length = 20, nullable = false)

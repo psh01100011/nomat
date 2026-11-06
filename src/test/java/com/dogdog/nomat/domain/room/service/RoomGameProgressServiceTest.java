@@ -2,7 +2,9 @@ package com.dogdog.nomat.domain.room.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
@@ -15,11 +17,13 @@ import com.dogdog.nomat.domain.room.model.RoomDomainEventType;
 import com.dogdog.nomat.domain.room.model.RoomEndedReason;
 import com.dogdog.nomat.domain.room.model.RoomGameQuestion;
 import com.dogdog.nomat.domain.room.model.RoomGameState;
+import com.dogdog.nomat.domain.room.model.RoomGameTimer;
+import com.dogdog.nomat.domain.room.model.RoomGameTimerType;
 import com.dogdog.nomat.domain.room.model.RoomMember;
 import com.dogdog.nomat.domain.room.model.RoomState;
 import com.dogdog.nomat.domain.room.repository.RoomRedisRepository;
+import com.dogdog.nomat.domain.room.repository.RoomGameTimerRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -28,9 +32,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.scheduling.TaskScheduler;
 
 @ExtendWith(MockitoExtension.class)
 class RoomGameProgressServiceTest {
@@ -39,32 +43,48 @@ class RoomGameProgressServiceTest {
     private RoomRedisRepository roomRedisRepository;
 
     @Mock
+    private RoomGameTimerRepository roomGameTimerRepository;
+
+    @Mock
     private RoomEventPublisher roomEventPublisher;
 
     @Mock
-    private TaskScheduler taskScheduler;
+    private RoomGameResultService roomGameResultService;
 
     @Mock
-    private RoomGameResultService roomGameResultService;
+    private RoomWaitingExpirationService roomWaitingExpirationService;
 
     @InjectMocks
     private RoomGameProgressService roomGameProgressService;
 
     @Test
+    void waitingTimeoutDelegatesToWaitingExpirationService() {
+        roomGameProgressService.executeTimer(new RoomGameTimer(
+                25L,
+                -1,
+                RoomGameTimerType.WAITING_TIMEOUT,
+                java.time.Instant.now()
+        ));
+
+        verify(roomWaitingExpirationService).expire(25L);
+    }
+
+    @Test
     void startFirstQuestionSavesCurrentQuestionAndPublishesQuestionStarted() {
         RoomState room = room();
-        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState()));
+        RoomGameState gameState = gameState();
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        stubStartedQuestion(gameState, 0, 30);
 
         roomGameProgressService.startFirstQuestion(room);
 
-        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
-        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
-        RoomGameState savedGameState = gameStateCaptor.getValue();
-        assertThat(savedGameState.currentQuestionIndex()).isEqualTo(0);
-        assertThat(savedGameState.currentQuestionStartedAt()).isNotNull();
-        assertThat(savedGameState.currentQuestionDurationSeconds()).isEqualTo(30);
-        assertThat(savedGameState.currentQuestionEndsAt()).isEqualTo(savedGameState.currentQuestionStartedAt().plusSeconds(30));
-        assertThat(savedGameState.hintRevealed()).isFalse();
+        verify(roomRedisRepository).tryStartQuestion(eq(25L), eq(0), any(LocalDateTime.class), eq(30));
+
+        ArgumentCaptor<RoomGameTimer> timerCaptor = ArgumentCaptor.forClass(RoomGameTimer.class);
+        verify(roomGameTimerRepository, times(2)).schedule(timerCaptor.capture());
+        assertThat(timerCaptor.getAllValues())
+                .extracting(RoomGameTimer::type)
+                .containsExactly(RoomGameTimerType.HINT, RoomGameTimerType.QUESTION_TIMEOUT);
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
@@ -76,69 +96,65 @@ class RoomGameProgressServiceTest {
                         && events.getFirst().audioRepeatEnabled()
                         && events.getFirst().answerTimeLimitSeconds() == 30
         ));
-        verify(taskScheduler, times(2)).schedule(any(Runnable.class), any(Instant.class));
     }
 
     @Test
     void startFirstQuestionUsesAnswerTimeLimitForTextQuestion() {
         RoomState room = room();
-        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState(textQuestion())));
+        RoomGameState gameState = gameState(textQuestion());
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        stubStartedQuestion(gameState, 0, 30);
 
         roomGameProgressService.startFirstQuestion(room);
 
-        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
-        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
-        assertThat(gameStateCaptor.getValue().currentQuestionDurationSeconds()).isEqualTo(30);
+        verify(roomRedisRepository).tryStartQuestion(eq(25L), eq(0), any(LocalDateTime.class), eq(30));
     }
 
     @Test
     void startFirstQuestionUsesAnswerTimeLimitWhenAudioIsShorterThanLimit() {
         RoomState room = room();
-        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState(audioQuestion(12_000))));
+        RoomGameState gameState = gameState(audioQuestion(12_000));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        stubStartedQuestion(gameState, 0, 30);
 
         roomGameProgressService.startFirstQuestion(room);
 
-        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
-        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
-        assertThat(gameStateCaptor.getValue().currentQuestionDurationSeconds()).isEqualTo(30);
+        verify(roomRedisRepository).tryStartQuestion(eq(25L), eq(0), any(LocalDateTime.class), eq(30));
     }
 
     @Test
     void startFirstQuestionUsesAudioDurationWhenAudioIsLongerThanLimit() {
         RoomState room = room();
-        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState(audioQuestion(45_000))));
+        RoomGameState gameState = gameState(audioQuestion(45_000));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        stubStartedQuestion(gameState, 0, 45);
 
         roomGameProgressService.startFirstQuestion(room);
 
-        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
-        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
-        RoomGameState savedGameState = gameStateCaptor.getValue();
-        assertThat(savedGameState.currentQuestionDurationSeconds()).isEqualTo(45);
-        assertThat(savedGameState.currentQuestionEndsAt()).isEqualTo(savedGameState.currentQuestionStartedAt().plusSeconds(45));
+        verify(roomRedisRepository).tryStartQuestion(eq(25L), eq(0), any(LocalDateTime.class), eq(45));
     }
 
     @Test
     void startFirstQuestionRoundsUpAudioDurationSeconds() {
         RoomState room = room();
-        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState(audioQuestion(30_500))));
+        RoomGameState gameState = gameState(audioQuestion(30_500));
+        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        stubStartedQuestion(gameState, 0, 31);
 
         roomGameProgressService.startFirstQuestion(room);
 
-        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
-        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
-        assertThat(gameStateCaptor.getValue().currentQuestionDurationSeconds()).isEqualTo(31);
+        verify(roomRedisRepository).tryStartQuestion(eq(25L), eq(0), any(LocalDateTime.class), eq(31));
     }
 
     @Test
     void revealHintSavesGameStateAndPublishesHint() {
         RoomGameState gameState = gameState().withStartedQuestion(0, now(), 30);
-        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        RoomGameState hintedGameState = gameState.withHintRevealed();
+        given(roomRedisRepository.tryRevealHint(25L, 0)).willReturn(Optional.of(hintedGameState));
 
         roomGameProgressService.revealHint(25L, 0);
 
-        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
-        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
-        assertThat(gameStateCaptor.getValue().hintRevealed()).isTrue();
+        assertThat(hintedGameState.hintRevealed()).isTrue();
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
@@ -150,20 +166,25 @@ class RoomGameProgressServiceTest {
     @Test
     void endQuestionByTimeoutSavesGameStateAndPublishesQuestionEnded() {
         RoomGameState gameState = gameState().withStartedQuestion(0, now(), 30);
-        given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        RoomGameState endedGameState = gameState.withQuestionEnded(now().plusSeconds(30));
+        given(roomRedisRepository.tryEndQuestionByTimeout(25L, 0)).willReturn(Optional.of(endedGameState));
 
         roomGameProgressService.endQuestionByTimeout(25L, 0);
 
-        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
-        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
-        assertThat(gameStateCaptor.getValue().currentQuestionEndedAt()).isNotNull();
+        assertThat(endedGameState.currentQuestionEndedAt()).isNotNull();
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
                         && events.getFirst().type() == RoomDomainEventType.QUESTION_ENDED
                         && events.getFirst().questionNumber() == 1
         ));
-        verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
+        InOrder timerOrder = inOrder(roomGameTimerRepository);
+        timerOrder.verify(roomGameTimerRepository).schedule(org.mockito.ArgumentMatchers.argThat(timer ->
+                timer.roomId().equals(25L)
+                        && timer.questionIndex() == 0
+                        && timer.type() == RoomGameTimerType.NEXT_QUESTION
+        ));
+        timerOrder.verify(roomGameTimerRepository).removeQuestionTimers(25L, 0);
     }
 
     @Test
@@ -174,14 +195,15 @@ class RoomGameProgressServiceTest {
         RoomGameState gameState = gameState().withStartedQuestion(0, now(), 30);
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        RoomGameState votedGameState = gameState.withSkipVote(-1L);
+        given(roomRedisRepository.tryVoteToSkip(
+                eq(25L), eq(0), eq(1L), eq(-1L), eq(3), any(LocalDateTime.class)
+        )).willReturn(Optional.of(votedGameState));
 
         roomGameProgressService.voteToSkip(-1L, 25L, skipVoteRequest(1L, 1));
 
-        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
-        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
-        RoomGameState savedGameState = gameStateCaptor.getValue();
-        assertThat(savedGameState.currentQuestionSkipVoterUserIds()).containsExactly(-1L);
-        assertThat(savedGameState.currentQuestionEndedAt()).isNull();
+        assertThat(votedGameState.currentQuestionSkipVoterUserIds()).containsExactly(-1L);
+        assertThat(votedGameState.currentQuestionEndedAt()).isNull();
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
@@ -204,15 +226,16 @@ class RoomGameProgressServiceTest {
                 .withSkipVote(4L);
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(gameState));
+        RoomGameState skippedGameState = gameState.withSkipVote(5L).withSkippedQuestion(now());
+        given(roomRedisRepository.tryVoteToSkip(
+                eq(25L), eq(0), eq(1L), eq(5L), eq(3), any(LocalDateTime.class)
+        )).willReturn(Optional.of(skippedGameState));
 
         roomGameProgressService.voteToSkip(5L, 25L, skipVoteRequest(1L, 1));
 
-        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
-        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
-        RoomGameState savedGameState = gameStateCaptor.getValue();
-        assertThat(savedGameState.currentQuestionSkipVoterUserIds()).containsExactlyInAnyOrder(3L, 4L, 5L);
-        assertThat(savedGameState.currentQuestionEndedAt()).isNotNull();
-        assertThat(savedGameState.questionOutcomes().get(1).endedReason()).isEqualTo("SKIPPED");
+        assertThat(skippedGameState.currentQuestionSkipVoterUserIds()).containsExactlyInAnyOrder(3L, 4L, 5L);
+        assertThat(skippedGameState.currentQuestionEndedAt()).isNotNull();
+        assertThat(skippedGameState.questionOutcomes().get(1).endedReason()).isEqualTo("SKIPPED");
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 2
@@ -222,7 +245,7 @@ class RoomGameProgressServiceTest {
                         && events.get(1).type() == RoomDomainEventType.QUESTION_ENDED
                         && events.get(1).questionNumber() == 1
         ));
-        verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
+        verify(roomGameTimerRepository).schedule(any(RoomGameTimer.class));
     }
 
     @Test
@@ -260,7 +283,7 @@ class RoomGameProgressServiceTest {
                         && events.getFirst().questionNumber() == 1
                         && events.getFirst().content().contains("오디오 파일")
         ));
-        verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
+        verify(roomGameTimerRepository).schedule(any(RoomGameTimer.class));
     }
 
     @Test
@@ -275,7 +298,7 @@ class RoomGameProgressServiceTest {
         roomGameProgressService.reportAudioLoadFailure(3L, 25L, audioLoadFailureRequest(1L, 1));
 
         verify(roomEventPublisher, never()).publish(any());
-        verify(taskScheduler, never()).schedule(any(Runnable.class), any(Instant.class));
+        verify(roomGameTimerRepository, never()).schedule(any(RoomGameTimer.class));
     }
 
     @Test
@@ -286,21 +309,18 @@ class RoomGameProgressServiceTest {
                 .withQuestionEnded(now().plusSeconds(30));
         given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
         given(roomRedisRepository.findGameState(25L)).willReturn(Optional.of(endedGameState));
+        stubStartedQuestion(endedGameState, 1, 30);
 
         roomGameProgressService.continueAfterQuestionEnded(25L, 0);
 
-        ArgumentCaptor<RoomGameState> gameStateCaptor = ArgumentCaptor.forClass(RoomGameState.class);
-        verify(roomRedisRepository).saveGameState(gameStateCaptor.capture());
-        RoomGameState savedGameState = gameStateCaptor.getValue();
-        assertThat(savedGameState.currentQuestionIndex()).isEqualTo(1);
-        assertThat(savedGameState.currentQuestion().questionNumber()).isEqualTo(2);
+        verify(roomRedisRepository).tryStartQuestion(eq(25L), eq(1), any(LocalDateTime.class), eq(30));
 
         verify(roomEventPublisher).publish(org.mockito.ArgumentMatchers.argThat(events ->
                 events.size() == 1
                         && events.getFirst().type() == RoomDomainEventType.QUESTION_STARTED
                         && events.getFirst().questionNumber() == 2
         ));
-        verify(taskScheduler, times(2)).schedule(any(Runnable.class), any(Instant.class));
+        verify(roomGameTimerRepository, times(2)).schedule(any(RoomGameTimer.class));
     }
 
     @Test
@@ -319,6 +339,19 @@ class RoomGameProgressServiceTest {
 
     private RoomState room() {
         return room(1);
+    }
+
+    private void stubStartedQuestion(RoomGameState gameState, int questionIndex, int durationSeconds) {
+        given(roomRedisRepository.tryStartQuestion(
+                eq(25L),
+                eq(questionIndex),
+                any(LocalDateTime.class),
+                eq(durationSeconds)
+        )).willAnswer(invocation -> Optional.of(gameState.withStartedQuestion(
+                questionIndex,
+                invocation.getArgument(2, LocalDateTime.class),
+                durationSeconds
+        )));
     }
 
     private RoomState room(int memberCount) {

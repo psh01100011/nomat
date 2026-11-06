@@ -12,7 +12,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -46,8 +45,7 @@ public class MapComment {
     @JoinColumn(name = "writer_id", nullable = false)
     private User writer;
 
-    @Lob
-    @Column(name = "content", nullable = false)
+    @Column(name = "content", nullable = false, columnDefinition = "TEXT")
     private String content;
 
     @Column(name = "status", length = 20, nullable = false)
@@ -76,17 +74,6 @@ public class MapComment {
     public void modify(String content) {
         this.content = content;
         this.updatedAt = LocalDateTime.now();
-    }
-
-    public void delete() {
-        if (status == MapCommentStatus.DELETED) {
-            return;
-        }
-
-        this.status = MapCommentStatus.DELETED;
-        LocalDateTime now = LocalDateTime.now();
-        this.updatedAt = now;
-        this.deletedAt = now;
     }
 
     @PrePersist

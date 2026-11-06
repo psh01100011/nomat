@@ -83,7 +83,7 @@ class CommentServiceTest {
         assertThat(response.writer().nickname()).isEqualTo("tester1");
         assertThat(response.writer().profileImageUrl()).isEqualTo(profileImage.getUrl());
         assertThat(response.createdAt()).isEqualTo(LocalDateTime.of(2026, 8, 21, 10, 0));
-        assertThat(map.getCommentCount()).isEqualTo(6L);
+        verify(quizMapRepository).incrementCommentCount(100L);
 
         ArgumentCaptor<MapComment> commentCaptor = ArgumentCaptor.forClass(MapComment.class);
         verify(mapCommentRepository).save(commentCaptor.capture());
@@ -247,13 +247,17 @@ class CommentServiceTest {
 
         given(userRepository.findById(1L)).willReturn(Optional.of(writer));
         given(mapCommentRepository.findByIdAndStatus(200L, MapCommentStatus.ACTIVE)).willReturn(Optional.of(comment));
+        given(mapCommentRepository.deleteIfActive(any(), any(), any(), any())).willReturn(1);
 
         commentService.deleteMapComment(1L, 200L);
 
-        assertThat(comment.getStatus()).isEqualTo(MapCommentStatus.DELETED);
-        assertThat(comment.getDeletedAt()).isNotNull();
-        assertThat(comment.getUpdatedAt()).isEqualTo(comment.getDeletedAt());
-        assertThat(map.getCommentCount()).isEqualTo(2L);
+        verify(quizMapRepository).decrementCommentCount(100L);
+        verify(mapCommentRepository).deleteIfActive(
+                org.mockito.ArgumentMatchers.eq(200L),
+                org.mockito.ArgumentMatchers.eq(MapCommentStatus.ACTIVE),
+                org.mockito.ArgumentMatchers.eq(MapCommentStatus.DELETED),
+                any(LocalDateTime.class)
+        );
     }
 
     @Test
@@ -338,6 +342,31 @@ class CommentServiceTest {
         assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(20);
         assertThat(pageableCaptor.getValue().getSort().getOrderFor("createdAt").getDirection().isDescending())
                 .isTrue();
+    }
+
+    @Test
+    void getMapCommentsReturnsPrivatePublishedMapCommentsToCreator() {
+        User creator = activeUser(1L);
+        User writer = activeUser(2L);
+        QuizMap map = quizMap(100L, creator, category(10L));
+        ReflectionTestUtils.setField(map, "visibility", MapVisibility.PRIVATE);
+        MapComment comment = comment(200L, map, writer, "기존 댓글", LocalDateTime.of(2026, 8, 15, 10, 0));
+
+        given(userRepository.findById(1L)).willReturn(Optional.of(creator));
+        given(quizMapRepository.findByIdAndStatusAndVisibility(
+                100L,
+                MapStatus.PUBLISHED,
+                MapVisibility.PUBLIC
+        )).willReturn(Optional.empty());
+        given(quizMapRepository.findByIdAndStatusNot(100L, MapStatus.DELETED))
+                .willReturn(Optional.of(map));
+        given(mapCommentRepository.findByMapIdAndStatus(any(), any(), any(Pageable.class)))
+                .willReturn(new PageImpl<>(List.of(comment)));
+
+        MapCommentListResponse response = commentService.getMapComments(1L, 100L, 0, 20, "latest");
+
+        assertThat(response.comments()).hasSize(1);
+        assertThat(response.comments().getFirst().content()).isEqualTo("기존 댓글");
     }
 
     @Test

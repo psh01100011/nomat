@@ -30,7 +30,7 @@ public class AdminApiKeyAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getServletPath();
-        return !path.startsWith("/admin/") && !"/actuator/prometheus".equals(path);
+        return !path.startsWith("/admin/");
     }
 
     @Override

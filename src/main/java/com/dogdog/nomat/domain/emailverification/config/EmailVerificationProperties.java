@@ -23,6 +23,8 @@ public class EmailVerificationProperties {
     @Email
     private String mailFrom;
 
+    private String sesRegion;
+
     @Positive
     private long codeValidityMinutes = 10;
 

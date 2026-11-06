@@ -1,0 +1,85 @@
+services:
+  backend-benchmark:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nomat-backend:benchmark
+    container_name: nomat-backend-benchmark
+    env_file:
+      - .env
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/nomat?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+      SPRING_DATASOURCE_USERNAME: nomat
+      SPRING_DATASOURCE_PASSWORD: nomat
+      SPRING_DATA_REDIS_URL: redis://redis:6379/${BENCHMARK_REDIS_DATABASE:-0}
+      MANAGEMENT_SERVER_ADDRESS: 0.0.0.0
+      MANAGEMENT_SERVER_PORT: 9091
+      APP_ENVIRONMENT: benchmark-${BENCHMARK_SCENARIO}
+      EMAIL_DELIVERY_MODE: log
+      AUDIO_PROCESSING_ENABLED: ${BENCHMARK_AUDIO_PROCESSING_ENABLED:-true}
+      AUDIO_PROCESSING_WORKER_CONCURRENCY: ${BENCHMARK_WORKER_CONCURRENCY:-2}
+      APP_ASSET_CLEANUP_ENABLED: "false"
+      ROOM_GAME_TIMER_INITIAL_DELAY_MS: ${BENCHMARK_ROOM_GAME_TIMER_INITIAL_DELAY_MS:-3600000}
+      JAVA_TOOL_OPTIONS: >-
+        -XX:InitialRAMPercentage=20
+        -XX:MaxRAMPercentage=65
+        -XX:+ExitOnOutOfMemoryError
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9091:9091"
+    cpuset: ${BENCHMARK_BACKEND_CPUSET}
+    mem_limit: ${BENCHMARK_BACKEND_MEMORY}
+    memswap_limit: ${BENCHMARK_BACKEND_MEMORY}
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9091/actuator/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+    restart: "no"
+
+  mysql:
+    cpuset: ${BENCHMARK_DATA_CPUSET}
+    mem_limit: ${BENCHMARK_MYSQL_MEMORY}
+    memswap_limit: ${BENCHMARK_MYSQL_MEMORY}
+
+  redis:
+    cpuset: ${BENCHMARK_DATA_CPUSET}
+    mem_limit: ${BENCHMARK_REDIS_MEMORY}
+    memswap_limit: ${BENCHMARK_REDIS_MEMORY}
+
+  mysql-monitoring-init:
+    cpuset: ${BENCHMARK_DATA_CPUSET}
+    mem_limit: 128m
+    memswap_limit: 128m
+
+  mysql-exporter:
+    cpuset: ${BENCHMARK_DATA_CPUSET}
+    mem_limit: ${BENCHMARK_MYSQL_EXPORTER_MEMORY}
+    memswap_limit: ${BENCHMARK_MYSQL_EXPORTER_MEMORY}
+
+  redis-exporter:
+    cpuset: ${BENCHMARK_DATA_CPUSET}
+    mem_limit: ${BENCHMARK_REDIS_EXPORTER_MEMORY}
+    memswap_limit: ${BENCHMARK_REDIS_EXPORTER_MEMORY}
+
+  cadvisor:
+    cpuset: ${BENCHMARK_DATA_CPUSET}
+    mem_limit: ${BENCHMARK_CADVISOR_MEMORY}
+    memswap_limit: ${BENCHMARK_CADVISOR_MEMORY}
+
+  prometheus:
+    cpuset: ${BENCHMARK_DATA_CPUSET}
+    mem_limit: ${BENCHMARK_PROMETHEUS_MEMORY}
+    memswap_limit: ${BENCHMARK_PROMETHEUS_MEMORY}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=5GB
+      - --web.enable-lifecycle

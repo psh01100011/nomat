@@ -2,7 +2,9 @@ package com.dogdog.nomat.domain.map.dto;
 
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJob;
+import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
+import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import java.time.LocalDateTime;
 
 public record AdminAudioProcessingJobResponse(
@@ -28,7 +30,7 @@ public record AdminAudioProcessingJobResponse(
                 media.getQuestion().getMap().getId(),
                 media.getQuestion().getId(),
                 media.getId(),
-                job.getStatus().name(),
+                displayStatus(job),
                 job.getAttemptCount(),
                 failureCode == null ? null : failureCode.getFailureType().name(),
                 failureCode == null ? null : failureCode.name(),
@@ -37,5 +39,13 @@ public record AdminAudioProcessingJobResponse(
                 job.getStartedAt(),
                 job.getCompletedAt()
         );
+    }
+
+    private static String displayStatus(AudioProcessingJob job) {
+        if (job.getStatus() == AudioProcessingJobStatus.QUEUED
+                && job.getQuestionMedia().getProcessingStatus() == QuestionMediaProcessingStatus.RETRYING) {
+            return AdminAudioProcessingJobStatus.RETRYING.name();
+        }
+        return job.getStatus().name();
     }
 }

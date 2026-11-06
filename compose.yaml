@@ -35,6 +35,99 @@ services:
       timeout: 3s
       retries: 20
 
+  mysql-monitoring-init:
+    image: mysql:8.4
+    profiles: ["monitoring"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mysql -hmysql -uroot -proot -e "CREATE USER IF NOT EXISTS 'exporter'@'%' IDENTIFIED BY 'exporter-local'; GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'%'; FLUSH PRIVILEGES;"
+    restart: "no"
+
+  mysql-exporter:
+    image: prom/mysqld-exporter:v0.20.0
+    profiles: ["monitoring"]
+    depends_on:
+      mysql-monitoring-init:
+        condition: service_completed_successfully
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: exporter-local
+    command:
+      - --mysqld.address=mysql:3306
+      - --mysqld.username=exporter
+    restart: "no"
+
+  redis-exporter:
+    image: ghcr.io/oliver006/redis_exporter:v1.93.0-alpine
+    profiles: ["monitoring"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    restart: "no"
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:0.60.6
+    profiles: ["monitoring"]
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    restart: "no"
+
+  prometheus:
+    image: prom/prometheus:v3.5.5
+    profiles: ["monitoring"]
+    depends_on:
+      - mysql-exporter
+      - redis-exporter
+      - cadvisor
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - nomat-prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=1GB
+      - --web.enable-lifecycle
+    restart: "no"
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    profiles: ["monitoring"]
+    depends_on:
+      - prometheus
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-nomat-local}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - nomat-grafana-data:/var/lib/grafana
+    restart: "no"
+
 volumes:
   nomat-mysql-data:
   nomat-redis-data:
+  nomat-prometheus-data:
+  nomat-grafana-data:

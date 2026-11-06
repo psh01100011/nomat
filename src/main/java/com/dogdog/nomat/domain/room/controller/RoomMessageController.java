@@ -5,10 +5,13 @@ import com.dogdog.nomat.domain.room.dto.RoomChatMessageRequest;
 import com.dogdog.nomat.domain.room.dto.RoomSkipVoteRequest;
 import com.dogdog.nomat.domain.room.service.RoomGameProgressService;
 import com.dogdog.nomat.domain.room.service.RoomMessageService;
+import com.dogdog.nomat.domain.room.service.RoomService;
+import com.dogdog.nomat.domain.room.service.RoomWebSocketSessionRegistry;
 import com.dogdog.nomat.global.config.StompUserPrincipal;
 import jakarta.validation.Valid;
 import java.security.Principal;
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.stereotype.Controller;
@@ -19,6 +22,19 @@ public class RoomMessageController {
 
     private final RoomMessageService roomMessageService;
     private final RoomGameProgressService roomGameProgressService;
+    private final RoomService roomService;
+    private final RoomWebSocketSessionRegistry sessionRegistry;
+
+    @MessageMapping("/rooms/{roomId}/heartbeat")
+    public void heartbeat(
+            Principal principal,
+            @DestinationVariable Long roomId,
+            @Header("simpSessionId") String sessionId
+    ) {
+        Long userId = userId(principal);
+        roomService.heartbeat(userId, roomId);
+        sessionRegistry.refresh(sessionId, userId);
+    }
 
     @MessageMapping("/rooms/{roomId}/messages")
     public void sendMessage(

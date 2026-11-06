@@ -47,7 +47,7 @@ class AdminAudioProcessingServiceTest {
     @BeforeEach
     void setUp() {
         processingProperties = new AudioProcessingProperties();
-        processingProperties.setProcessingTimeoutMinutes(10);
+        processingProperties.setHeartbeatTimeoutSeconds(90);
         processingProperties.setMaxRetryAttempts(3);
         service = new AdminAudioProcessingService(
                 audioProcessingJobRepository,
@@ -87,7 +87,7 @@ class AdminAudioProcessingServiceTest {
     @Test
     void recoversOnlyProcessingJobPastStaleThreshold() {
         AudioProcessingJob job = processingJob();
-        ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
+        ReflectionTestUtils.setField(job, "heartbeatAt", LocalDateTime.now().minusMinutes(20));
         given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
 
         AdminAudioProcessingJobResponse response = service.recoverStaleJob(1L);
@@ -100,7 +100,7 @@ class AdminAudioProcessingServiceTest {
     @Test
     void rejectsProcessingJobBeforeStaleThreshold() {
         AudioProcessingJob job = processingJob();
-        ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(5));
+        ReflectionTestUtils.setField(job, "heartbeatAt", LocalDateTime.now().minusSeconds(30));
         given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
 
         assertThatThrownBy(() -> service.recoverStaleJob(1L))

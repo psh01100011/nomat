@@ -30,8 +30,9 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.boot:spring-boot-starter-websocket'
 	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
-	implementation 'org.sejda.imageio:webp-imageio:0.1.6'
+	runtimeOnly 'com.github.usefulness:webp-imageio:0.11.0'
 	implementation 'software.amazon.awssdk:s3:2.47.5'
+	implementation 'software.amazon.awssdk:sesv2:2.47.5'
 	implementation 'org.flywaydb:flyway-mysql'
 	compileOnly 'org.projectlombok:lombok'
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
@@ -53,5 +54,26 @@ dependencies {
 }
 
 tasks.named('test') {
-	useJUnitPlatform()
+	useJUnitPlatform {
+		if (!project.hasProperty('includeAudioLoadTest')) {
+			excludeTags 'audio-load'
+		}
+		if (!project.hasProperty('includeAudioRealBenchmark')) {
+			excludeTags 'audio-real-benchmark'
+		}
+		if (!project.hasProperty('includeMultiServerProcessTest')) {
+			excludeTags 'multi-server-process'
+		}
+	}
+	if (project.hasProperty('includeAudioLoadTest')) {
+		systemProperty 'audio.load-test.classpath', sourceSets.test.runtimeClasspath.asPath
+	}
+	if (project.hasProperty('includeAudioRealBenchmark')) {
+		testLogging {
+			showStandardStreams = true
+		}
+	}
+	if (project.hasProperty('includeMultiServerProcessTest')) {
+		systemProperty 'multi-server-test.classpath', sourceSets.test.runtimeClasspath.asPath
+	}
 }

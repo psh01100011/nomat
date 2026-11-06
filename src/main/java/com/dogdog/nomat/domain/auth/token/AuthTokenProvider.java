@@ -22,6 +22,7 @@ public class AuthTokenProvider {
     private static final String PASSWORD_VERIFICATION_TOKEN_TYPE = "password_verification";
     private static final String MEMBER_USER_TYPE = "MEMBER";
     private static final String GUEST_USER_TYPE = "GUEST";
+    private static final long MAX_JAVASCRIPT_SAFE_INTEGER = (1L << 53) - 1;
 
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -66,7 +67,7 @@ public class AuthTokenProvider {
     }
 
     public Long generateGuestUserId() {
-        return -Math.abs(secureRandom.nextLong(1, Long.MAX_VALUE));
+        return -secureRandom.nextLong(1, MAX_JAVASCRIPT_SAFE_INTEGER + 1);
     }
 
     public String issueAccessToken(User user) {

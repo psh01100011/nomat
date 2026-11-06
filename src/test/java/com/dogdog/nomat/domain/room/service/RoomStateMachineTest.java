@@ -117,6 +117,24 @@ class RoomStateMachineTest {
     }
 
     @Test
+    void kickAllowsHostToRemoveMemberFromPlayingRoom() {
+        RoomState room = stateMachine.transition(
+                waitingRoom(),
+                RoomCommand.join(member(2L, "peter", now().plusSeconds(1)), now().plusSeconds(1))
+        ).room().started("seed-1", now().plusSeconds(2));
+
+        RoomTransitionResult result = stateMachine.transition(
+                room,
+                RoomCommand.kick(1L, 2L, now().plusSeconds(3))
+        );
+
+        assertThat(result.room().hasMember(2L)).isFalse();
+        assertThat(result.room().isKicked(2L)).isTrue();
+        assertThat(result.room().status()).isEqualTo(RoomStatus.PLAYING);
+        assertThat(result.events().getFirst().type()).isEqualTo(RoomDomainEventType.MEMBER_KICKED);
+    }
+
+    @Test
     void joinRejectsPlayingRoom() {
         RoomState room = stateMachine.transition(
                 waitingRoom(),

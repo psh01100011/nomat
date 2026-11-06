@@ -2,8 +2,8 @@ package com.dogdog.nomat.domain.map.controller;
 
 import com.dogdog.nomat.domain.map.dto.AdminAudioProcessingJobListResponse;
 import com.dogdog.nomat.domain.map.dto.AdminAudioProcessingJobResponse;
+import com.dogdog.nomat.domain.map.dto.AdminAudioProcessingJobStatus;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureType;
-import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
 import com.dogdog.nomat.domain.map.service.AdminAudioProcessingService;
 import com.dogdog.nomat.global.dto.ApiResponse;
 import java.time.LocalDateTime;
@@ -25,7 +25,7 @@ public class AdminAudioProcessingController {
 
     @GetMapping
     public ApiResponse<AdminAudioProcessingJobListResponse> getJobs(
-            @RequestParam(required = false) AudioProcessingJobStatus status,
+            @RequestParam(required = false) AdminAudioProcessingJobStatus status,
             @RequestParam(required = false) AudioProcessingFailureType failureType,
             @RequestParam(required = false) Long mapId,
             @RequestParam(required = false)

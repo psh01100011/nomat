@@ -1,5 +1,6 @@
 package com.dogdog.nomat.global.logging;
 
+import com.dogdog.nomat.global.http.ClientIpResolver;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,6 +26,12 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
 
     private static final Pattern SAFE_REQUEST_ID = Pattern.compile("^[A-Za-z0-9._-]{1,64}$");
 
+    private final ClientIpResolver clientIpResolver;
+
+    public RequestLoggingFilter(ClientIpResolver clientIpResolver) {
+        this.clientIpResolver = clientIpResolver;
+    }
+
     @Override
     protected void doFilterInternal(
             HttpServletRequest request,
@@ -47,7 +54,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return "/actuator/health".equals(request.getServletPath());
+        return request.getServletPath().startsWith("/actuator/");
     }
 
     private String resolveRequestId(String candidate) {
@@ -64,15 +71,16 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     ) {
         long durationMs = (System.nanoTime() - startedAt) / 1_000_000;
         int status = response.getStatus();
-        String message = "event=http_request_completed method={} path={} status={} durationMs={}";
+        String message = "event=http_request_completed method={} path={} status={} durationMs={} clientIp={}";
         String path = loggablePath(request);
+        String clientIp = clientIpResolver.resolve(request);
 
         if (status >= 500) {
-            log.warn(message, request.getMethod(), path, status, durationMs);
+            log.warn(message, request.getMethod(), path, status, durationMs, clientIp);
         } else if (status >= 400) {
-            log.debug(message, request.getMethod(), path, status, durationMs);
+            log.debug(message, request.getMethod(), path, status, durationMs, clientIp);
         } else {
-            log.info(message, request.getMethod(), path, status, durationMs);
+            log.info(message, request.getMethod(), path, status, durationMs, clientIp);
         }
     }
 

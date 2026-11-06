@@ -50,7 +50,8 @@ class RoomMessageServiceTest {
 
     @Test
     void sendMessagePublishesGuestChatMessageInWaitingRoom() {
-        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(guestRoom()));
+        RoomState room = guestRoom();
+        given(roomRedisRepository.findById(25L)).willReturn(Optional.of(room));
 
         roomMessageService.sendMessage(-1L, 25L, new RoomChatMessageRequest(" 안녕 ", " message-1 "));
 
@@ -63,6 +64,7 @@ class RoomMessageServiceTest {
                         && events.getFirst().content().equals("안녕")
                         && events.getFirst().clientMessageId().equals("message-1")
         ));
+        verify(roomRedisRepository).refreshRoomActivity(room);
         verify(roomRedisRepository, never()).saveGameState(org.mockito.ArgumentMatchers.any(RoomGameState.class));
     }
 
@@ -237,6 +239,7 @@ class RoomMessageServiceTest {
                 null,
                 Set.of(),
                 Map.of(userId, 0),
+                1,
                 Map.of(),
                 now(),
                 null
@@ -258,6 +261,7 @@ class RoomMessageServiceTest {
                 null,
                 Set.of(),
                 Map.of(3L, 0),
+                1,
                 Map.of(),
                 now(),
                 null
@@ -279,6 +283,7 @@ class RoomMessageServiceTest {
                 "정답",
                 Set.of(),
                 Map.of(3L, 100),
+                1,
                 Map.of(),
                 now(),
                 null

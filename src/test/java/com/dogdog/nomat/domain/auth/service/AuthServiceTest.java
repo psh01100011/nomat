@@ -15,6 +15,7 @@ import com.dogdog.nomat.domain.auth.dto.ResetPasswordRequest;
 import com.dogdog.nomat.domain.auth.dto.SignupRequest;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUser;
 import com.dogdog.nomat.domain.auth.model.AuthenticatedUserType;
+import com.dogdog.nomat.domain.auth.model.IssuedAuthSession;
 import com.dogdog.nomat.domain.auth.token.AuthTokenProvider;
 import com.dogdog.nomat.domain.auth.token.TokenPair;
 import com.dogdog.nomat.domain.emailverification.service.EmailVerificationService;
@@ -181,11 +182,12 @@ class AuthServiceTest {
         given(passwordEncoder.matches("password123!", "encoded-password")).willReturn(true);
         given(authTokenProvider.issue(user)).willReturn(new TokenPair("access-token", "refresh-token"));
 
-        LoginResponse response = authService.login(request);
+        IssuedAuthSession<LoginResponse> session = authService.login(request);
+        LoginResponse response = session.response();
 
         assertThat(response.userId()).isEqualTo(1L);
         assertThat(response.accessToken()).isEqualTo("access-token");
-        assertThat(response.refreshToken()).isEqualTo("refresh-token");
+        assertThat(session.refreshToken()).isEqualTo("refresh-token");
     }
 
     @Test
@@ -221,7 +223,7 @@ class AuthServiceTest {
         given(userRepository.findById(1L)).willReturn(Optional.of(user));
         given(authTokenProvider.issueAccessToken(user)).willReturn("new-access-token");
 
-        RefreshResponse response = authService.refresh("Bearer refresh-token");
+        RefreshResponse response = authService.refreshWithToken("refresh-token");
 
         assertThat(response.accessToken()).isEqualTo("new-access-token");
     }
@@ -232,7 +234,7 @@ class AuthServiceTest {
         given(authTokenProvider.decodeRefreshToken("guest-refresh-token")).willReturn(refreshJwt);
         given(authTokenProvider.issueGuestAccessToken(-1L, "손님")).willReturn("new-guest-access-token");
 
-        RefreshResponse response = authService.refresh("Bearer guest-refresh-token");
+        RefreshResponse response = authService.refreshWithToken("guest-refresh-token");
 
         assertThat(response.accessToken()).isEqualTo("new-guest-access-token");
         verify(userRepository, never()).findById(any());
@@ -244,18 +246,19 @@ class AuthServiceTest {
         given(authTokenProvider.issueGuest(-1L, "새손님"))
                 .willReturn(new TokenPair("new-access-token", "new-refresh-token"));
 
-        var response = authService.changeGuestNickname(guest, new GuestLoginRequest("새손님"));
+        var session = authService.changeGuestNickname(guest, new GuestLoginRequest("새손님"));
+        var response = session.response();
 
         assertThat(response.userId()).isEqualTo(-1L);
         assertThat(response.userType()).isEqualTo("GUEST");
         assertThat(response.nickname()).isEqualTo("새손님");
         assertThat(response.accessToken()).isEqualTo("new-access-token");
-        assertThat(response.refreshToken()).isEqualTo("new-refresh-token");
+        assertThat(session.refreshToken()).isEqualTo("new-refresh-token");
     }
 
     @Test
-    void refreshRejectsMissingBearerToken() {
-        assertThatThrownBy(() -> authService.refresh(null))
+    void refreshRejectsMissingToken() {
+        assertThatThrownBy(() -> authService.refreshWithToken(null))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_token");
     }
@@ -265,7 +268,7 @@ class AuthServiceTest {
         given(authTokenProvider.decodeRefreshToken("invalid-refresh-token"))
                 .willThrow(new BadJwtException("invalid"));
 
-        assertThatThrownBy(() -> authService.refresh("Bearer invalid-refresh-token"))
+        assertThatThrownBy(() -> authService.refreshWithToken("invalid-refresh-token"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_token");
     }
@@ -276,7 +279,7 @@ class AuthServiceTest {
         given(authTokenProvider.decodeRefreshToken("refresh-token")).willReturn(refreshJwt);
         given(userRepository.findById(1L)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> authService.refresh("Bearer refresh-token"))
+        assertThatThrownBy(() -> authService.refreshWithToken("refresh-token"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invalid_token");
     }

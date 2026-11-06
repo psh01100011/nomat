@@ -14,15 +14,21 @@ import org.springframework.stereotype.Component;
 public class AudioProcessingScheduler {
 
     private final AudioProcessingService audioProcessingService;
+    private final AudioProcessingWorkerDispatcher workerDispatcher;
 
     @Scheduled(
             initialDelayString = "${app.audio-processing.initial-delay-ms}",
             fixedDelayString = "${app.audio-processing.fixed-delay-ms}"
     )
     public void processAvailableAudioJobs() {
-        int processedCount = audioProcessingService.processAvailableJobs();
-        if (processedCount > 0) {
-            log.info("event=audio_job_batch_processed count={}", processedCount);
+        int recoveredCount = audioProcessingService.recoverStaleJobs();
+        int dispatchedCount = workerDispatcher.dispatchAvailableJobs();
+        if (recoveredCount > 0 || dispatchedCount > 0) {
+            log.info(
+                    "event=audio_job_dispatch_cycle recoveredCount={} dispatchedCount={}",
+                    recoveredCount,
+                    dispatchedCount
+            );
         }
     }
 }

@@ -91,7 +91,9 @@ public class RoomStateMachine {
     }
 
     private RoomTransitionResult kick(RoomState room, RoomCommand command) {
-        requireStatus(room, RoomStatus.WAITING, "cannot_kick_room_member");
+        if (room.status() != RoomStatus.WAITING && room.status() != RoomStatus.PLAYING) {
+            throw new BusinessException(HttpStatus.CONFLICT, "cannot_kick_room_member");
+        }
         requireHost(room, command.userId());
 
         Long targetUserId = command.targetUserId();

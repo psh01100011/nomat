@@ -1,0 +1,12 @@
+.git
+.gradle
+.idea
+build
+benchmark-results
+docs
+monitoring
+.env
+.env.*
+!.env.example
+*.log
+report.html

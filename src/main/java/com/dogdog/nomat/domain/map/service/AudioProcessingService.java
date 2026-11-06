@@ -5,13 +5,13 @@ import com.dogdog.nomat.domain.map.config.AudioProcessingProperties;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureType;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
+import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
 import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.Comparator;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,20 +35,46 @@ public class AudioProcessingService {
     private final AudioProcessingProperties processingProperties;
     private final AudioProcessingMetrics processingMetrics;
 
-    public int processAvailableJobs() {
-        audioProcessingJobService.recoverStaleProcessingJobs(
+    public int recoverStaleJobs() {
+        return audioProcessingJobService.recoverStaleProcessingJobs(
                 processingProperties.getBatchSize(),
-                processingProperties.getProcessingTimeoutMinutes(),
+                processingProperties.getHeartbeatTimeoutSeconds(),
                 processingProperties.getMaxRetryAttempts()
         );
-        List<Long> jobIds = audioProcessingJobService.getProcessableJobIds(processingProperties.getBatchSize());
-        int processedCount = 0;
-        for (Long jobId : jobIds) {
-            processJob(jobId);
-            processedCount++;
+    }
+
+    public void handleUnexpectedWorkerFailure(AudioProcessingTask task, RuntimeException exception) {
+        AudioProcessingJobStatus status;
+        try {
+            status = audioProcessingJobService.handleJobFailure(
+                    task.jobId(),
+                    task.attemptCount(),
+                    AudioProcessingFailureCode.INTERNAL_ERROR,
+                    exception.getMessage(),
+                    processingProperties.getMaxRetryAttempts()
+            );
+        } catch (RuntimeException recoveryException) {
+            log.error(
+                    "event=audio_job_unexpected_failure_recovery_failed jobId={} attempt={}",
+                    task.jobId(),
+                    task.attemptCount(),
+                    recoveryException
+            );
+            return;
         }
 
-        return processedCount;
+        if (status != null) {
+            try {
+                processingMetrics.recordAttempt(status, AudioProcessingFailureCode.INTERNAL_ERROR, 0);
+            } catch (RuntimeException metricsException) {
+                log.warn(
+                        "event=audio_job_unexpected_failure_metric_failed jobId={} attempt={}",
+                        task.jobId(),
+                        task.attemptCount(),
+                        metricsException
+                );
+            }
+        }
     }
 
     public void processJob(Long jobId) {
@@ -56,6 +82,10 @@ public class AudioProcessingService {
         if (task == null) {
             return;
         }
+        processClaimedJob(task);
+    }
+
+    public void processClaimedJob(AudioProcessingTask task) {
         processingMetrics.recordClaim(task.queueWaitMs());
         long processingStartedAt = System.nanoTime();
 
@@ -78,14 +108,23 @@ public class AudioProcessingService {
             uploadToS3(outputFile, storageKey);
 
             try {
-                audioProcessingJobService.completeJob(
+                boolean completed = audioProcessingJobService.completeJob(
                         task.jobId(),
+                        task.attemptCount(),
                         outputFile.getFileName().toString(),
                         storageKey,
                         url,
                         Files.size(outputFile),
                         task.durationMs()
                 );
+                if (!completed) {
+                    deleteFromS3Quietly(storageKey);
+                    log.warn(
+                            "event=audio_job_obsolete_result_discarded jobId={} attempt={} storageKey={}",
+                            task.jobId(), task.attemptCount(), storageKey
+                    );
+                    return;
+                }
                 processingMetrics.recordAttempt(
                         AudioProcessingJobStatus.SUCCEEDED,
                         null,
@@ -98,19 +137,27 @@ public class AudioProcessingService {
         } catch (AudioProcessingException exception) {
             AudioProcessingJobStatus status = audioProcessingJobService.handleJobFailure(
                     task.jobId(),
+                    task.attemptCount(),
                     exception.getFailureCode(),
                     exception.getMessage(),
                     processingProperties.getMaxRetryAttempts()
             );
+            if (status == null) {
+                return;
+            }
             processingMetrics.recordAttempt(status, exception.getFailureCode(), elapsedMillis(processingStartedAt));
             logProcessingFailure(task, exception.getFailureCode(), status, exception, processingStartedAt);
         } catch (Exception exception) {
             AudioProcessingJobStatus status = audioProcessingJobService.handleJobFailure(
                     task.jobId(),
+                    task.attemptCount(),
                     AudioProcessingFailureCode.UNKNOWN,
                     exception.getMessage(),
                     processingProperties.getMaxRetryAttempts()
             );
+            if (status == null) {
+                return;
+            }
             processingMetrics.recordAttempt(
                     status,
                     AudioProcessingFailureCode.UNKNOWN,
@@ -130,26 +177,29 @@ public class AudioProcessingService {
             long processingStartedAt
     ) {
         long durationMs = elapsedMillis(processingStartedAt);
+        String statusLabel = status == AudioProcessingJobStatus.QUEUED
+                ? QuestionMediaProcessingStatus.RETRYING.name()
+                : String.valueOf(status);
         String message = "event=audio_job_attempt_failed jobId={} mapId={} questionId={} mediaId={} attempt={} queueWaitMs={} durationMs={} status={} failureCode={} errorType={}";
-        if (status == AudioProcessingJobStatus.RETRYING) {
+        if (status == AudioProcessingJobStatus.QUEUED) {
             log.warn(
                     message,
                     task.jobId(), task.mapId(), task.questionId(), task.questionMediaId(),
-                    task.attemptCount(), task.queueWaitMs(), durationMs, status, failureCode,
+                    task.attemptCount(), task.queueWaitMs(), durationMs, statusLabel, failureCode,
                     exception.getClass().getSimpleName()
             );
         } else if (failureCode.getFailureType() == AudioProcessingFailureType.SOURCE) {
             log.info(
                     message,
                     task.jobId(), task.mapId(), task.questionId(), task.questionMediaId(),
-                    task.attemptCount(), task.queueWaitMs(), durationMs, status, failureCode,
+                    task.attemptCount(), task.queueWaitMs(), durationMs, statusLabel, failureCode,
                     exception.getClass().getSimpleName()
             );
         } else {
             log.error(
                     message,
                     task.jobId(), task.mapId(), task.questionId(), task.questionMediaId(),
-                    task.attemptCount(), task.queueWaitMs(), durationMs, status, failureCode,
+                    task.attemptCount(), task.queueWaitMs(), durationMs, statusLabel, failureCode,
                     exception.getClass().getSimpleName()
             );
         }

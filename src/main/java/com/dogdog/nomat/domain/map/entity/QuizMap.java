@@ -12,7 +12,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -21,9 +20,11 @@ import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.DynamicUpdate;
 
 @Getter
 @Entity
+@DynamicUpdate
 @Table(
         name = "maps",
         indexes = {
@@ -62,8 +63,7 @@ public class QuizMap {
     @Column(name = "title", length = 100)
     private String title;
 
-    @Lob
-    @Column(name = "description")
+    @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
     @Column(name = "status", length = 20, nullable = false)
@@ -238,6 +238,30 @@ public class QuizMap {
         this.visibility = visibility;
         this.questionCount = questionCount;
         changeStatus(status);
+    }
+
+    public void updateDraft(
+            Category category,
+            Asset thumbnailAsset,
+            QuestionType questionType,
+            String title,
+            String description,
+            MapVisibility visibility,
+            int questionCount
+    ) {
+        if (status != MapStatus.DRAFT) {
+            throw new IllegalStateException("Only draft maps can be updated as drafts.");
+        }
+        this.category = category;
+        this.thumbnailAsset = thumbnailAsset;
+        this.questionType = questionType;
+        this.title = title;
+        this.description = description;
+        this.visibility = visibility;
+        this.questionCount = questionCount;
+    }
+
+    public void claimVersion() {
         this.version++;
     }
 
@@ -248,40 +272,6 @@ public class QuizMap {
 
         this.status = MapStatus.DELETED;
         this.deletedAt = LocalDateTime.now();
-    }
-
-    public void increaseLikeCount() {
-        this.likeCount++;
-    }
-
-    public void decreaseLikeCount() {
-        if (likeCount > 0) {
-            this.likeCount--;
-        }
-    }
-
-    public void increaseFavoriteCount() {
-        this.favoriteCount++;
-    }
-
-    public void decreaseFavoriteCount() {
-        if (favoriteCount > 0) {
-            this.favoriteCount--;
-        }
-    }
-
-    public void increasePlayCount() {
-        this.playCount++;
-    }
-
-    public void increaseCommentCount() {
-        this.commentCount++;
-    }
-
-    public void decreaseCommentCount() {
-        if (commentCount > 0) {
-            this.commentCount--;
-        }
     }
 
     private void changeStatus(MapStatus status) {

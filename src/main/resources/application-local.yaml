@@ -6,16 +6,26 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     open-in-view: false
     properties:
       hibernate:
         format_sql: true
   flyway:
-    enabled: false
+    enabled: true
+    baseline-on-migrate: false
+    validate-migration-naming: true
   data:
     redis:
       url: redis://localhost:6379
+
+management:
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:9091}
+    address: ${MANAGEMENT_SERVER_ADDRESS:127.0.0.1}
+  metrics:
+    tags:
+      environment: local
 
 logging:
   level:
@@ -31,4 +41,5 @@ app:
       bucket: ${AWS_S3_BUCKET}
       public-base-url: ${AWS_S3_PUBLIC_BASE_URL}
   audio-processing:
-    enabled: false
+    enabled: true
+    worker-concurrency: 4

@@ -2,7 +2,9 @@ package com.dogdog.nomat.domain.map.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.dogdog.nomat.domain.asset.entity.Asset;
@@ -23,6 +25,7 @@ import com.dogdog.nomat.domain.map.entity.QuestionType;
 import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
+import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import com.dogdog.nomat.domain.user.entity.User;
 import java.time.LocalDateTime;
@@ -44,6 +47,9 @@ class AudioProcessingJobServiceTest {
 
     @Mock
     private QuestionMediaRepository questionMediaRepository;
+
+    @Mock
+    private QuizMapRepository quizMapRepository;
 
     @Mock
     private AssetRepository assetRepository;
@@ -69,6 +75,7 @@ class AudioProcessingJobServiceTest {
         assertThat(task.durationMs()).isEqualTo(42000);
         assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.PROCESSING);
         assertThat(job.getAttemptCount()).isEqualTo(1);
+        assertThat(job.getHeartbeatAt()).isNotNull();
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.PROCESSING);
     }
 
@@ -76,13 +83,16 @@ class AudioProcessingJobServiceTest {
     void completeJobCreatesAttachedAudioAssetAndMarksMediaReady() {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
-        given(audioProcessingJobRepository.findById(1L)).willReturn(Optional.of(job));
+        given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
+        given(quizMapRepository.findByIdForUpdate(100L))
+                .willReturn(Optional.of(job.getQuestionMedia().getQuestion().getMap()));
         given(assetRepository.save(any(Asset.class))).willAnswer(invocation -> invocation.getArgument(0));
         given(questionMediaRepository.existsByQuestionMapIdAndProcessingStatusNot(100L, QuestionMediaProcessingStatus.READY))
                 .willReturn(false);
 
         audioProcessingJobService.completeJob(
                 1L,
+                1,
                 "question-media-10.mp3",
                 "uploads/audios/2026/08/audio.mp3",
                 "https://cdn.nomat.com/uploads/audios/2026/08/audio.mp3",
@@ -99,6 +109,7 @@ class AudioProcessingJobServiceTest {
         assertThat(audioAsset.getDurationMs()).isEqualTo(42000);
 
         assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.SUCCEEDED);
+        assertThat(job.getHeartbeatAt()).isNull();
         assertThat(job.getQuestionMedia().getAsset()).isEqualTo(audioAsset);
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.READY);
         assertThat(job.getQuestionMedia().getFailureMessage()).isNull();
@@ -110,13 +121,16 @@ class AudioProcessingJobServiceTest {
     void completeJobKeepsMapProcessingWhenAnotherMediaIsNotReady() {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
-        given(audioProcessingJobRepository.findById(1L)).willReturn(Optional.of(job));
+        given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
+        given(quizMapRepository.findByIdForUpdate(100L))
+                .willReturn(Optional.of(job.getQuestionMedia().getQuestion().getMap()));
         given(assetRepository.save(any(Asset.class))).willAnswer(invocation -> invocation.getArgument(0));
         given(questionMediaRepository.existsByQuestionMapIdAndProcessingStatusNot(100L, QuestionMediaProcessingStatus.READY))
                 .willReturn(true);
 
         audioProcessingJobService.completeJob(
                 1L,
+                1,
                 "question-media-10.mp3",
                 "uploads/audios/2026/08/audio.mp3",
                 "https://cdn.nomat.com/uploads/audios/2026/08/audio.mp3",
@@ -134,16 +148,18 @@ class AudioProcessingJobServiceTest {
     void handleJobFailureSchedulesRetryWhenAttemptsRemain() {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
-        given(audioProcessingJobRepository.findById(1L)).willReturn(Optional.of(job));
+        given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
 
         audioProcessingJobService.handleJobFailure(
                 1L,
+                1,
                 AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR,
                 "extract failed",
                 3
         );
 
-        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.RETRYING);
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
+        assertThat(job.getHeartbeatAt()).isNull();
         assertThat(job.getFailureCode()).isEqualTo(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR);
         assertThat(job.getFailureMessage()).isEqualTo("extract failed");
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.RETRYING);
@@ -158,10 +174,11 @@ class AudioProcessingJobServiceTest {
         job.start();
         job.scheduleRetry(AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR, "first failure");
         job.start();
-        given(audioProcessingJobRepository.findById(1L)).willReturn(Optional.of(job));
+        given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
 
         audioProcessingJobService.handleJobFailure(
                 1L,
+                2,
                 AudioProcessingFailureCode.DOWNLOAD_TEMPORARY_ERROR,
                 "extract failed",
                 2
@@ -184,10 +201,11 @@ class AudioProcessingJobServiceTest {
     void handleJobFailureImmediatelyFailsForSourceProblem() {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
-        given(audioProcessingJobRepository.findById(1L)).willReturn(Optional.of(job));
+        given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
 
         audioProcessingJobService.handleJobFailure(
                 1L,
+                1,
                 AudioProcessingFailureCode.SOURCE_UNAVAILABLE,
                 "Video unavailable",
                 3
@@ -210,16 +228,17 @@ class AudioProcessingJobServiceTest {
     void unknownFailureRetriesAutomaticallyThenAllowsManualRetry() {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
-        given(audioProcessingJobRepository.findById(1L)).willReturn(Optional.of(job));
+        given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
 
         audioProcessingJobService.handleJobFailure(
                 1L,
+                1,
                 AudioProcessingFailureCode.UNKNOWN,
                 "unexpected exception detail",
                 2
         );
 
-        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.RETRYING);
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
         assertThat(job.getFailureCode()).isEqualTo(AudioProcessingFailureCode.UNKNOWN);
         assertThat(job.canRetryManually()).isFalse();
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.RETRYING);
@@ -227,6 +246,7 @@ class AudioProcessingJobServiceTest {
         job.start();
         audioProcessingJobService.handleJobFailure(
                 1L,
+                2,
                 AudioProcessingFailureCode.UNKNOWN,
                 "unexpected exception detail",
                 2
@@ -244,20 +264,48 @@ class AudioProcessingJobServiceTest {
     }
 
     @Test
+    void ignoresCompletionAndFailureFromAnAttemptAlreadyRecoveredAsStale() {
+        AudioProcessingJob job = audioProcessingJob(1L);
+        job.start();
+        job.scheduleRetry(AudioProcessingFailureCode.PROCESSING_TIMEOUT, "stale");
+        given(audioProcessingJobRepository.findByIdForUpdate(1L)).willReturn(Optional.of(job));
+
+        boolean completed = audioProcessingJobService.completeJob(
+                1L,
+                1,
+                "question-media-10.mp3",
+                "uploads/audios/obsolete.mp3",
+                "https://cdn.nomat.com/uploads/audios/obsolete.mp3",
+                1234L,
+                42000
+        );
+        AudioProcessingJobStatus failureStatus = audioProcessingJobService.handleJobFailure(
+                1L,
+                1,
+                AudioProcessingFailureCode.UNKNOWN,
+                "late failure",
+                3
+        );
+
+        assertThat(completed).isFalse();
+        assertThat(failureStatus).isNull();
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
+        assertThat(job.getFailureCode()).isEqualTo(AudioProcessingFailureCode.PROCESSING_TIMEOUT);
+        verify(assetRepository, never()).save(any(Asset.class));
+    }
+
+    @Test
     void recoverStaleProcessingJobsRetriesJobsAndMedia() {
         AudioProcessingJob job = audioProcessingJob(1L);
         job.start();
         ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
-        given(audioProcessingJobRepository.findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
-                any(),
-                any(),
-                any()
-        )).willReturn(List.of(job));
+        given(audioProcessingJobRepository.findStaleForUpdateSkipLocked(any(), anyInt()))
+                .willReturn(List.of(job));
 
-        int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 10, 3);
+        int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 90, 3);
 
         assertThat(recoveredCount).isEqualTo(1);
-        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.RETRYING);
+        assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.QUEUED);
         assertThat(job.getAttemptCount()).isEqualTo(1);
         assertThat(job.getStartedAt()).isNull();
         assertThat(job.getQuestionMedia().getProcessingStatus()).isEqualTo(QuestionMediaProcessingStatus.RETRYING);
@@ -270,13 +318,10 @@ class AudioProcessingJobServiceTest {
         job.scheduleRetry(AudioProcessingFailureCode.PROCESSING_TIMEOUT, "first failure");
         job.start();
         ReflectionTestUtils.setField(job, "startedAt", LocalDateTime.now().minusMinutes(20));
-        given(audioProcessingJobRepository.findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
-                any(),
-                any(),
-                any()
-        )).willReturn(List.of(job));
+        given(audioProcessingJobRepository.findStaleForUpdateSkipLocked(any(), anyInt()))
+                .willReturn(List.of(job));
 
-        int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 10, 2);
+        int recoveredCount = audioProcessingJobService.recoverStaleProcessingJobs(5, 90, 2);
 
         assertThat(recoveredCount).isEqualTo(1);
         assertThat(job.getStatus()).isEqualTo(AudioProcessingJobStatus.FAILED);

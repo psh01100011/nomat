@@ -7,8 +7,10 @@ import com.dogdog.nomat.domain.map.entity.AudioProcessingJobStatus;
 import com.dogdog.nomat.domain.map.entity.AudioProcessingFailureCode;
 import com.dogdog.nomat.domain.map.entity.QuestionMedia;
 import com.dogdog.nomat.domain.map.entity.QuestionMediaProcessingStatus;
+import com.dogdog.nomat.domain.map.entity.QuizMap;
 import com.dogdog.nomat.domain.map.repository.AudioProcessingJobRepository;
 import com.dogdog.nomat.domain.map.repository.QuestionMediaRepository;
+import com.dogdog.nomat.domain.map.repository.QuizMapRepository;
 import com.dogdog.nomat.domain.map.monitoring.AudioProcessingMetrics;
 import com.dogdog.nomat.domain.user.entity.User;
 import java.time.LocalDateTime;
@@ -16,8 +18,8 @@ import java.time.Duration;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -27,30 +29,22 @@ public class AudioProcessingJobService {
 
     private final AudioProcessingJobRepository audioProcessingJobRepository;
     private final QuestionMediaRepository questionMediaRepository;
+    private final QuizMapRepository quizMapRepository;
     private final AssetRepository assetRepository;
     private final AudioProcessingMetrics processingMetrics;
 
-    @Transactional(readOnly = true)
-    public List<Long> getProcessableJobIds(int batchSize) {
-        return audioProcessingJobRepository
-                .findByStatusInOrderByCreatedAtAsc(
-                        List.of(AudioProcessingJobStatus.QUEUED, AudioProcessingJobStatus.RETRYING),
-                        PageRequest.of(0, batchSize)
-                )
-                .stream()
-                .map(AudioProcessingJob::getId)
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public List<AudioProcessingTask> claimProcessableJobs(int batchSize) {
+        return audioProcessingJobRepository.findProcessableForUpdateSkipLocked(batchSize).stream()
+                .map(this::startJob)
                 .toList();
     }
 
-    @Transactional
-    public int recoverStaleProcessingJobs(int batchSize, long processingTimeoutMinutes, int maxRetryAttempts) {
-        LocalDateTime threshold = LocalDateTime.now().minusMinutes(processingTimeoutMinutes);
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public int recoverStaleProcessingJobs(int batchSize, long heartbeatTimeoutSeconds, int maxRetryAttempts) {
+        LocalDateTime threshold = LocalDateTime.now().minusSeconds(heartbeatTimeoutSeconds);
         List<AudioProcessingJob> jobs = audioProcessingJobRepository
-                .findByStatusAndStartedAtBeforeOrderByStartedAtAsc(
-                        AudioProcessingJobStatus.PROCESSING,
-                        threshold,
-                        PageRequest.of(0, batchSize)
-                );
+                .findStaleForUpdateSkipLocked(threshold, batchSize);
         jobs.forEach(job -> {
             retryOrFail(job, maxRetryAttempts);
             processingMetrics.recordStaleRecovery(job.getStatus());
@@ -67,15 +61,30 @@ public class AudioProcessingJobService {
     }
 
     @Transactional
+    public int refreshProcessingHeartbeats(List<AudioProcessingTask> tasks) {
+        LocalDateTime heartbeatAt = LocalDateTime.now();
+        return tasks.stream()
+                .mapToInt(task -> audioProcessingJobRepository.refreshHeartbeat(
+                        task.jobId(),
+                        task.attemptCount(),
+                        heartbeatAt
+                ))
+                .sum();
+    }
+
+    @Transactional
     public AudioProcessingTask startJob(Long jobId) {
         AudioProcessingJob job = audioProcessingJobRepository.findByIdForUpdate(jobId)
-                .filter(foundJob -> foundJob.getStatus() == AudioProcessingJobStatus.QUEUED
-                        || foundJob.getStatus() == AudioProcessingJobStatus.RETRYING)
+                .filter(foundJob -> foundJob.getStatus() == AudioProcessingJobStatus.QUEUED)
                 .orElse(null);
         if (job == null) {
             return null;
         }
 
+        return startJob(job);
+    }
+
+    private AudioProcessingTask startJob(AudioProcessingJob job) {
         job.start();
         QuestionMedia media = job.getQuestionMedia();
         Long mapId = media.getQuestion().getMap().getId();
@@ -100,18 +109,25 @@ public class AudioProcessingJobService {
         );
     }
 
-    @Transactional
-    public void completeJob(
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public boolean completeJob(
             Long jobId,
+            int expectedAttemptCount,
             String originalFilename,
             String storageKey,
             String url,
             Long sizeBytes,
             Integer durationMs
     ) {
-        AudioProcessingJob job = audioProcessingJobRepository.findById(jobId).orElseThrow();
+        AudioProcessingJob job = audioProcessingJobRepository.findByIdForUpdate(jobId).orElse(null);
+        if (job == null || !job.isActiveAttempt(expectedAttemptCount)) {
+            logObsoleteAttempt(jobId, expectedAttemptCount, job);
+            return false;
+        }
         QuestionMedia media = job.getQuestionMedia();
-        User uploader = media.getQuestion().getMap().getCreator();
+        Long mapId = media.getQuestion().getMap().getId();
+        QuizMap map = quizMapRepository.findByIdForUpdate(mapId).orElseThrow();
+        User uploader = map.getCreator();
 
         Asset asset = Asset.createAudio(
                 uploader,
@@ -127,7 +143,7 @@ public class AudioProcessingJobService {
 
         media.completeProcessing(asset, durationMs);
         job.succeed();
-        publishMapIfAllMediaReady(media);
+        publishMapIfAllMediaReady(map);
         long duration = job.getStartedAt() == null
                 ? 0
                 : Duration.between(job.getStartedAt(), job.getCompletedAt()).toMillis();
@@ -144,22 +160,34 @@ public class AudioProcessingJobService {
                 duration,
                 sizeBytes
         );
+        return true;
     }
 
     @Transactional
     public AudioProcessingJobStatus handleJobFailure(
             Long jobId,
+            int expectedAttemptCount,
             AudioProcessingFailureCode failureCode,
             String failureMessage,
             int maxRetryAttempts
     ) {
-        AudioProcessingJob job = audioProcessingJobRepository.findById(jobId).orElse(null);
-        if (job == null) {
-            log.error("event=audio_job_failure_state_missing jobId={} failureCode={}", jobId, failureCode);
+        AudioProcessingJob job = audioProcessingJobRepository.findByIdForUpdate(jobId).orElse(null);
+        if (job == null || !job.isActiveAttempt(expectedAttemptCount)) {
+            logObsoleteAttempt(jobId, expectedAttemptCount, job);
             return null;
         }
         retryOrFail(job, failureCode, failureMessage, maxRetryAttempts);
         return job.getStatus();
+    }
+
+    private void logObsoleteAttempt(Long jobId, int expectedAttemptCount, AudioProcessingJob job) {
+        log.warn(
+                "event=audio_job_obsolete_attempt_ignored jobId={} expectedAttempt={} currentAttempt={} status={}",
+                jobId,
+                expectedAttemptCount,
+                job == null ? null : job.getAttemptCount(),
+                job == null ? null : job.getStatus()
+        );
     }
 
     private void retryOrFail(AudioProcessingJob job, int maxRetryAttempts) {
@@ -186,15 +214,15 @@ public class AudioProcessingJobService {
         job.getQuestionMedia().getQuestion().getMap().failProcessing();
     }
 
-    private void publishMapIfAllMediaReady(QuestionMedia media) {
-        Long mapId = media.getQuestion().getMap().getId();
+    private void publishMapIfAllMediaReady(QuizMap map) {
+        Long mapId = map.getId();
         boolean hasUnreadyMedia = questionMediaRepository.existsByQuestionMapIdAndProcessingStatusNot(
                 mapId,
                 QuestionMediaProcessingStatus.READY
         );
 
         if (!hasUnreadyMedia) {
-            media.getQuestion().getMap().publishIfProcessing();
+            map.publishIfProcessing();
         }
     }
 }

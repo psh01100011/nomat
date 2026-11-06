@@ -5,7 +5,6 @@ import com.dogdog.nomat.domain.game.entity.GameQuestionResult;
 import com.dogdog.nomat.domain.game.entity.GamePlayerResult;
 import com.dogdog.nomat.domain.game.entity.GameSession;
 import com.dogdog.nomat.domain.game.entity.GameSessionEndedReason;
-import com.dogdog.nomat.domain.game.entity.MapPlayHistory;
 import com.dogdog.nomat.domain.game.repository.GamePlayerResultRepository;
 import com.dogdog.nomat.domain.game.repository.GameQuestionResultRepository;
 import com.dogdog.nomat.domain.game.repository.GameSessionRepository;
@@ -36,9 +35,11 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
@@ -55,18 +56,13 @@ public class RoomGameResultService {
     private final MapPlayHistoryRepository mapPlayHistoryRepository;
     private final RoomStateMachine roomStateMachine;
     private final RoomEventPublisher roomEventPublisher;
+    private final TransactionTemplate transactionTemplate;
 
-    @Transactional
     public void endGame(Long roomId, Long endedByUserId, RoomEndedReason reason) {
         RoomState room = roomRedisRepository.findById(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
         RoomGameState gameState = roomRedisRepository.findGameState(roomId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "room_not_found"));
-        QuizMap map = quizMapRepository.findById(room.mapId())
-                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "map_not_found"));
-        User endedByUser = persistentMemberId(room, endedByUserId)
-                .flatMap(userRepository::findById)
-                .orElse(null);
 
         LocalDateTime endedAt = LocalDateTime.now();
         RoomTransitionResult result = roomStateMachine.transition(
@@ -74,7 +70,86 @@ public class RoomGameResultService {
                 RoomCommand.endGame(endedByUserId, endedAt)
         );
 
-        GameSession session = gameSessionRepository.save(toGameSession(
+        PersistedGameResult persistedResult = persistGameResultWithRetry(
+                room,
+                gameState,
+                endedByUserId,
+                reason,
+                endedAt
+        );
+
+        roomRedisRepository.deleteRoom(result.room());
+        if (persistedResult == null) {
+            return;
+        }
+        roomEventPublisher.publish(List.of(RoomDomainEvent.gameEnded(result.room(), reason, endedAt)));
+        log.info(
+                "event=room_game_ended roomId={} gameSessionId={} mapId={} reason={} memberCount={} completedQuestions={}",
+                roomId,
+                persistedResult.gameSessionId(),
+                persistedResult.mapId(),
+                reason,
+                room.memberCount(),
+                gameState.questionOutcomes().size()
+        );
+    }
+
+    private PersistedGameResult persistGameResultWithRetry(
+            RoomState room,
+            RoomGameState gameState,
+            Long endedByUserId,
+            RoomEndedReason reason,
+            LocalDateTime endedAt
+    ) {
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                return transactionTemplate.execute(status -> persistGameResult(
+                        room,
+                        gameState,
+                        endedByUserId,
+                        reason,
+                        endedAt
+                ));
+            } catch (DataIntegrityViolationException exception) {
+                if (gameSessionRepository.existsBySourceRoomId(room.roomId())) {
+                    log.info("event=room_game_result_duplicate roomId={} reason=unique_constraint", room.roomId());
+                    return null;
+                }
+                throw exception;
+            } catch (CannotAcquireLockException exception) {
+                if (attempt == 1) {
+                    log.warn("event=room_game_result_retry roomId={} reason=lock_conflict", room.roomId());
+                    continue;
+                }
+                if (gameSessionRepository.existsBySourceRoomId(room.roomId())) {
+                    log.info("event=room_game_result_duplicate roomId={} reason=lock_conflict", room.roomId());
+                    return null;
+                }
+                throw exception;
+            }
+        }
+        throw new IllegalStateException("Unreachable game result persistence state.");
+    }
+
+    private PersistedGameResult persistGameResult(
+            RoomState room,
+            RoomGameState gameState,
+            Long endedByUserId,
+            RoomEndedReason reason,
+            LocalDateTime endedAt
+    ) {
+        if (gameSessionRepository.existsBySourceRoomId(room.roomId())) {
+            log.info("event=room_game_result_duplicate roomId={} reason=already_persisted", room.roomId());
+            return null;
+        }
+
+        QuizMap map = quizMapRepository.findById(room.mapId())
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "map_not_found"));
+        User endedByUser = persistentMemberId(room, endedByUserId)
+                .flatMap(userRepository::findById)
+                .orElse(null);
+        quizMapRepository.addPlayCount(map.getId(), gameState.initialPlayerCount());
+        GameSession session = gameSessionRepository.saveAndFlush(toGameSession(
                 room,
                 gameState,
                 map,
@@ -84,20 +159,7 @@ public class RoomGameResultService {
         ));
         saveQuestionResults(session, room, gameState);
         savePlayerResultsAndHistories(session, room, gameState, map, endedAt);
-        map.increasePlayCount();
-        roomRedisRepository.deleteRoom(result.room());
-        roomEventPublisher.publish(result.events().isEmpty()
-                ? List.of(RoomDomainEvent.gameEnded(result.room(), reason, endedAt))
-                : result.events());
-        log.info(
-                "event=room_game_ended roomId={} gameSessionId={} mapId={} reason={} memberCount={} completedQuestions={}",
-                roomId,
-                session.getId(),
-                map.getId(),
-                reason,
-                room.memberCount(),
-                gameState.questionOutcomes().size()
-        );
+        return new PersistedGameResult(session.getId(), map.getId());
     }
 
     private GameSession toGameSession(
@@ -109,12 +171,13 @@ public class RoomGameResultService {
             LocalDateTime endedAt
     ) {
         return GameSession.complete(
+                room.roomId(),
                 map,
                 room.mapVersion(),
                 room.title(),
                 room.hasPassword(),
                 room.maxPlayers(),
-                room.memberCount(),
+                gameState.initialPlayerCount(),
                 room.selectedQuestionCount(),
                 gameState.randomSeed(),
                 room.answerTimeLimitSeconds(),
@@ -232,12 +295,7 @@ public class RoomGameResultService {
     }
 
     private void updatePlayHistory(User user, QuizMap map, int score, LocalDateTime endedAt) {
-        MapPlayHistory history = mapPlayHistoryRepository.findByUserIdAndMapId(user.getId(), map.getId())
-                .orElseGet(() -> MapPlayHistory.create(user, map, score, endedAt));
-        if (history.getId() != null) {
-            history.recordPlay(score, endedAt);
-        }
-        mapPlayHistoryRepository.save(history);
+        mapPlayHistoryRepository.recordPlay(user.getId(), map.getId(), score, endedAt);
     }
 
     private GameSessionEndedReason endedReason(RoomEndedReason reason) {
@@ -250,5 +308,8 @@ public class RoomGameResultService {
     }
 
     private record PlayerScore(Long userId, int score, int correctCount) {
+    }
+
+    private record PersistedGameResult(Long gameSessionId, Long mapId) {
     }
 }

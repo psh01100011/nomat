@@ -17,6 +17,7 @@ import com.dogdog.nomat.domain.user.entity.UserStatus;
 import com.dogdog.nomat.domain.user.repository.UserRepository;
 import com.dogdog.nomat.global.exception.BusinessException;
 import java.util.Objects;
+import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -49,10 +50,10 @@ public class CommentService {
             throw invalidRequest();
         }
         String content = normalizeContent(request.content());
-        QuizMap map = getPublicPublishedMap(mapId);
+        QuizMap map = getPublishedMapForCommentAccess(userId, mapId);
 
+        quizMapRepository.incrementCommentCount(mapId);
         MapComment comment = mapCommentRepository.save(MapComment.create(map, writer, content));
-        map.increaseCommentCount();
         log.info("event=map_comment_created commentId={} mapId={} userId={}", comment.getId(), mapId, userId);
 
         return CreateMapCommentResponse.from(comment);
@@ -84,8 +85,17 @@ public class CommentService {
         MapComment comment = getActiveComment(commentId);
         validateCommentWriter(comment, userId);
 
-        comment.delete();
-        comment.getMap().decreaseCommentCount();
+        Long mapId = comment.getMap().getId();
+        int decrementedRows = quizMapRepository.decrementCommentCount(mapId);
+        int deletedRows = mapCommentRepository.deleteIfActive(
+                commentId,
+                MapCommentStatus.ACTIVE,
+                MapCommentStatus.DELETED,
+                LocalDateTime.now()
+        );
+        if (deletedRows == 0 && decrementedRows > 0) {
+            quizMapRepository.incrementCommentCount(mapId);
+        }
         log.info("event=map_comment_deleted commentId={} mapId={} userId={}", commentId, comment.getMap().getId(), userId);
     }
 
@@ -96,7 +106,7 @@ public class CommentService {
         }
         validatePage(page, size);
         Pageable pageable = PageRequest.of(page, size, sortBy(sort));
-        getPublicPublishedMap(mapId);
+        getPublishedMapForCommentAccess(userId, mapId);
 
         return MapCommentListResponse.from(
                 mapCommentRepository.findByMapIdAndStatus(mapId, MapCommentStatus.ACTIVE, pageable),
@@ -110,13 +120,27 @@ public class CommentService {
                 .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "invalid_token"));
     }
 
-    private QuizMap getPublicPublishedMap(Long mapId) {
+    private QuizMap getPublishedMapForCommentAccess(Long userId, Long mapId) {
         return quizMapRepository.findByIdAndStatusAndVisibility(
                         mapId,
                         MapStatus.PUBLISHED,
                         MapVisibility.PUBLIC
                 )
+                .orElseGet(() -> getOwnedPublishedMap(userId, mapId));
+    }
+
+    private QuizMap getOwnedPublishedMap(Long userId, Long mapId) {
+        if (userId == null) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "map_not_found");
+        }
+
+        QuizMap map = quizMapRepository.findByIdAndStatusNot(mapId, MapStatus.DELETED)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "map_not_found"));
+        if (map.getStatus() != MapStatus.PUBLISHED
+                || !Objects.equals(map.getCreator().getId(), userId)) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "map_not_found");
+        }
+        return map;
     }
 
     private MapComment getActiveComment(Long commentId) {
