@@ -34,6 +34,9 @@ def main():
                  'ffmpeg -protocols 2>/dev/null | grep -qx "  https"; '
                  '/opt/yt-dlp/bin/python -c "import importlib.metadata as m; assert m.version(\'yt-dlp-ejs\') == \'0.8.0\'"; '
                  'test "$(dpkg-query -W -f=\'${Version}\' libpcre2-8-0)" = 10.42-4ubuntu2.2; '
+                 'test "$(dpkg-query -W -f=\'${Version}\' apt)" = 2.8.4ubuntu0.1; '
+                 'test "$(dpkg-query -W -f=\'${Version}\' libapt-pkg6.0t64)" = 2.8.4ubuntu0.1; '
+                 'test "$(dpkg-query -W -f=\'${Version}\' ca-certificates)" = 20260816ubuntu0.24.04.2; '
                  'test ! -e /usr/share/python-wheels/pip-24.0-py3-none-any.whl; '
                  'test ! -e /opt/yt-dlp/bin/pip; '
                  'ffmpeg -v error -f lavfi -i sine=frequency=440:duration=3 -c:a aac /tmp/source.m4a; '
@@ -62,7 +65,9 @@ def main():
     network = 'nomat-image-check-' + suffix
     database, redis, app = [network + '-' + name for name in ('mysql', 'redis', 'app')]
     containers = []
+    config_volume = network + '-config'
     run(['docker', 'network', 'create', '--internal', network])
+    run(['docker', 'volume', 'create', config_volume])
     try:
         # Disposable local DBs: no host ports, bind mounts, or production values.
         run(['docker', 'run', '-d', '--name', database, '--network', network, '--network-alias', 'mysql',
@@ -94,8 +99,26 @@ def main():
             'SPRING_DATA_REDIS_TIMEOUT': '30s', 'SPRING_DATA_REDIS_CONNECT_TIMEOUT': '30s',
             'MANAGEMENT_HEALTH_MAIL_ENABLED': 'false',
         }
+        # Exercise Spring configtree and the production read-only root filesystem.
+        # These are dummy values in a disposable volume, never production SSM values.
+        secret_keys = ['DB_URL', 'DB_USERNAME', 'DB_PASSWORD', 'REDIS_URL', 'JWT_SECRET', 'ADMIN_API_KEY',
+                       'TRUSTED_PROXY_CIDRS', 'FRONTEND_ORIGIN', 'MAIL_FROM', 'AWS_S3_BUCKET', 'AWS_REGION',
+                       'AWS_S3_PUBLIC_BASE_URL', 'AUDIO_PROCESSING_ENABLED']
+        config = {key: environment.pop(key) for key in secret_keys}
+        writer = ('import json,os,pathlib,sys; p=pathlib.Path("/config"); '
+                  'values=json.load(sys.stdin); '
+                  '[(p.joinpath(k).write_text(v),os.chmod(p/k,0o400),os.chown(p/k,10001,10001)) for k,v in values.items()]; '
+                  'os.chown(p,10001,10001); os.chmod(p,0o500)')
+        run(['docker', 'run', '--rm', '-i', '--network', 'none', '--user', '0',
+             '--mount', f'type=volume,src={config_volume},dst=/config', '--entrypoint', 'python3', image,
+             '-c', writer], content=json.dumps(config))
+        environment.update(SPRING_CONFIG_IMPORT='configtree:/run/nomat-config/', SERVER_ADDRESS='127.0.0.1',
+                           HOME='/tmp', XDG_CACHE_HOME='/tmp/.cache', DENO_DIR='/tmp/.cache/deno')
         args = ['docker', 'run', '-d', '--name', app, '--platform', 'linux/arm64', '--network', network,
-                '--memory', '1536m', '--cpus', '2']
+                '--memory', '1536m', '--cpus', '2', '--read-only', '--cap-drop', 'ALL',
+                '--security-opt', 'no-new-privileges:true',
+                '--tmpfs', '/tmp:rw,uid=10001,gid=10001,mode=700,size=512m',
+                '--mount', f'type=volume,src={config_volume},dst=/run/nomat-config,readonly']
         for key, value in environment.items():
             args.extend(['-e', key + '=' + value])
         run(args + [image])
@@ -114,12 +137,20 @@ def main():
                           'nomat', '-e', 'SELECT MAX(version) FROM flyway_schema_history WHERE success=1;'])
         if migrations != '3':
             raise RuntimeError('검증 DB의 Flyway V3 적용 확인 실패')
+        inspected = json.loads(run(['docker', 'inspect', app]))[0]
+        if any(entry.split('=', 1)[0] in secret_keys for entry in inspected['Config']['Env']):
+            raise RuntimeError('비밀 설정이 컨테이너 환경 변수에 포함됨')
+        run(['docker', 'exec', app, '/bin/sh', '-ec',
+             'test ! -w /run/nomat-config/JWT_SECRET; test ! -w /app; '
+             'ffmpeg -v error -f lavfi -i sine=duration=1 -c:a libmp3lame /tmp/readonly-check.mp3; '
+             'deno eval "Deno.writeTextFileSync(\'/tmp/deno-check\', \'ok\')"'])
         record.update(validation_passed=True, validation={
             'platform': 'linux/arm64', 'user': '10001', 'mp3_conversion': True, 'webp_roundtrip': True,
             'prod_health': 'UP', 'flyway_version': migrations, 'audio_worker_enabled': True,
             'external_network': False, 'real_youtube_download': False, 'mail_connection_checked': False,
             'ffmpeg_version': '9.0.2', 'ffmpeg_static_components': '/usr/share/doc/ffmpeg-static/versions.json',
             'redis_timeout': '30s', 'jvm_tiered_stop_at_level': 1,
+            'configtree_files': len(config), 'read_only_root': True, 'secrets_in_container_env': False,
         })
         RECORD.write_text(json.dumps(record, indent=2) + '\n')
         print(json.dumps(record['validation']))
@@ -133,6 +164,7 @@ def main():
         for name in reversed(containers):
             subprocess.run(['docker', 'rm', '-f', '-v', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         run(['docker', 'network', 'rm', network])
+        run(['docker', 'volume', 'rm', config_volume])
 
 
 if __name__ == '__main__':

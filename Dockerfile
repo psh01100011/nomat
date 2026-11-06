@@ -15,8 +15,8 @@ FROM mwader/static-ffmpeg:9.0.2-1@sha256:f5d100184884eb3e82b0eb14bb5ebf98da99826
 
 FROM eclipse-temurin:21-jre-noble@sha256:0eda5830ed7b669abc246a8dc520ea8a23cab06f9a8d4b6964109e2f2394e46f AS python-tools
 
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl python3 python3-venv \
+RUN apt-get -o Acquire::Retries=0 update \
+    && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=0 install -y --no-install-recommends ca-certificates curl python3 python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 COPY docker/yt-dlp-requirements.txt /tmp/yt-dlp-requirements.txt
@@ -27,9 +27,12 @@ RUN python3 -m venv /opt/yt-dlp \
 
 FROM eclipse-temurin:21-jre-noble@sha256:0eda5830ed7b669abc246a8dc520ea8a23cab06f9a8d4b6964109e2f2394e46f
 
-# Apply the PCRE2 security fix even when the pinned base predates its release.
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl python3 libpcre2-8-0=10.42-4ubuntu2.2 \
+# Apply fixes even when the pinned base predates them. Disable download retries
+# while the old APT client bootstraps the CVE-2026-109518 update.
+RUN apt-get -o Acquire::Retries=0 update \
+    && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=0 install -y --no-install-recommends \
+        apt=2.8.4ubuntu0.1 libapt-pkg6.0t64=2.8.4ubuntu0.1 \
+        ca-certificates=20260816ubuntu0.24.04.2 curl python3 libpcre2-8-0=10.42-4ubuntu2.2 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=python-tools /opt/yt-dlp /opt/yt-dlp

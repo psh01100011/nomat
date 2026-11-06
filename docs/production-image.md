@@ -12,6 +12,8 @@
 | Python | 실행 base인 Ubuntu 24.04의 Python 3.12 계열, yt-dlp의 Python 3.11 이상 요구 충족 |
 | WebP ImageIO | `com.github.usefulness:webp-imageio:0.11.0`, Linux aarch64 네이티브 포함 |
 | PCRE2 | Ubuntu 공식 보안 수정판 `libpcre2-8-0=10.42-4ubuntu2.2` |
+| APT | `apt`·`libapt-pkg6.0t64=2.8.4ubuntu0.1` |
+| CA 인증서 | `ca-certificates=20260816ubuntu0.24.04.2` |
 
 Java bytecode는 빌드 호스트의 CPU에서 컴파일하고 실행 이미지는 `linux/arm64`로 만든다. 실행 사용자는 UID/GID 10001이다. DB/JWT/메일/AWS 운영 비밀 값은 빌드 인자·이미지에 넣지 않는다. 배포 시 SSM에서 런타임으로 주입한다.
 
@@ -38,7 +40,7 @@ python3 scripts/production-image.py scan
 
 build는 기본 Gradle 테스트 후 ARM64 이미지를 만들고 `build/production-image.json`에 결과를 남긴다. 이 파일은 Git ignore 대상이다. Dockerfile·Gradle·src·docker 입력 파일의 SHA256과 base revision으로 `candidate-<해시20자리>-<base SHA12자리>[-dirty]` 태그를 만든다. 미커밋 빌드도 입력 해시와 base revision·dirty label로 명시하며, 현재 HEAD만으로 빌드했다고 표시하지 않는다. 커밋은 사용자가 직접 수행한다. 정식 배포 버전 확정 시 같은 절차로 커밋된 소스에서 다시 빌드·검증한다.
 
-검증은 실제 ARM64 실행 파일·비루트 사용자·Deno 실행·EJS 버전·ffmpeg MP3 변환·WebP 인코딩/디코딩을 확인한다. 이어서 외부 통신과 호스트 포트가 없는 Docker internal network에서 임시 MySQL/Redis와 앱을 실행하고, 오디오 워커가 켜진 `prod` 프로필의 health UP과 Flyway V3를 확인한다. 임시 비밀번호·설정은 검증용 가짜 값이며 운영 SSM은 읽지 않는다. 임시 컨테이너·익명 볼륨·네트워크는 finally에서 정리한다.
+검증은 실제 ARM64 실행 파일·비루트 사용자·Deno 실행·EJS 버전·ffmpeg MP3 변환·WebP 인코딩/디코딩을 확인한다. 이어서 외부 통신과 호스트 포트가 없는 Docker internal network에서 임시 MySQL/Redis와 앱을 실행하고, 오디오 워커가 켜진 `prod` 프로필의 health UP과 Flyway V3를 확인한다. 앱 root는 읽기 전용이며 capability 제거·no-new-privileges를 적용한다. 가짜 설정 13개는 별도 읽기 전용 volume에 Spring configtree로 전달하고 컨테이너 환경 변수에 남지 않는지 검사한다. ffmpeg/Deno의 `/tmp` 쓰기도 확인한다. 운영 SSM은 읽지 않는다. 임시 컨테이너·설정/DB 볼륨·네트워크는 finally에서 정리한다.
 
 검증용 관리자 키와 JWT도 운영 설정 검사의 32바이트 최소 길이를 충족한다. 로컬 검증에는 메일 서버가 없으므로 `MANAGEMENT_HEALTH_MAIL_ENABLED=false`로 메일 연결 health만 제외한다. 이 옵션은 검증 도구에서만 전달하며 운영 이미지의 기본 설정은 바꾸지 않는다. 메일 전송이나 SES 연결을 검증한 것으로 기록하지 않는다.
 
@@ -48,7 +50,13 @@ publish는 입력 해시·검증 성공·검증한 로컬 이미지 ID/아키텍
 
 scan은 해당 digest의 ECR 기본 스캔 응답을 `build/production-image-scan.json`에 저장하고 상태·심각도별 건수를 결과 파일에 기록한다. IN_PROGRESS이면 완료 후 다시 조회한다. `critical_high_clear`는 기본 스캔의 Critical/High 건수만 표현하며 배포 승인이나 전체 보안 검증을 대신하지 않는다.
 
-이 단계는 로컬 에뮬레이션 기반 ARM64 실행 검증이다. 실제 Graviton EC2에서의 YouTube 다운로드·전체 오디오 추출, CPU credit/자원 사용량, 운영 S3/SES 접근과 HTTPS 연결 검증은 후속 백엔드 배포 단계에서 수행한다. SMTP에서 SES API로 바꾸는 작업도 별도이며 이번 이미지 빌드에서 구현하지 않는다.
+이 단계는 로컬 에뮬레이션 기반 ARM64 실행 검증이다. 실제 Graviton EC2에서의 YouTube 다운로드·전체 오디오 추출, CPU credit/자원 사용량, 운영 S3/SES 접근과 HTTPS 연결 검증은 후속 백엔드 배포 단계에서 수행한다. SES API 연동은 `c89ab5ca911f`에 포함됐으며 실제 메일 수신은 별도 검증한다.
+
+## 2026-11-06 보안 업데이트
+
+커밋 `c89ab5ca911f`의 SES 포함 이미지 재빌드에서 APT 관련 동일 CVE의 High 2건과 CA 인증서 advisory 1건을 확인했다. 이 이미지는 운영 기동 대상에서 제외했다. [Ubuntu CVE-2026-109518](https://ubuntu.com/security/CVE-2026-109518)의 Noble 수정판 `2.8.4ubuntu0.1`과 [USN-9001-1](https://ubuntu.com/security/notices/USN-9001-1)의 인증서 수정판을 명시적으로 설치한다. 오래된 APT로 업데이트를 시작하는 단계에서는 `Acquire::Retries=0`을 사용한다. 검증 도구도 패키지의 실제 설치 버전을 검사한다. 미커밋 수정 후보는 검증·스캔 용도로만 사용하며 사용자 커밋 후 clean 소스로 정식 이미지를 다시 만든다.
+
+수정 후보 `candidate-f1830a8a6949a64cc528-c89ab5ca911f-dirty`, digest `sha256:e39242cbb2e29e12feea566defe0fb7a225db7a169ff9eba3a3017bd14bbe894`의 기본 스캔은 COMPLETE/탐지 0건이었다. 기본 테스트 416건 및 위 ARM64 실행 검증을 통과했고, configtree 13개·읽기 전용 root 상태에서도 health UP/Flyway V3·오디오 worker·ffmpeg/Deno 임시 파일 쓰기를 확인했다. 운영 앱·DB에는 적용하지 않았다.
 
 ## 2026-11-04 검증 결과
 
